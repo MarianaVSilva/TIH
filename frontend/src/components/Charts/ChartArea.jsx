@@ -1,0 +1,818 @@
+import { useState } from "react";
+import ReactECharts from "echarts-for-react";
+import { useExplorer } from "../../store/useExplorer";
+import LoadingSpinner from "../UI/LoadingSpinner";
+import DynamicTable from "./DynamicTable";
+import HeatmapChart from "./HeatmapChart";
+import HomeDashboard from "./HomeDashboard";
+import PozosExplorer from "./PozosExplorer";
+
+const PALETTE = [
+  "#0db4be","#6366f1","#f59e0b","#ef4444",
+  "#10b981","#8b5cf6","#0ea5e9","#ec4899",
+  "#84cc16","#f97316","#64748b","#eab308",
+];
+
+const CHART_TYPES = [
+  {
+    id: "line",
+    label: "Línea",
+    icon: (
+      <svg viewBox="0 0 20 14" width="18" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
+        <polyline points="1,12 5,5 9,8 13,3 19,7" />
+      </svg>
+    ),
+  },
+  {
+    id: "pie",
+    label: "Pastel",
+    icon: (
+      <svg viewBox="0 0 20 20" width="15" height="15" fill="currentColor">
+        <path d="M10 2a8 8 0 1 0 8 8A8 8 0 0 0 10 2zm0 2v6h6a6 6 0 0 1-6 6 6 6 0 0 1-6-6 6 6 0 0 1 6-6z" opacity="0.3"/>
+        <path d="M10 2v8h8A8 8 0 0 0 10 2z"/>
+      </svg>
+    ),
+  },
+  {
+    id: "bar",
+    label: "Barras",
+    icon: (
+      <svg viewBox="0 0 20 14" width="18" height="13" fill="currentColor">
+        <rect x="1"  y="6"  width="3" height="8" rx="1" />
+        <rect x="6"  y="3"  width="3" height="11" rx="1" />
+        <rect x="11" y="7"  width="3" height="7" rx="1" />
+        <rect x="16" y="1"  width="3" height="13" rx="1" />
+      </svg>
+    ),
+  },
+  {
+    id: "heatmap",
+    label: "Mapa de calor",
+    icon: (
+      <svg viewBox="0 0 20 20" width="15" height="15" fill="currentColor">
+        <rect x="1"  y="1"  width="8"  height="8"  rx="1" opacity="0.3"/>
+        <rect x="11" y="1"  width="8"  height="8"  rx="1" opacity="0.7"/>
+        <rect x="1"  y="11" width="8"  height="8"  rx="1" opacity="0.9"/>
+        <rect x="11" y="11" width="8"  height="8"  rx="1" opacity="0.5"/>
+      </svg>
+    ),
+  },
+];
+
+function DataTable({ title, categories, series }) {
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg shadow-sm mb-4 overflow-hidden">
+      {title && (
+        <div className="px-4 py-3 border-b border-slate-100">
+          <p className="text-xs font-semibold text-slate-600">{title}</p>
+        </div>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200">
+              <th className="text-left px-4 py-2 text-slate-500 font-semibold sticky left-0 bg-slate-50">Período</th>
+              {series.map(s => (
+                <th key={s.name} className="text-right px-3 py-2 text-slate-500 font-semibold whitespace-nowrap">{s.name}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {categories.map((cat, i) => (
+              <tr key={cat} className={i % 2 === 0 ? "bg-white" : "bg-slate-50/50"}>
+                <td className="px-4 py-1.5 text-slate-600 font-medium sticky left-0 bg-inherit">{cat}</td>
+                {series.map(s => (
+                  <td key={s.name} className="px-3 py-1.5 text-right text-slate-600 tabular-nums">
+                    {s.data[i] != null ? s.data[i].toLocaleString("es-MX") : "—"}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const CHART_TYPE_LABEL = Object.fromEntries(CHART_TYPES.map(t => [t.id, t.label]));
+
+function SingleChart({ title, categories, series, chartType, subtitle }) {
+  const isPie = chartType === "pie";
+  const isBar = chartType === "bar";
+
+  const pieData = isPie
+    ? series.map(s => ({
+        name: s.name,
+        value: (s.data ?? []).reduce((a, b) => a + (b ?? 0), 0),
+      })).filter(d => d.value > 0)
+    : [];
+
+  const option = isPie
+    ? {
+        backgroundColor: "#fff",
+        color: PALETTE,
+        tooltip: {
+          trigger: "item",
+          backgroundColor: "#fff",
+          borderColor: "#e2e8f0",
+          textStyle: { color: "#374151", fontSize: 11 },
+          formatter: "{b}: {c} ({d}%)",
+        },
+        legend: { type: "plain", bottom: 0, textStyle: { color: "#6b7280", fontSize: 10 } },
+        series: [{
+          type: "pie",
+          radius: ["35%", "65%"],
+          center: ["50%", "45%"],
+          data: pieData,
+          label: { fontSize: 11, color: "#374151" },
+          emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.15)" } },
+        }],
+      }
+    : {
+        backgroundColor: "#fff",
+        color: PALETTE,
+        tooltip: {
+          trigger: "axis",
+          backgroundColor: "#fff",
+          borderColor: "#e7e5e0",
+          textStyle: { color: "#1f2430", fontSize: 11 },
+        },
+        legend: { type: "plain", bottom: 0, left: "center", width: "92%", itemGap: 14, textStyle: { color: "#767b87", fontSize: 10 } },
+        grid: { top: 30, right: 24, bottom: series.length > 6 ? 90 : 50, left: 20, containLabel: true },
+        xAxis: {
+          type: "category",
+          data: categories,
+          axisLabel: { color: "#767b87", fontSize: 10, fontWeight: 600, rotate: categories.length > 24 ? 45 : 0 },
+          axisLine: { lineStyle: { color: "#e7e5e0" } },
+          axisTick: { show: false },
+        },
+        yAxis: {
+          type: "value",
+          axisLabel: { color: "#767b87", fontSize: 10, formatter: v => v.toLocaleString("es-MX") },
+          splitLine: { show: false },
+        },
+        series: series.map((s, idx) => ({
+          name: s.name,
+          type: isBar ? "bar" : "line",
+          data: s.data,
+          smooth: true,
+          lineStyle: { width: 2 },
+          symbol: "none",
+          barMaxWidth: 32,
+          stack: isBar ? "total" : undefined,
+          ...(isBar ? { itemStyle: { borderRadius: idx === series.length - 1 ? [6, 6, 0, 0] : 0 } } : {}),
+          ...(idx === 0 && categories.some(c => c.startsWith("2014") || c === "2014") ? {
+            markLine: {
+              silent: true,
+              lineStyle: { color: "#f59e0b", type: "dashed", width: 1.5 },
+              label: {
+                formatter: "Reforma\nEnergética",
+                fontSize: 9,
+                color: "#f59e0b",
+                position: "insideEndTop",
+              },
+              data: [{ xAxis: categories.find(c => c.startsWith("2014") || c === "2014") }],
+            },
+          } : {}),
+        })),
+      };
+
+  // Con pocas categorías y series, limitar y centrar el ancho del gráfico
+  // (si no, las barras se ven sueltas). Con muchas series se desactiva para
+  // dejarle espacio a la leyenda.
+  const chartMaxWidth = isBar && categories.length > 0 && categories.length <= 8 && series.length <= 4
+    ? Math.max(220, categories.length * 130)
+    : null;
+
+  const chartHeight = !isPie && series.length > 6 ? 380 : 320;
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
+      <div className="flex items-baseline justify-between mb-3">
+        {subtitle
+          ? <span className="text-[11px] font-semibold text-teal-700">{subtitle}</span>
+          : <span />}
+        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+          {CHART_TYPE_LABEL[chartType] ?? chartType}
+        </span>
+      </div>
+      <ReactECharts
+        key={`${chartType}-${chartMaxWidth ?? "full"}`}
+        option={option}
+        style={chartMaxWidth ? { height: chartHeight, width: chartMaxWidth, margin: "0 auto" } : { height: chartHeight }}
+        notMerge
+      />
+    </div>
+  );
+}
+
+function ViewBar({ viewMode, setViewMode, chartType, setChartType, hideGraphics = false, extra }) {
+  const modos = hideGraphics
+    ? [{ id: "tablas", label: "Ver como tablas" }]
+    : [{ id: "tablas", label: "Ver como tablas" }, { id: "graficos", label: "Ver como gráficos" }];
+  return (
+    <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5">
+          {modos.map(({ id, label }) => (
+            <button key={id} onClick={() => setViewMode(id)}
+              className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${
+                viewMode === id ? "bg-tih-dark text-white shadow-sm" : "text-slate-500 hover:text-slate-700"
+              }`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {!hideGraphics && viewMode === "graficos" && extra}
+      </div>
+      {!hideGraphics && viewMode === "graficos" && (
+        <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm">
+          {CHART_TYPES.map(({ id, label, icon }, idx) => (
+            <button key={id} title={label} onClick={() => setChartType(id)}
+              className={`px-3 py-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center transition-colors ${
+                chartType === id ? "bg-tih-dark text-white" : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+              } ${idx < CHART_TYPES.length - 1 ? "border-r border-slate-200" : ""}`}>
+              {icon}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function filterSeries(series, visibleSeries) {
+  return series.filter(s => visibleSeries[s.name] !== false);
+}
+
+const GROUP_TABS = [
+  { id: "cuenca",    label: "Por cuenca geológica" },
+  { id: "ubicacion", label: "Por ambiente" },
+  { id: "plan",      label: "Por categoría" },
+  { id: "operador",  label: "Por operador" },
+];
+
+function GroupByBar({ groupBy, setGroupBy }) {
+  return (
+    <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+      {GROUP_TABS.map(({ id, label }) => (
+        <button
+          key={id}
+          onClick={() => setGroupBy(groupBy === id ? null : id)}
+          className={`px-3 py-1 rounded-full text-[11.5px] font-medium border transition-all ${
+            groupBy === id
+              ? "bg-tih-dark text-white border-tih-dark"
+              : "bg-white text-slate-500 border-slate-200 hover:border-teal-400 hover:text-teal-700"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Unidad correcta por tema: la mayoría son Mbd de líquidos, Gcompo es gas en MMpcd.
+const PRODUCCION_TOTAL_LABEL = {
+  Cuenca: "Producción total (Mbd)", Campos: "Producción total (Mbd)", API: "Producción total (Mbd)",
+  Operadores: "Producción total (Mbd)", InteresPart: "Producción total (Mbd)",
+  Contratos: "Producción total (Mbd)", Asignaciones: "Producción total (Mbd)",
+  Estado: "Producción total (Mbd)", Gcompo: "Gas total (MMpcd)",
+};
+
+const KPI_CONFIG = [
+  {
+    key:   (k) => k.total?.toLocaleString("es-MX"),
+    label: (topic) => PRODUCCION_TOTAL_LABEL[topic] ?? "Total de pozos",
+    icon:  (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-5 h-5">
+        <circle cx="12" cy="12" r="9"/><line x1="12" y1="3" x2="12" y2="21"/>
+        <path d="M3 12h18M5.5 6.5C7.5 9 9.5 10.5 12 10.5s4.5-1.5 6.5-4M5.5 17.5C7.5 15 9.5 13.5 12 13.5s4.5 1.5 6.5 4"/>
+      </svg>
+    ),
+    color: "#10312B",
+  },
+  {
+    key:   (k) => k.anio_top,
+    label: "Año más activo",
+    icon:  (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-5 h-5">
+        <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
+        <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+      </svg>
+    ),
+    color: "#059669",
+  },
+  {
+    key:   (k) => k.cuenca_top,
+    label: "Cuenca más activa",
+    icon:  (
+      <svg viewBox="0 0 512 512" fill="currentColor" className="w-6 h-5">
+        <path d="M506.752,291.992h-28.989c-0.73,0-1.457,0.157-2.126,0.448l-25.459,11.32c-1.895,0.841-3.114,2.722-3.114,4.788v17.583c0,0.791-0.178,1.574-0.524,2.286l-11.805,24.394h-12.946c-0.68,0-1.353,0.135-1.98,0.392l-32.463,13.28c-1.706,0.698-3.65,0.449-5.126-0.662l-9.479-7.103c-0.844-0.635-1.863-0.998-2.918-1.048l-14.583-0.627c-1.693-0.079-3.249-0.97-4.168-2.387l-35.184-54.302c-0.74-1.148-1.004-2.536-0.74-3.876l13.522-67.596c0.495-2.486-0.855-4.966-3.213-5.899l-33.517-13.273c-1.204-0.47-2.187-1.374-2.76-2.528l-27.407-54.815c-0.802-1.603-2.369-2.686-4.15-2.864l-17.608-1.824c-2.048-0.214-4.032,0.798-5.069,2.572l-7.074,12.118c-0.713,1.232-1.895,2.116-3.277,2.45c-1.379,0.342-2.839,0.107-4.039-0.655l-15.695-9.882c-1.218-0.762-2.07-1.994-2.352-3.405l-3.33-16.657c-0.218-1.09-0.784-2.087-1.61-2.843l-25.171-22.954c-0.965-0.877-2.226-1.368-3.534-1.368h-22.317c-2.893,0-5.24,2.344-5.24,5.243v2.978h-34.87c-0.851,0-1.692-0.206-2.444-0.606L43.826,83.006C43.07,82.607,42.23,82.4,41.378,82.4H5.244c-1.646,0-3.199,0.769-4.185,2.087c-0.991,1.311-1.311,3.014-0.855,4.596l14.167,49.592c0.235,0.826,0.673,1.582,1.272,2.202l18.719,19.392c1.909,1.974,1.966,5.087,0.135,7.131l-7.042,7.872c-0.958,1.069-1.436,2.487-1.318,3.919c0.118,1.438,0.819,2.757,1.941,3.662l28.081,22.599c0.851,0.691,1.47,1.631,1.763,2.678l7.477,26.924c0.193,0.691,0.524,1.332,0.972,1.888l30.069,37.232c0.95,1.183,2.365,1.888,3.879,1.945c1.51,0.057,2.974-0.542,4.015-1.639l6.946-7.36c1.696-1.795,1.909-4.531,0.516-6.561l-18.887-27.607c-0.064-0.092-0.125-0.185-0.182-0.285L75.074,202.98c-0.228-0.384-0.406-0.798-0.531-1.226l-8.595-29.708c-0.172-0.577-0.442-1.126-0.798-1.624l-25.152-34.575c-0.399-0.555-0.692-1.183-0.855-1.845l-7.15-29.409l26.624,12.168c1.361,0.628,2.394,1.803,2.832,3.235l11.299,36.912c0.225,0.734,0.606,1.403,1.118,1.974l41.607,46.23c1.24,1.382,1.66,3.306,1.107,5.072l-2.322,7.438c-0.556,1.774-0.128,3.705,1.118,5.087l68.953,76.003c0.877,0.969,1.361,2.223,1.361,3.527v19.342l-4.909,1.511c-1.454,0.449-2.64,1.503-3.252,2.892c-0.613,1.39-0.595,2.978,0.05,4.353l9.775,20.768c0.517,1.104,1.408,1.994,2.518,2.515l152.764,71.608c1.999,0.94,4.371,0.526,5.935-1.04l17.234-17.226c0.98-0.984,2.316-1.54,3.705-1.54h12.582c1.094,0,2.166,0.342,3.057,0.984l30.969,22.214c1.315,0.948,2.993,1.226,4.538,0.77c1.553-0.449,2.804-1.604,3.398-3.106l6.957-17.668c0.766-1.938,2.604-3.242,4.688-3.32l13.714-0.506c2.818-0.106,5.051-2.422,5.051-5.236v-4.538c0-1.718-0.845-3.328-2.262-4.311l-6.166-4.267c-1.415-0.976-2.259-2.586-2.259-4.31v-12.048h28.326c1.81,0,3.488-0.933,4.446-2.465l34.653-55.442c0.52-0.827,0.798-1.796,0.798-2.779v-12.154C512,294.336,509.649,291.992,506.752,291.992z"/>
+      </svg>
+    ),
+    color: "#4f46e5",
+  },
+  {
+    key:   (k) => k.operador_top,
+    label: (topic) => (topic === "PozosCampos" || topic === "Campos") ? "Campo principal"
+      : topic === "API" ? "Clase API principal"
+      : topic === "Contratos" ? "Grupo principal"
+      : topic === "Asignaciones" ? "Cuenca principal"
+      : topic === "Estado" ? "Entidad principal"
+      : topic === "Gcompo" ? "Componente principal"
+      : "Operador principal",
+    icon:  (
+      <svg viewBox="0 0 503.607 503.607" fill="currentColor" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+        <g transform="translate(1 1)">
+          <path d="M477.426,416.993c-50.095-26.565-88.52-41.461-122.727-47.172l3.54-4.867c1.679-1.679,2.518-4.197,1.679-6.715l-7.866-31.463c20.804-29.41,33.046-66.178,33.046-101.153v-33.574h8.393h16.787c5.036,0,8.393-3.357,8.393-8.393s-3.357-8.393-8.393-8.393h-8.393v-8.393c0-66.308-43.646-122.544-109.115-141.01V24.18c0-13.43-10.911-25.18-25.18-25.18h-33.574c-13.43,0-25.18,10.911-25.18,25.18v1.679c-65.469,18.466-109.115,74.702-109.115,141.01v8.393h-8.393c-5.036,0-8.393,3.357-8.393,8.393s3.357,8.393,8.393,8.393h16.787h8.393v33.574c0,34.975,12.242,71.743,33.046,101.154l-7.866,31.463c0,1.679,0,5.036,1.679,6.715l3.54,4.867c-34.206,5.712-72.632,20.607-122.727,47.172C8.233,424.548-1,440.495-1,458.121v36.092c0,5.036,3.357,8.393,8.393,8.393h201.443h3.357h77.22h3.357h201.443c5.036,0,8.393-3.357,8.393-8.393v-36.092C502.607,441.334,492.534,425.387,477.426,416.993z M245.77,409.224l5.081-11.432l12.545,27.6l8.205,18.46h-40.941L245.77,409.224z M224.28,460.639h52.983l4.796,25.18h-62.815L224.28,460.639z M338.934,343.131l3.357,15.108l-8.574,11.773c-0.547,0.447-1.053,0.989-1.498,1.656l-34.912,48.34l-11.078,15.211l-22.628-50.913c27.048-3.299,51.193-16.877,70.694-36.39c0.216-0.214,0.433-0.426,0.648-0.642c0.052-0.053,0.104-0.106,0.156-0.159C336.392,345.818,337.671,344.492,338.934,343.131z M327.999,60.389c0.932,0.62,1.856,1.25,2.77,1.892c10.699,7.973,20.575,17.313,28.31,27.368l-38.61,7.554L327.999,60.389z M181.138,97.203l-38.61-7.554c7.735-10.056,17.612-19.396,28.311-27.369c0.913-0.641,1.837-1.271,2.769-1.891L181.138,97.203z M116.508,166.869c0-22.335,5.623-43.406,15.8-61.82l58.063,11.46c0.839,0,0.839,0,1.679,0c2.518,0,4.197-0.839,6.715-1.679c2.518-1.679,3.357-5.036,2.518-7.554l-11.523-56.08c6.069-2.92,12.438-5.428,19.077-7.49v22.442c0,5.036,3.357,8.393,8.393,8.393s8.393-3.357,8.393-8.393V32.574V24.18c0-4.197,3.357-8.393,8.393-8.393h33.574c4.197,0,8.393,3.357,8.393,8.393v8.393v33.574c0,5.036,3.357,8.393,8.393,8.393c5.036,0,8.393-3.357,8.393-8.393V43.706c6.86,2.13,13.435,4.734,19.685,7.779l-11.291,54.952c0,2.518,0.839,5.875,2.518,7.554s3.357,2.518,5.875,2.518c0.839,0,0.839,0,1.679,0l57.687-12.145c10.416,18.576,16.175,39.894,16.175,62.505v8.393h-8.393H124.902h-8.393V166.869z M133.295,192.049h235.016v33.574c0,36.599-12.555,69.122-31.405,93.843l-0.49,0.163c-0.839,0.839-1.679,1.679-2.518,2.518c-4.223,5.631-8.68,10.765-13.337,15.394c-19.763,18.412-43.336,29.564-66.05,30.669c-1.143-0.491-2.425-0.738-3.708-0.738c-1.29,0-2.453,0.253-3.496,0.749c-13.904-0.638-28.134-5.045-41.623-12.584c-13.665-7.851-26.52-19.169-37.977-33.49c-0.839-0.839-1.679-1.679-2.518-2.518l-0.49-0.163c-18.85-24.722-31.405-57.245-31.405-93.843V192.049z M238.005,384.308l-22.628,50.913l-11.078-15.211l-34.912-48.34c-0.267-0.267-0.563-0.532-0.869-0.793l-9.203-12.637l3.357-15.108c1.138,1.225,2.292,2.419,3.457,3.594C185.833,366.877,210.408,380.942,238.005,384.308z M15.787,458.121c0-10.911,5.875-20.984,15.948-26.02c53.501-28.423,92.015-42.688,126.323-46.949l50.088,68.87l-6.359,31.796H15.787V458.121z M485.82,485.82H299.821l-6.359-31.796l50.63-69.616c34.188,5.159,73.391,19.413,125.78,46.855c10.072,5.875,15.948,15.948,15.948,26.859V485.82z"/>
+        </g>
+      </svg>
+    ),
+    color: "#d97706",
+  },
+  {
+    key:   (k) => k.ubicacion_top,
+    label: "Ambiente principal",
+    icon:  (
+      <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+        <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/>
+      </svg>
+    ),
+    color: "#0d9488",
+  },
+];
+
+// KPIs genéricos para resultados de una sola dimensión (operador, estado,
+// grupo de contrato, componente de gas…), calculados en el cliente a partir
+// de series+categorías.
+function buildSimpleKpis(categories, series) {
+  if (!categories?.length || !series?.length) return null;
+  const lastIdx = categories.length - 1;
+  // Si una serie ya es el agregado de las demás (p. ej. "Gas total" en Gcompo),
+  // usarla directo — sumar todas las series duplicaría el total.
+  const totalSerie = series.length > 1 ? series.find(s => /\btotal\b/i.test(s.name) || s.name === "Nacional") : null;
+  const seriesForTotal = totalSerie ? [totalSerie] : series;
+  const total = seriesForTotal.reduce((sum, s) => sum + (s.data?.[lastIdx] ?? 0), 0);
+  const totalsByCat = categories.map((_, i) => seriesForTotal.reduce((sum, s) => sum + (s.data?.[i] ?? 0), 0));
+  const anioTopIdx = totalsByCat.reduce((best, v, i) => (v > totalsByCat[best] ? i : best), 0);
+  // Excluir el agregado del cálculo del "top" (siempre ganaría por ser la suma de todas).
+  const seriesForTop = totalSerie ? series.filter(s => s !== totalSerie) : series;
+  const totalsBySerie = seriesForTop.map(s => (s.data ?? []).reduce((a, b) => a + (b ?? 0), 0));
+  const topSerieIdx = totalsBySerie.reduce((best, v, i) => (v > totalsBySerie[best] ? i : best), 0);
+  return {
+    total: Math.round(total),
+    anio_top: categories[anioTopIdx],
+    operador_top: seriesForTop[topSerieIdx]?.name,
+  };
+}
+
+function KpiCards({ kpis, topic }) {
+  if (!kpis) return null;
+  const items = KPI_CONFIG
+    .map(cfg => ({ ...cfg, value: cfg.key(kpis) }))
+    .filter(({ value }) => value !== null && value !== undefined && value !== "" && value !== 0 && value !== "0");
+  if (!items.length) return null;
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
+      {items.map(({ label, color, value }) => {
+        const labelText = typeof label === "function" ? label(topic) : label;
+        return (
+          <div
+            key={labelText}
+            className="rounded-xl px-4 py-3.5 flex flex-col gap-2 bg-white border border-slate-200 shadow-sm"
+          >
+            <div className="flex items-center gap-1.5 text-slate-400">
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
+              <span className="text-[10px] font-semibold uppercase tracking-wider leading-tight">
+                {labelText}
+              </span>
+            </div>
+            <p className="text-slate-800 text-lg font-bold leading-tight truncate">
+              {value ?? "—"}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Series para la gráfica según groupBy ────────────────────────────────────
+function buildHierSeries(resultado, groupBy) {
+  const groups   = resultado.groups ?? [];
+  const nacGroup = groups.find(g => g.cuenca === "Nacional");
+
+  if (!groupBy || groupBy === "ubicacion") {
+    if (!nacGroup) return [];
+    return (nacGroup.subgroups ?? [])
+      .filter(sg => sg.ubicacion !== "Nacional")
+      .map(sg => ({ name: sg.ubicacion, data: sg.rows?.[0]?.data ?? [] }));
+  }
+
+  if (groupBy === "cuenca") {
+    return groups
+      .filter(g => g.cuenca !== "Nacional")
+      .map(g => ({
+        name: g.cuenca,
+        data: g.subgroups?.[0]?.rows?.[0]?.data ?? [],
+      }));
+  }
+
+  if (groupBy === "plan") {
+    const nacSg = nacGroup?.subgroups?.find(sg => sg.ubicacion === "Nacional");
+    if (!nacSg) return [];
+    return (nacSg.rows ?? [])
+      .filter(r => r.type === "subtotal")
+      .map(r => ({ name: r.label, data: r.data }));
+  }
+
+  if (groupBy === "operador") {
+    const nacSg = nacGroup?.subgroups?.find(sg => sg.ubicacion === "Nacional");
+    if (!nacSg) return [];
+    const ops = (nacSg.rows ?? [])
+      .filter(r => r.type === "operator")
+      .map(r => ({ name: r.label, data: r.data, total: r.data.reduce((a, b) => a + (b ?? 0), 0) }));
+
+    const hasMix = ops.some(o => o.name.startsWith("Pemex")) && ops.some(o => !o.name.startsWith("Pemex"));
+    if (hasMix) {
+      const sum = (arr) => arr.reduce(
+        (acc, r) => r.data.map((v, i) => (acc[i] ?? 0) + (v ?? 0)),
+        []
+      );
+      const pemexOps = ops.filter(o => o.name.startsWith("Pemex"));
+      const privOps  = ops.filter(o => !o.name.startsWith("Pemex"));
+      return [
+        { name: "Pemex",    data: sum(pemexOps), color: "#10b981" },
+        { name: "Privados", data: sum(privOps),  color: "#6366f1" },
+        ...ops
+          .sort((a, b) => b.total - a.total)
+          .slice(0, 10)
+          .map(({ name, data }) => ({ name, data })),
+      ];
+    }
+
+    return ops
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10)
+      .map(({ name, data }) => ({ name, data }));
+  }
+
+  return [];
+}
+
+// Series para "Producción por ubicación" (Cuenca+Ambiente → Producto). Aquí
+// la hoja siempre es el producto; cuenca y ambiente son dimensiones de
+// filtro, no de serie, y sus combinaciones seleccionadas se suman en un
+// solo total por producto.
+function buildProdCuencaSeries(resultado) {
+  const cats = resultado.categories ?? [];
+  const groups = resultado.groups ?? [];
+  const nacGroup = groups.find(g => g.cuenca === "Nacional");
+  const cuencaGroups = groups.filter(g => g.cuenca !== "Nacional");
+
+  // Sin cuenca(s) filtradas: solo existe el grupo Nacional, con los productos
+  // ya agregados nacionalmente como filas "subtotal".
+  if (cuencaGroups.length === 0) {
+    const nacSg = nacGroup?.subgroups?.find(sg => sg.ubicacion === "Nacional");
+    if (!nacSg) return [];
+    return (nacSg.rows ?? [])
+      .filter(r => r.type === "subtotal")
+      .map(r => ({ name: r.label, data: r.data }));
+  }
+
+  // Con cuenca(s) filtradas: sumar por producto a través de todas las
+  // combinaciones cuenca×ambiente presentes.
+  const merged = new Map();
+  for (const g of cuencaGroups) {
+    for (const sg of g.subgroups ?? []) {
+      for (const row of sg.rows ?? []) {
+        if (row.type !== "operator") continue; // fila de producto (hoja)
+        if (!merged.has(row.label)) merged.set(row.label, cats.map(() => 0));
+        const acc = merged.get(row.label);
+        row.data.forEach((v, i) => { acc[i] += v ?? 0; });
+      }
+    }
+  }
+  return [...merged].map(([name, data]) => ({ name, data }));
+}
+
+// Alternativa: una serie por cuenca en vez de por producto. Para cada cuenca,
+// suma a través de sus ambientes la fila del producto pedido (label exacto,
+// p. ej. "Producción" para líquidos o "Gas (MMpcd)" para gas).
+function buildProdCuencaSeriesPorCuenca(resultado, label) {
+  const cats = resultado.categories ?? [];
+  const cuencaGroups = (resultado.groups ?? []).filter(g => g.cuenca !== "Nacional");
+  return cuencaGroups.map(g => {
+    const data = cats.map(() => 0);
+    for (const sg of g.subgroups ?? []) {
+      const row = (sg.rows ?? []).find(r => r.label === label);
+      if (row) row.data.forEach((v, i) => { data[i] += v ?? 0; });
+    }
+    return { name: g.cuenca, data };
+  }).filter(s => s.data.some(v => v));
+}
+
+// Mismo orden que el backend; cada producto se muestra como un mini-gráfico
+// en modo "Por cuenca", omitiendo los que no tengan datos en el filtro actual.
+const CUENCA_PRODUCTOS = [
+  "Hidrocarburos líquidos (Mbd)", "Petróleo (Mbd)", "Condensado (Mbd)",
+  "Gas (MMpcd)", "Gas asociado (MMpcd)", "Gas no asociado (MMpcd)",
+  "Nitrógeno (MMpcd)", "Agua (Mbd)",
+];
+
+function buildProdCuencaSeriesPorCuencaTodos(resultado) {
+  return CUENCA_PRODUCTOS
+    .map(label => ({ label, series: buildProdCuencaSeriesPorCuenca(resultado, label) }))
+    .filter(({ series }) => series.length > 0);
+}
+
+const CHIP_COLORS = [
+  "#0db4be","#4f46e5","#f59e0b","#10b981",
+  "#f43f5e","#a78bfa","#34d399","#fb923c",
+  "#60a5fa","#e879f9","#84cc16","#38bdf8",
+];
+
+function SeriesChips({ items, visibleSeries, toggleSerie, setAllVisible }) {
+  if (!items.length) return null;
+  const allNames = items.map(s => s.name);
+  const allVisible = allNames.every(n => visibleSeries[n] !== false);
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap mb-5">
+      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest shrink-0 self-center">Series</span>
+      {items.map((s, idx) => {
+        const visible = visibleSeries[s.name] !== false;
+        const color = CHIP_COLORS[idx % CHIP_COLORS.length];
+        return (
+          <button
+            key={s.name}
+            onClick={() => toggleSerie(s.name)}
+            style={visible
+              ? { background: color + "18", borderColor: color + "55", color }
+              : { background: "#f1f5f9", borderColor: "#e2e8f0", color: "#cbd5e1" }
+            }
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full border text-[11px] font-semibold transition-all duration-200 cursor-pointer hover:scale-105 active:scale-95 select-none"
+          >
+            <span
+              className="w-2 h-2 rounded-full shrink-0"
+              style={{ background: visible ? color : "#cbd5e1", boxShadow: visible ? `0 0 5px ${color}99` : "none" }}
+            />
+            {s.name}
+          </button>
+        );
+      })}
+      <button
+        onClick={() => setAllVisible(allNames, !allVisible)}
+        className="text-[10px] font-semibold text-tih-teal hover:underline ml-1 opacity-70 hover:opacity-100 transition-opacity"
+      >
+        {allVisible ? "Ocultar todo" : "Mostrar todo"}
+      </button>
+    </div>
+  );
+}
+
+const PERIOD_LABEL = { annually: "Anual", monthly: "Mensual" };
+
+function DataTitle({ titulo, period, start_year, end_year }) {
+  if (!titulo) return null;
+  const periodLabel = PERIOD_LABEL[period] ?? period;
+  return (
+    <div className="mb-4">
+      <h2 style={{ fontFamily: "'Patria', Georgia, serif", color: "#10312B", fontSize: 20, fontWeight: 700, lineHeight: 1.2, margin: 0 }}>
+        {titulo}
+      </h2>
+      <p style={{ fontFamily: "'Noto Sans', sans-serif", fontSize: 11, color: "#94a3b8", fontWeight: 500, marginTop: 3, letterSpacing: "0.03em" }}>
+        {periodLabel} · {start_year} – {end_year}
+      </p>
+    </div>
+  );
+}
+
+export default function ChartArea() {
+  const { resultado, loading, error, tema, visibleSeries, toggleSerie, setAllVisible, groupBy, setGroupBy, period, start_year, end_year, perfFiltros, prodFiltros, prodOpciones, compareMode } = useExplorer();
+  const [viewMode, setViewMode]   = useState("tablas");
+  const [chartType, setChartType] = useState("line");
+  // Solo para "Producción por ubicación": línea por producto (default) o por cuenca.
+  const [prodChartPor, setProdChartPor] = useState("producto");
+
+  if (loading) return (
+    <div className="flex items-center justify-center h-64">
+      <LoadingSpinner message="Consultando base de datos…" />
+    </div>
+  );
+
+  if (error) return (
+    <div className="m-4 p-4 bg-rose-50 border border-rose-200 rounded-lg text-rose-600 text-sm">{error}</div>
+  );
+
+  if (!tema) return (
+    <div className="flex-1 min-h-0 flex flex-col">
+      <HomeDashboard />
+    </div>
+  );
+
+  // "Pozos": drill-down Cuenca→Campo→Pozo, maneja su propio fetch (no pasa por "resultado").
+  if (tema?.json_arg === "Pozos") {
+    return (
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <PozosExplorer />
+      </div>
+    );
+  }
+
+  if (!resultado) return (
+    <div className="flex flex-col items-center justify-center h-64 text-slate-400">
+      <p className="text-sm">Selecciona un tema para visualizar</p>
+    </div>
+  );
+
+  const tituloTema = tema?.titulo || tema?.tema || "";
+
+  // ── Jerárquico (perforación) ──────────────────────────────────────────────
+  if (resultado.type === "hierarchical") {
+    // "Producción por ubicación" reusa los niveles de perforación (Ambiente >
+    // Cuenca); "Producto" queda como hoja directa, no como tercer nivel.
+    const esProdCuenca = tema?.json_arg === "Cuenca";
+    // Campos y API comparten la misma dimensión cuenca/ambiente que Cuenca.
+    const esProdHier = esProdCuenca || tema?.json_arg === "Campos" || tema?.json_arg === "API";
+    const hierSeries = esProdCuenca ? buildProdCuencaSeries(resultado) : buildHierSeries(resultado, groupBy);
+    // Con 2+ cuencas seleccionadas, permitir el gráfico diferenciado por cuenca.
+    const cuencaCount = esProdCuenca ? (resultado.groups ?? []).filter(g => g.cuenca !== "Nacional").length : 0;
+    const puedeVerPorCuenca = esProdCuenca && cuencaCount >= 2;
+    const verPorCuenca = puedeVerPorCuenca && prodChartPor === "cuenca";
+    const cuencaProductoSeries = verPorCuenca ? buildProdCuencaSeriesPorCuencaTodos(resultado) : [];
+    const chartHierSeries = verPorCuenca ? (cuencaProductoSeries[0]?.series ?? []) : hierSeries;
+    const filtrosActivos = esProdHier
+      ? { cuencas: prodFiltros.cuencas, categorias: [], ubicaciones: prodFiltros.ubicaciones, operadores: [] }
+      : perfFiltros;
+
+    // Sin gráficos si el rango tiene un solo punto (nada que trazar).
+    const unaCategoria  = (resultado.categories?.length ?? 0) <= 1;
+    const hideGraphics  = unaCategoria;
+    const vistaEfectiva = hideGraphics ? "tablas" : viewMode;
+
+    // Subtítulo: cuenca(s)/ambiente(s) representados. Si la selección cubre
+    // todo el universo de opciones se resume como "Nacional". Cuencas en
+    // verde, ambientes en naranja.
+    let chartSubtitle;
+    if (esProdHier) {
+      const cuencaTotal = prodOpciones?.cuencas?.length ?? 0;
+      const ambienteTotal = prodOpciones?.ubicaciones?.length ?? 0;
+      const cuencasSel = (cuencaTotal > 0 && prodFiltros.cuencas.length >= cuencaTotal) ? [] : prodFiltros.cuencas;
+      const ambientesSel = (ambienteTotal > 0 && prodFiltros.ubicaciones.length >= ambienteTotal) ? [] : prodFiltros.ubicaciones;
+      chartSubtitle = (cuencasSel.length === 0 && ambientesSel.length === 0)
+        ? "Nacional"
+        : (
+          <>
+            {cuencasSel.map((c, i) => (
+              <span key={`c-${c}`} style={{ color: "#059669" }}>
+                {c}{(i < cuencasSel.length - 1 || ambientesSel.length > 0) ? ", " : ""}
+              </span>
+            ))}
+            {ambientesSel.map((a, i) => (
+              <span key={`a-${a}`} style={{ color: "#d97706" }}>
+                {a}{i < ambientesSel.length - 1 ? ", " : ""}
+              </span>
+            ))}
+          </>
+        );
+    }
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+        <KpiCards kpis={resultado.kpis} topic={tema?.json_arg} />
+        {(groupBy || esProdCuenca) && chartHierSeries.length > 0 && (
+          <SeriesChips
+            items={chartHierSeries}
+            visibleSeries={visibleSeries}
+            toggleSerie={toggleSerie}
+            setAllVisible={setAllVisible}
+          />
+        )}
+        <ViewBar
+          viewMode={vistaEfectiva} setViewMode={setViewMode}
+          chartType={chartType} setChartType={setChartType}
+          hideGraphics={hideGraphics}
+          extra={puedeVerPorCuenca && (
+            <div className="flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5">
+              {[["producto", "Por producto"], ["cuenca", "Por cuenca"]].map(([id, label]) => (
+                <button key={id} onClick={() => setProdChartPor(id)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                    prodChartPor === id ? "bg-tih-dark text-white shadow-sm" : "text-slate-500 hover:text-slate-700"
+                  }`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        />
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+          {vistaEfectiva === "tablas"
+            ? <DynamicTable resultado={resultado} visibleSeries={visibleSeries} groupBy={groupBy}
+                titulo={tituloTema} period={period} start_year={start_year} end_year={end_year}
+                compareMode={compareMode}
+                // Campos/API usan groupBy (una dimensión a la vez), no el multinivel
+                // AND de Cuenca: sus filas no tienen marca "subtotal" por categoría.
+                filtros={esProdCuenca ? filtrosActivos : undefined}
+                forceDivisions={esProdCuenca}
+                entityLabel={
+                  tema?.json_arg === "PozosCampos" || tema?.json_arg === "Campos" ? "campos"
+                    : tema?.json_arg === "API" ? "clases API"
+                    : tema?.json_arg === "Cuenca" ? "ambientes" : "operadores"
+                } />
+            : chartType === "heatmap"
+              ? (
+                <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
+                  <div className="flex items-baseline justify-end mb-3">
+                    <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                      {CHART_TYPE_LABEL.heatmap}
+                    </span>
+                  </div>
+                  <HeatmapChart items={chartHierSeries} categories={resultado.categories ?? []} height={420} visibleSeries={visibleSeries} />
+                </div>
+              )
+              : verPorCuenca
+                ? (
+                  // Un mini-gráfico por producto: mezclar todos en un solo eje distorsiona
+                  // la escala (MMpcd es ~1000x los Mbd).
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {cuencaProductoSeries.map(({ label, series: prodSeries }) => {
+                      const visible = filterSeries(prodSeries, visibleSeries);
+                      return visible.length > 0 && (
+                        <SingleChart key={label} title={tituloTema} categories={resultado.categories ?? []} series={visible} chartType={chartType}
+                          subtitle={`${label} por cuenca`} />
+                      );
+                    })}
+                  </div>
+                )
+                : esProdCuenca
+                  ? (() => {
+                      // "Por producto": dos gráficos separados por unidad (Mbd vs MMpcd).
+                      const visible = filterSeries(chartHierSeries, visibleSeries);
+                      const mbdSeries = visible.filter(s => !s.name.includes("MMpcd"));
+                      const mmpcdSeries = visible.filter(s => s.name.includes("MMpcd"));
+                      return (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          {mbdSeries.length > 0 && (
+                            <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={mbdSeries} chartType={chartType} subtitle="Mbd" />
+                          )}
+                          {mmpcdSeries.length > 0 && (
+                            <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={mmpcdSeries} chartType={chartType} subtitle="MMpcd" />
+                          )}
+                        </div>
+                      );
+                    })()
+                  : <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={filterSeries(chartHierSeries, visibleSeries)} chartType={chartType}
+                      subtitle={chartSubtitle} />
+          }
+        </div>
+      </div>
+    );
+  }
+
+  // ── Múltiples tabs (Reservas: aceite + gas) ───────────────────────────────
+  if (resultado.tabs) {
+    const allTabSeries = [...new Map(resultado.tabs.flatMap(t => t.series).map(s => [s.name, s])).values()];
+    return (
+      <div>
+        <SeriesChips
+          items={allTabSeries}
+          visibleSeries={visibleSeries}
+          toggleSerie={toggleSerie}
+          setAllVisible={setAllVisible}
+        />
+        <ViewBar viewMode={viewMode} setViewMode={setViewMode} chartType={chartType} setChartType={setChartType} />
+        {resultado.tabs.map(tab => {
+          const series = filterSeries(tab.series, visibleSeries);
+          return viewMode === "tablas"
+            ? <DataTable key={tab.label} title={tab.label} categories={tab.categories} series={series} />
+            : <SingleChart key={tab.label} title={tab.label} categories={tab.categories} series={series} chartType={chartType} />;
+        })}
+      </div>
+    );
+  }
+
+  // ── Simple ────────────────────────────────────────────────────────────────
+  const allSimpleSeries = resultado.series ?? [];
+  const series = filterSeries(allSimpleSeries, visibleSeries);
+  const simpleKpis = buildSimpleKpis(resultado.categories ?? [], allSimpleSeries);
+  const simpleHideGraphics = (resultado.categories?.length ?? 0) <= 1;
+  return (
+    <div>
+      {simpleKpis && <KpiCards kpis={simpleKpis} topic={tema?.json_arg} />}
+      <SeriesChips
+        items={allSimpleSeries}
+        visibleSeries={visibleSeries}
+        toggleSerie={toggleSerie}
+        setAllVisible={setAllVisible}
+      />
+      <ViewBar viewMode={viewMode} setViewMode={setViewMode} chartType={chartType} setChartType={setChartType} hideGraphics={simpleHideGraphics} />
+      {(simpleHideGraphics ? "tablas" : viewMode) === "tablas"
+        ? <DataTable title={tituloTema} categories={resultado.categories ?? []} series={series} />
+        : <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={series} chartType={chartType} />
+      }
+    </div>
+  );
+}

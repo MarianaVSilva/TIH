@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-800 font-sans antialiased;
+  }
+  ::-webkit-scrollbar { @apply w-1.5 h-1.5; }
+  ::-webkit-scrollbar-track { @apply bg-slate-100; }
+  ::-webkit-scrollbar-thumb { @apply bg-slate-300 rounded-full; }
+}
+
+@layer components {
+  .label {
+    @apply text-[10px] font-semibold text-slate-400 uppercase tracking-wider block;
+  }
+
+  .dash-card {
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .dash-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(31, 36, 48, 0.1);
+  }
+
+  .carousel-slide {
+    animation: carousel-fade-in 0.35s ease;
+  }
+}
+
+@keyframes carousel-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}

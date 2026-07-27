@@ -1,0 +1,461 @@
+/* ============================================================
+   TIH — Header
+   Fuentes: Noto Sans (cuerpo) | Patria (títulos)
+   Color base: #10312B
+   ============================================================ */
+
+/* --- Fuentes ------------------------------------------------ */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap');
+
+/* Patria — fuente oficial SENER (debe estar en /public/fonts/) */
+@font-face {
+  font-family: 'Patria';
+  src: url('/fonts/Patria-Regular.woff2') format('woff2'),
+       url('/fonts/Patria-Regular.woff')  format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Patria';
+  src: url('/fonts/Patria-Bold.woff2') format('woff2'),
+       url('/fonts/Patria-Bold.woff')  format('woff');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* --- Variables --------------------------------------------- */
+:root {
+  --header-bg:        #10312B;
+  --header-border:    rgba(255, 255, 255, 0.08);
+  --header-height:    64px;
+  --filterbar-height: 60px;
+  --divider:          rgba(255, 255, 255, 0.25);
+  --text-light:       rgba(255, 255, 255, 0.92);
+  --text-muted:       rgba(255, 255, 255, 0.72);
+  --accent:           #C9A84C;   /* dorado suave — tono escudo */
+}
+
+/* --- Contenedor principal ----------------------------------- */
+.tih-header {
+  position: relative;
+  z-index: 100;
+  flex-shrink: 0;
+
+  background-color: var(--header-bg);
+  border-bottom: 1px solid var(--header-border);
+
+  /* Sombra suave hacia abajo */
+  box-shadow:
+    0 1px 0   rgba(255,255,255,0.04) inset,
+    0 2px 12px rgba(0, 0, 0, 0.25);
+}
+
+/* --- Banda de marca (fila superior) ------------------------- */
+.tih-header__brand {
+  display: flex;
+  align-items: center;
+  height: var(--header-height);
+  padding: 0 28px;
+  gap: 0;
+}
+
+/* Logo */
+.tih-header__logo {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.tih-header__logo img {
+  height: 58px;
+  width: auto;
+  /* Filtro para adaptar logo dorado/crema sobre fondo oscuro */
+  filter: brightness(1.05) drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+  object-fit: contain;
+}
+
+/* Divisor vertical */
+.tih-header__divider {
+  width: 1px;
+  height: 36px;
+  background: var(--divider);
+  margin: 0 20px;
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+
+/* Bloque de identidad TIH */
+.tih-header__identity {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+}
+
+.tih-header__sigla {
+  font-family: 'Patria', 'Georgia', serif;
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: 0.06em;
+  color: var(--text-light);
+  line-height: 1;
+}
+
+.tih-header__subtitle {
+  font-family: 'Noto Sans', sans-serif;
+  font-weight: 300;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+/* Espaciador flexible */
+.tih-header__spacer {
+  flex: 1;
+}
+
+/* Botones de acción (derecha) */
+.tih-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tih-header__action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.06);
+  color: var(--text-muted);
+  font-family: 'Noto Sans', sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s, border-color 0.18s;
+  text-decoration: none;
+}
+
+.tih-header__action-btn:hover {
+  background: rgba(255,255,255,0.12);
+  color: var(--text-light);
+  border-color: rgba(255,255,255,0.28);
+}
+
+/* --- Barra de filtros (verde oscuro) ----------------------- */
+.tih-filterbar {
+  background: #10312B;
+  border-top: none;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  border-bottom: none;
+}
+
+/* Fila de pills de sección */
+.tih-filterbar__pills-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 28px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+
+/* Fila de filtros (tema, periodicidad, fecha) */
+.tih-filterbar__filters-row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 28px 12px;
+  background: #0d2822;
+}
+
+/* Grupos de filtro */
+.tih-filterbar__group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Labels */
+.tih-filterbar__label--dark {
+  font-family: 'Noto Sans', sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.35);
+}
+
+/* ── Custom Select ─────────────────────────────────────────────────────────── */
+.tih-cselect {
+  position: relative;
+  display: inline-block;
+}
+
+.tih-cselect__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  background: rgba(255,255,255,0.08);
+  border: 1.5px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  color: rgba(255,255,255,0.85);
+  font-family: 'Noto Sans', sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 6px 10px 6px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+[data-small] .tih-cselect__trigger {
+  font-size: 12px;
+  padding: 5px 8px 5px 10px;
+}
+
+.tih-cselect__trigger:hover {
+  background: rgba(255,255,255,0.13);
+  border-color: rgba(255,255,255,0.3);
+}
+
+.tih-cselect__trigger--open {
+  background: rgba(255,255,255,0.13);
+  border-color: rgba(255,255,255,0.4);
+  box-shadow: 0 0 0 3px rgba(255,255,255,0.07);
+}
+
+.tih-cselect__trigger--placeholder .tih-cselect__value {
+  color: rgba(255,255,255,0.35);
+}
+
+.tih-cselect__chevron {
+  width: 14px;
+  height: 14px;
+  color: rgba(255,255,255,0.4);
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+
+.tih-cselect__trigger--open .tih-cselect__chevron {
+  transform: rotate(180deg);
+}
+
+.tih-cselect__menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 9999;
+  min-width: 100%;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06);
+  padding: 4px;
+  list-style: none;
+  margin: 0;
+  scrollbar-width: thin;
+  scrollbar-color: #e2e8f0 transparent;
+}
+
+.tih-cselect__option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-family: 'Noto Sans', sans-serif;
+  font-size: 12.5px;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.tih-cselect__option:hover {
+  background: #f0fdf4;
+  color: #10312B;
+}
+
+.tih-cselect__option--active {
+  background: #f0fdf4;
+  color: #10312B;
+  font-weight: 600;
+}
+
+.tih-cselect__option--placeholder {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.tih-cselect__option--placeholder:hover {
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.tih-cselect__check {
+  font-size: 11px;
+  color: #10312B;
+  margin-right: 2px;
+}
+
+/* Selects (legacy, solo para el botón Filtros) */
+.tih-filterbar__select--light {
+  background: rgba(255,255,255,0.08);
+  border: 1.5px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  color: rgba(255,255,255,0.85);
+  font-family: 'Noto Sans', sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 6px 12px;
+  outline: none;
+  transition: border-color 0.18s, background 0.18s;
+  cursor: pointer;
+  min-width: 140px;
+}
+
+.tih-filterbar__select--light:hover {
+  background: rgba(255,255,255,0.13);
+  border-color: rgba(255,255,255,0.3);
+}
+
+.tih-filterbar__select--light:focus {
+  border-color: rgba(255,255,255,0.4);
+  background: rgba(255,255,255,0.13);
+}
+
+.tih-filterbar__select--light:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Animación al limpiar todos los filtros (doble clic en "Filtros") */
+@keyframes tih-filtros-clear-pulse {
+  0%   { transform: scale(1);    box-shadow: 0 0 0 0 rgba(94,234,212,0.55); }
+  30%  { transform: scale(0.93); box-shadow: 0 0 0 0 rgba(94,234,212,0.55); }
+  55%  { transform: scale(1.06); box-shadow: 0 0 0 8px rgba(94,234,212,0); }
+  100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(94,234,212,0); }
+}
+
+.tih-filtros-clear-anim {
+  animation: tih-filtros-clear-pulse 0.5s ease-out;
+}
+
+@keyframes tih-filtros-clear-icon {
+  0%   { transform: scale(0.4) rotate(-20deg); opacity: 0; }
+  40%  { transform: scale(1.15) rotate(4deg);  opacity: 1; }
+  100% { transform: scale(1) rotate(0deg);     opacity: 1; }
+}
+
+.tih-filtros-clear-icon {
+  animation: tih-filtros-clear-icon 0.45s ease-out;
+}
+
+/* Fecha — par de selects en fila */
+.tih-filterbar__date-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tih-filterbar__select--sm {
+  min-width: 72px;
+}
+
+/* Radio periodicidad — toggle sobre fondo oscuro */
+.tih-filterbar__radios--dark {
+  display: flex;
+  gap: 0;
+  background: rgba(0,0,0,0.25);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.tih-filterbar__radio-label--dark {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: 'Noto Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.45);
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 12px;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tih-filterbar__radio-label--dark:has(input:checked) {
+  background: rgba(255,255,255,0.13);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+
+.tih-filterbar__radio-label--dark input[type="radio"] {
+  display: none;
+}
+
+/* Separador vertical */
+.tih-filterbar__sep--dark {
+  width: 1px;
+  height: 28px;
+  background: rgba(255,255,255,0.12);
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+
+/* ── Pills de sección (sobre fondo oscuro) ── */
+.tih-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 18px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(255,255,255,0.2);
+  background: transparent;
+  color: rgba(255,255,255,0.6);
+  font-family: 'Noto Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  transition: background 0.18s, border-color 0.18s, color 0.18s,
+              box-shadow 0.18s, transform 0.12s;
+}
+
+.tih-pill:hover {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.35);
+  color: rgba(255,255,255,0.9);
+  transform: translateY(-1px);
+}
+
+.tih-pill--active {
+  background: rgba(255,255,255,0.16);
+  border-color: rgba(255,255,255,0.4);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  transform: translateY(-1px);
+}
+
+.tih-pill--active:hover {
+  background: rgba(255,255,255,0.22);
+  border-color: rgba(255,255,255,0.5);
+  color: #ffffff;
+  transform: translateY(-2px);
+}
