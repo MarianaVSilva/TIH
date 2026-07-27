@@ -25,5 +25,3 @@ Thumbs.db
 *.log
 npm-debug.log*
 
-# Claude session files (not part of the app)
-.claude/
