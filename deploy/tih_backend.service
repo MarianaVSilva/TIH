@@ -1,0 +1,23 @@
+# /etc/systemd/system/tih_backend.service
+# Backend "TIH — Tablero de Información de Hidrocarburos" (FastAPI + gunicorn/uvicorn).
+# Sigue el patrón del servidor (ver precios_gasolina.service): venv propio, Restart=always.
+#
+# Instalar:
+#   sudo cp deploy/tih_backend.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now tih_backend
+
+[Unit]
+Description=TIH Backend (FastAPI/gunicorn)
+After=network.target
+
+[Service]
+User=mvazquez
+Group=mvazquez
+WorkingDirectory=/opt/tih/backend
+ExecStart=/opt/tih/backend/.venv/bin/gunicorn app.main:app -k uvicorn.workers.UvicornWorker --workers 2 --bind 127.0.0.1:8005 --timeout 120
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

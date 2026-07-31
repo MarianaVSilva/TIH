@@ -20,7 +20,7 @@ def _make_connection():
         f"{auth}"
         "TrustServerCertificate=yes;"
     )
-    return pyodbc.connect(conn_str)
+    return pyodbc.connect(conn_str, timeout=30)
 
 
 engine = create_engine(

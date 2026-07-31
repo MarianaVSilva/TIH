@@ -16,11 +16,12 @@ def _server() -> str:
 
 
 def _connect(database: str = "master") -> pyodbc.Connection:
+    auth = "Trusted_Connection=yes;" if not settings.db_user else f"UID={settings.db_user};PWD={settings.db_password};"
     conn_str = (
         f"DRIVER={{ODBC Driver 17 for SQL Server}};"
         f"SERVER={_server()};"
         f"DATABASE={database};"
-        "Trusted_Connection=yes;"
+        f"{auth}"
         "TrustServerCertificate=yes;"
     )
     return pyodbc.connect(conn_str, autocommit=True, timeout=30)
