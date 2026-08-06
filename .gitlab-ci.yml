@@ -1,0 +1,14 @@
+stages:
+  - deploy
+
+deploy:
+  stage: deploy
+  only:
+    - master
+  script:
+    - sudo git -C /opt/tih pull
+    - cd /opt/tih/frontend
+    - npm ci
+    - npm run build
+    - sudo chmod -R o+rX /opt/tih/frontend/dist
+    - sudo systemctl restart tih_backend
