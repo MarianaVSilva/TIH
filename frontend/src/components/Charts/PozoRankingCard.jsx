@@ -1,9 +1,11 @@
 const TENDENCIA_ICON  = { CRECIENDO: "↑", ESTABLE: "→", DECLINANDO: "↓", CRITICO: "⚠" };
 const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626" };
 const TENDENCIA_BG    = { CRECIENDO: "#ecfdf5", ESTABLE: "#f1f5f9", DECLINANDO: "#fffbeb", CRITICO: "#fef2f2" };
+// Pozo sin producción actual: la tendencia no tiene sentido, se omite.
+const ESTADOS_SIN_TENDENCIA = ["Cerrado", "Inactivo", "Abandono permanente", "Abandono temporal"];
 
-function TendenciaBadge({ tendencia }) {
-  if (!tendencia || tendencia === "SIN_DATOS") return <span className="text-slate-300">—</span>;
+function TendenciaBadge({ tendencia, estado }) {
+  if (!tendencia || tendencia === "SIN_DATOS" || ESTADOS_SIN_TENDENCIA.includes(estado)) return <span className="text-slate-300">—</span>;
   return (
     <span
       className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-semibold whitespace-nowrap"
@@ -108,7 +110,7 @@ export default function PozoRankingCard({ ranking, onSelectPozo, onClose }) {
                 <td className="py-2 px-3 text-slate-400">{p.ranking}</td>
                 <td className="py-2 px-3 font-semibold text-slate-700 group-hover:text-teal-800">{p.pozo}</td>
                 <td className="py-2 px-3 text-right tabular-nums text-slate-600">{p.produccion_mbd.toLocaleString("es-MX")}</td>
-                <td className="py-2 px-3"><div className="flex justify-center"><TendenciaBadge tendencia={p.tendencia} /></div></td>
+                <td className="py-2 px-3"><div className="flex justify-center"><TendenciaBadge tendencia={p.tendencia} estado={p.estado_operativo} /></div></td>
                 <td className="py-2 px-3"><EstadoBadge estado={p.estado_operativo} /></td>
               </tr>
             ))}

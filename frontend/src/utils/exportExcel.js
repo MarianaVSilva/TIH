@@ -32,7 +32,8 @@ function descargarBuffer(buffer, nombreArchivo) {
  * @param {string} p.titulo - Nombre del pozo/campo/cuenca.
  * @param {string} [p.subtitulo] - Contexto (campo del pozo, etc).
  * @param {string} [p.periodoNota] - Texto de qué período representan los datos.
- * @param {{columnas: string[], filas: {label: string, valores: (number|string)[]}[]}} p.tabla
+ * @param {{columnas: string[], filas: {label: string, valores: (number|string)[]}[]}} [p.tabla] - formato jerárquico (indentado, 1 columna de valor por período).
+ * @param {{columnasIdentidad: string[], columnasValor: string[], filas: {identidad: (string|number)[], valores: (number|string)[]}[]}} [p.tablaPivot] - formato plano/pivote: 1 fila por combinación hoja, 1 columna por producto/serie. Tiene prioridad sobre `tabla` cuando ambos vienen.
  * @param {{columnas: string[], filas: (string|number)[][]}} [p.tablaSecundaria] - p. ej. ranking de pozos.
  * @param {string} [p.tituloTablaSecundaria]
  * @param {string} [p.chartImageBase64] - PNG en base64 (con o sin prefijo data:).
@@ -42,7 +43,8 @@ function descargarBuffer(buffer, nombreArchivo) {
 export async function exportarProduccionExcel(p) {
   const {
     titulo, subtitulo, periodoNota,
-    tabla, tablaSecundaria, tituloTablaSecundaria,
+    tabla, tablaPivot, tablaSecundaria, tituloTablaSecundaria,
+    etiquetaFilaTabla = "Producto",
     chartImageBase64, chartTitulo,
     nombreArchivo = `TIH_${titulo}.xlsx`.replace(/[^\w.\-]+/g, "_"),
   } = p;
@@ -52,7 +54,8 @@ export async function exportarProduccionExcel(p) {
   wb.created = new Date();
   const ws = wb.addWorksheet("Producción", { views: [{ showGridLines: false }] });
 
-  const numCols = Math.max((tabla?.columnas?.length ?? 0) + 1, (tablaSecundaria?.columnas?.length ?? 0), 6);
+  const numColsPivot = tablaPivot ? (tablaPivot.columnasIdentidad.length + tablaPivot.columnasValor.length) : 0;
+  const numCols = Math.max((tabla?.columnas?.length ?? 0) + 1, (tablaSecundaria?.columnas?.length ?? 0), numColsPivot, 6);
   const lastColLetter = ws.getColumn(numCols).letter;
 
   // ── Banner (igual al header del sitio) ────────────────────────────────
@@ -100,17 +103,22 @@ export async function exportarProduccionExcel(p) {
   fila++;
 
   if (subtitulo) {
-    ws.mergeCells(`A${fila}:${lastColLetter}${fila}`);
+    const esMultilinea = subtitulo.includes("\n");
+    const filaFin = esMultilinea ? fila + 1 : fila;
+    ws.mergeCells(`A${fila}:${lastColLetter}${filaFin}`);
     const sCell = ws.getCell(`A${fila}`);
     sCell.value = subtitulo;
-    sCell.font = { size: 10, color: { argb: GRIS_TEXTO } };
-    fila++;
+    sCell.font = { size: esMultilinea ? 8 : 10, color: { argb: "FF1E293B" } };
+    sCell.alignment = esMultilinea
+      ? { horizontal: "center", vertical: "middle", wrapText: true }
+      : { horizontal: "left" };
+    fila = filaFin + 1;
   }
   if (periodoNota) {
     ws.mergeCells(`A${fila}:${lastColLetter}${fila}`);
     const pCell = ws.getCell(`A${fila}`);
     pCell.value = periodoNota;
-    pCell.font = { size: 9, italic: true, color: { argb: GRIS_TEXTO } };
+    pCell.font = { size: 9, color: { argb: GRIS_TEXTO } };
     fila++;
   }
   ws.mergeCells(`A${fila}:${lastColLetter}${fila}`);
@@ -119,10 +127,45 @@ export async function exportarProduccionExcel(p) {
   fechaCell.font = { size: 8, color: { argb: GRIS_TEXTO } };
   fila += 2;
 
-  // ── Tabla principal ─────────────────────────────────────────────────────
-  if (tabla?.columnas?.length) {
+  // ── Tabla pivote (plana: 1 fila por combinación hoja, 1 columna por serie) ──
+  if (tablaPivot?.columnasValor?.length) {
+    const { columnasIdentidad, columnasValor, filas: filasPivot } = tablaPivot;
     const headerRow = ws.getRow(fila);
-    headerRow.getCell(1).value = "Producto";
+    [...columnasIdentidad, ...columnasValor].forEach((c, i) => { headerRow.getCell(i + 1).value = c; });
+    headerRow.eachCell({ includeEmpty: false }, cell => {
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: VERDE_OSCURO } };
+      cell.font = { bold: true, color: { argb: BLANCO }, size: 11 };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.border = { bottom: { style: "thin", color: { argb: VERDE_CLARO } } };
+    });
+    fila++;
+
+    filasPivot.forEach((f) => {
+      const row = ws.getRow(fila);
+      columnasIdentidad.forEach((_, i) => {
+        const cell = row.getCell(i + 1);
+        cell.value = f.identidad[i] ?? "";
+        cell.font = { size: 11 };
+        cell.alignment = { horizontal: "center" };
+      });
+      columnasValor.forEach((_, i) => {
+        const cell = row.getCell(columnasIdentidad.length + i + 1);
+        const v = f.valores[i];
+        cell.value = (v === 0 || v == null) ? 0 : v;
+        cell.numFmt = "#,##0.00";
+        cell.alignment = { horizontal: "center" };
+        cell.font = { size: 11 };
+      });
+      fila++;
+    });
+
+    ws.getColumn(1).width = 26;
+    for (let i = 2; i <= numCols; i++) ws.getColumn(i).width = 20;
+    for (let i = 0; i < columnasIdentidad.length; i++) ws.getColumn(i + 1).width = 18;
+    fila += 1;
+  } else if (tabla?.columnas?.length) {
+    const headerRow = ws.getRow(fila);
+    headerRow.getCell(1).value = etiquetaFilaTabla;
     tabla.columnas.forEach((c, i) => { headerRow.getCell(i + 2).value = c; });
     headerRow.eachCell({ includeEmpty: false }, cell => {
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: VERDE_OSCURO } };

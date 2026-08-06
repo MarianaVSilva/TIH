@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import ReactECharts from "echarts-for-react";
 import { useExplorer } from "../../store/useExplorer";
 import LoadingSpinner from "../UI/LoadingSpinner";
@@ -6,6 +6,9 @@ import DynamicTable from "./DynamicTable";
 import HeatmapChart from "./HeatmapChart";
 import HomeDashboard from "./HomeDashboard";
 import PozosExplorer from "./PozosExplorer";
+import AsignacionesRanking from "./AsignacionesRanking";
+import AsignacionDetallePanel from "./AsignacionDetallePanel";
+import { descargarCsvConHeader } from "../../utils/exportCsv";
 
 const PALETTE = [
   "#0db4be","#6366f1","#f59e0b","#ef4444",
@@ -59,12 +62,24 @@ const CHART_TYPES = [
   },
 ];
 
-function DataTable({ title, categories, series }) {
+function DataTable({ title, categories, series, periodoNota }) {
   return (
     <div className="bg-white border border-slate-200 rounded-lg shadow-sm mb-4 overflow-hidden">
-      {title && (
-        <div className="px-4 py-3 border-b border-slate-100">
-          <p className="text-xs font-semibold text-slate-600">{title}</p>
+      {(title || series.length > 0) && (
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-2">
+          {title ? <p className="text-xs font-semibold text-slate-600">{title}</p> : <span />}
+          <button
+            onClick={() => descargarCsvConHeader({
+              titulo: title || "Datos",
+              periodoNota,
+              columnas: ["Período", ...series.map(s => s.name)],
+              filas: categories.map((cat, i) => [cat, ...series.map(s => s.data[i] ?? "")]),
+              nombreArchivo: `TIH_${title || "datos"}.csv`,
+            })}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 shrink-0"
+          >
+            Exportar CSV
+          </button>
         </div>
       )}
       <div className="overflow-x-auto">
@@ -97,7 +112,9 @@ function DataTable({ title, categories, series }) {
 
 const CHART_TYPE_LABEL = Object.fromEntries(CHART_TYPES.map(t => [t.id, t.label]));
 
-function SingleChart({ title, categories, series, chartType, subtitle }) {
+// Extraído de SingleChart para poder reusarlo con un ref propio (necesario
+// para exportar a PNG en "Gráfica personalizada").
+function buildChartOption(categories, series, chartType) {
   const isPie = chartType === "pie";
   const isBar = chartType === "bar";
 
@@ -108,7 +125,7 @@ function SingleChart({ title, categories, series, chartType, subtitle }) {
       })).filter(d => d.value > 0)
     : [];
 
-  const option = isPie
+  return isPie
     ? {
         backgroundColor: "#fff",
         color: PALETTE,
@@ -177,6 +194,12 @@ function SingleChart({ title, categories, series, chartType, subtitle }) {
           } : {}),
         })),
       };
+}
+
+function SingleChart({ title, categories, series, chartType, subtitle }) {
+  const isPie = chartType === "pie";
+  const isBar = chartType === "bar";
+  const option = buildChartOption(categories, series, chartType);
 
   // Con pocas categorías y series, limitar y centrar el ancho del gráfico
   // (si no, las barras se ven sueltas). Con muchas series se desactiva para
@@ -207,10 +230,13 @@ function SingleChart({ title, categories, series, chartType, subtitle }) {
   );
 }
 
-function ViewBar({ viewMode, setViewMode, chartType, setChartType, hideGraphics = false, extra }) {
-  const modos = hideGraphics
-    ? [{ id: "tablas", label: "Ver como tablas" }]
-    : [{ id: "tablas", label: "Ver como tablas" }, { id: "graficos", label: "Ver como gráficos" }];
+function ViewBar({ viewMode, setViewMode, chartType, setChartType, hideGraphics = false, extra, extraModos = [] }) {
+  const modos = [
+    ...(hideGraphics
+      ? [{ id: "tablas", label: "Ver como tablas" }]
+      : [{ id: "tablas", label: "Ver como tablas" }, { id: "graficos", label: "Ver como gráficos" }]),
+    ...extraModos,
+  ];
   return (
     <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
       <div className="flex items-center gap-2 flex-wrap">
@@ -377,7 +403,7 @@ function KpiCards({ kpis, topic }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
       {items.map(({ label, color, value }) => {
-        const labelText = typeof label === "function" ? label(topic) : label;
+        const labelText = typeof label === "function" ? label(topic, kpis) : label;
         return (
           <div
             key={labelText}
@@ -498,34 +524,315 @@ function buildProdCuencaSeries(resultado) {
   return [...merged].map(([name, data]) => ({ name, data }));
 }
 
-// Alternativa: una serie por cuenca en vez de por producto. Para cada cuenca,
-// suma a través de sus ambientes la fila del producto pedido (label exacto,
-// p. ej. "Producción" para líquidos o "Gas (MMpcd)" para gas).
-function buildProdCuencaSeriesPorCuenca(resultado, label) {
+// "Gráfica personalizada" de "Producción por ubicación": para un Ambiente
+// elegido, suma a través de todas las cuencas la fila de cada producto (todas
+// sus categorías/leaf rows con ese label exacto) — una serie por producto,
+// toda la producción de ese ambiente junta en una sola gráfica.
+function buildUbicacionSeries(resultado, ubicacion) {
   const cats = resultado.categories ?? [];
-  const cuencaGroups = (resultado.groups ?? []).filter(g => g.cuenca !== "Nacional");
-  return cuencaGroups.map(g => {
-    const data = cats.map(() => 0);
-    for (const sg of g.subgroups ?? []) {
-      const row = (sg.rows ?? []).find(r => r.label === label);
-      if (row) row.data.forEach((v, i) => { data[i] += v ?? 0; });
+  const merged = new Map();
+  for (const g of (resultado.groups ?? [])) {
+    if (g.cuenca === "Nacional") continue;
+    const sg = (g.subgroups ?? []).find(s => s.ubicacion === ubicacion);
+    if (!sg) continue;
+    for (const row of sg.rows ?? []) {
+      if (row.label === "Producción") continue; // subtotal redundante con la suma de productos
+      if (!merged.has(row.label)) merged.set(row.label, cats.map(() => 0));
+      const acc = merged.get(row.label);
+      row.data.forEach((v, i) => { acc[i] += v ?? 0; });
     }
-    return { name: g.cuenca, data };
-  }).filter(s => s.data.some(v => v));
+  }
+  return [...merged].map(([name, data]) => ({ name, data })).filter(s => s.data.some(v => v));
 }
 
-// Mismo orden que el backend; cada producto se muestra como un mini-gráfico
-// en modo "Por cuenca", omitiendo los que no tengan datos en el filtro actual.
-const CUENCA_PRODUCTOS = [
-  "Hidrocarburos líquidos (Mbd)", "Petróleo (Mbd)", "Condensado (Mbd)",
-  "Gas (MMpcd)", "Gas asociado (MMpcd)", "Gas no asociado (MMpcd)",
-  "Nitrógeno (MMpcd)", "Agua (Mbd)",
-];
+// "Producción por operador" — vista GENERAL: una comparación Pemex vs
+// Privados por cada producto, tomada de la fila "Nacional" del backend
+// (subtotal = producto, operator = Pemex Exploración y Producción/Privadas).
+// Solo existe con esa forma cuando no hay un solo grupo filtrado.
+function buildOperadoresComparacion(resultado) {
+  const nac = (resultado.groups ?? []).find(g => g.cuenca === "Nacional");
+  const nacSg = nac?.subgroups?.find(sg => sg.ubicacion === "Nacional");
+  if (!nacSg) return [];
+  const out = [];
+  let current = null;
+  for (const row of nacSg.rows ?? []) {
+    if (row.type === "subtotal") { current = { label: row.label, series: [] }; out.push(current); continue; }
+    if (row.type === "operator" && current) current.series.push({ name: row.label, data: row.data });
+  }
+  return out;
+}
 
-function buildProdCuencaSeriesPorCuencaTodos(resultado) {
-  return CUENCA_PRODUCTOS
-    .map(label => ({ label, series: buildProdCuencaSeriesPorCuenca(resultado, label) }))
-    .filter(({ series }) => series.length > 0);
+// "Producción por operador" — 2+ empresas puntuales seleccionadas (grupo o
+// checkboxes de empresa, ver TopBar): sin grupo "Nacional" propio, el backend
+// trae una lista plana de empresas (Producto → Contrato dentro de cada una).
+// Mezclar los 8 productos de varias empresas en una sola gráfica no dice
+// nada (unidades distintas, demasiadas líneas) — igual que la comparación
+// Pemex/Privados, se arma un gráfico por producto, comparando cada empresa
+// elegida (sumando sus contratos).
+function buildEmpresasComparacion(resultado) {
+  const empresas = (resultado.groups ?? []).filter(g => g.cuenca !== "Nacional");
+  if (empresas.length < 2) return [];
+  const porProducto = new Map();
+  for (const g of empresas) {
+    const rows = g.subgroups?.[0]?.rows ?? [];
+    for (const row of rows) {
+      if (row.type !== "subtotal") continue;
+      if (!porProducto.has(row.label)) porProducto.set(row.label, []);
+      porProducto.get(row.label).push({ name: g.cuenca, data: row.data });
+    }
+  }
+  return [...porProducto].map(([label, series]) => ({ label, series }));
+}
+
+const OPERADOR_GRUPO_COLORS = { "Pemex Exploración y Producción": "#10b981", "Privadas": "#6366f1" };
+
+function OperadorComparacionChart({ label, series, categories, chartType }) {
+  const option = buildChartOption(categories, series.map(s => ({ ...s, color: OPERADOR_GRUPO_COLORS[s.name] })), chartType);
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <span className="text-[11px] font-semibold text-teal-700">{label}</span>
+      </div>
+      <ReactECharts option={option} style={{ height: 280 }} notMerge />
+    </div>
+  );
+}
+
+// Exportación a PNG con branding institucional — banner con degradado verde,
+// logo de Energía (el mismo del header) y título, en formato apaisado fijo
+// (no depende del ancho del panel en pantalla). Toda "Gráfica personalizada"
+// (Operadores, Producción por ubicación, y las que se agreguen después) usa
+// esta misma función para que el PNG resultante tenga siempre el mismo estilo.
+function exportChartPng(chartRef, { titulo, filename }) {
+  const inst = chartRef.current?.getEchartsInstance?.();
+  if (!inst) return;
+  const original = { width: inst.getWidth(), height: inst.getHeight() };
+  inst.resize({ width: 1000, height: 560 });
+  const url = inst.getDataURL({ pixelRatio: 2, backgroundColor: "#fff" });
+  inst.resize({ width: original.width, height: original.height });
+
+  const logo = new Image();
+  logo.crossOrigin = "anonymous";
+  logo.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const bannerH = 56;
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height + bannerH;
+      const ctx = canvas.getContext("2d");
+      const grad = ctx.createLinearGradient(0, 0, canvas.width, 0);
+      grad.addColorStop(0, "#10312B");
+      grad.addColorStop(1, "#1a4a3a");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, bannerH);
+      const logoH = bannerH - 20;
+      const logoW = logoH * (logo.width / logo.height);
+      ctx.drawImage(logo, 20, 10, logoW, logoH);
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 15px 'Noto Sans', sans-serif";
+      ctx.textBaseline = "middle";
+      ctx.fillText(titulo, 20 + logoW + 14, bannerH / 2);
+      ctx.drawImage(img, 0, bannerH);
+      const a = document.createElement("a");
+      a.href = canvas.toDataURL("image/png");
+      a.download = filename;
+      a.click();
+    };
+    img.src = url;
+  };
+  logo.src = "/logosener-blanco.png";
+}
+
+// Selector buscable: en todas las "Gráfica personalizada" (Operador, Cuenca/
+// Ambiente, Contrato…) la lista puede tener decenas de opciones — un <select>
+// nativo no deja escribir para filtrar, así que se reemplaza por un combobox
+// con input de texto + lista filtrada en vivo.
+function SearchableSelect({ options, value, onChange }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(-1);
+  const ref = useRef(null);
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const filtered = query.trim()
+    ? options.filter(o => o.toLowerCase().includes(query.trim().toLowerCase()))
+    : options;
+
+  // Al abrir, escribir, o cambiar el filtrado, resaltar la opción actual (si
+  // sigue en la lista) o la primera — así las flechas siempre parten de un
+  // punto conocido en vez de "ninguna resaltada".
+  useEffect(() => {
+    if (!open) return;
+    const idxActual = filtered.indexOf(value);
+    setHighlight(filtered.length ? (idxActual >= 0 ? idxActual : 0) : -1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, query, filtered.length]);
+
+  function moveHighlight(delta) {
+    if (!filtered.length) return;
+    setHighlight(h => {
+      const next = ((h < 0 ? 0 : h) + delta + filtered.length) % filtered.length;
+      listRef.current?.children?.[next]?.scrollIntoView?.({ block: "nearest" });
+      return next;
+    });
+  }
+
+  function elegir(o) {
+    onChange(o);
+    setQuery("");
+    setOpen(false);
+  }
+
+  function handleKeyDown(e) {
+    if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) { setOpen(true); return; }
+    if (!open) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); moveHighlight(1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); moveHighlight(-1); }
+    else if (e.key === "Enter") { e.preventDefault(); if (highlight >= 0 && filtered[highlight]) elegir(filtered[highlight]); }
+    else if (e.key === "Escape") { setOpen(false); }
+  }
+
+  return (
+    <div ref={ref} className="relative" style={{ minWidth: 240 }}>
+      <input
+        type="text"
+        value={open ? query : value}
+        onChange={e => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => { setQuery(""); setOpen(true); }}
+        onKeyDown={handleKeyDown}
+        placeholder="Buscar…"
+        className="w-full text-[12px] border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-teal-400"
+      />
+      {open && (
+        <ul ref={listRef} className="absolute z-50 top-full mt-1 left-0 right-0 max-h-56 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
+          {filtered.length === 0 && <li className="px-3 py-1.5 text-[12px] text-slate-400">Sin resultados</li>}
+          {filtered.map((o, i) => (
+            <li key={o}
+              onMouseEnter={() => setHighlight(i)}
+              onClick={() => elegir(o)}
+              className={`px-3 py-1.5 text-[12px] cursor-pointer ${
+                i === highlight ? "bg-teal-100 text-teal-800" : o === value ? "text-teal-700 font-semibold bg-teal-50/50" : "text-slate-700 hover:bg-teal-50"
+              }`}
+            >
+              {o}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// "Gráfica personalizada": el usuario elige UNA empresa y ve toda su
+// producción (todos los productos con datos) en una sola gráfica,
+// exportable como PNG con un banner de título superpuesto.
+function OperadorCustomChart({ empresas, categories, chartType, tituloTema }) {
+  const [selected, setSelected] = useState(empresas[0]?.empresa ?? "");
+  const chartRef = useRef(null);
+  const emp = empresas.find(e => e.empresa === selected) ?? empresas[0];
+  const series = emp?.series ?? [];
+  const option = useMemo(() => buildChartOption(categories, series, chartType), [categories, series, chartType]);
+
+  if (!empresas.length) return <p className="text-sm text-slate-400 p-4">Sin empresas disponibles para graficar.</p>;
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
+      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+        <SearchableSelect
+          options={empresas.map(e => e.empresa)}
+          value={selected || empresas[0]?.empresa}
+          onChange={setSelected}
+        />
+        <button
+          onClick={() => exportChartPng(chartRef, {
+            titulo: `${tituloTema} — ${emp?.empresa ?? ""}`,
+            filename: `produccion_${(emp?.empresa ?? "operador").replace(/\s+/g, "_")}.png`,
+          })}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50"
+        >
+          Exportar PNG
+        </button>
+      </div>
+      <ReactECharts ref={chartRef} option={option} style={{ height: 380 }} notMerge />
+    </div>
+  );
+}
+
+// "Gráfica personalizada" de "Producción por contrato": el usuario elige UN
+// contrato y ve toda su producción (todos los productos con datos) en una
+// sola gráfica, exportable a PNG — mismo patrón que OperadorCustomChart.
+function ContratoCustomChart({ contratos, categories, chartType, tituloTema }) {
+  const [selected, setSelected] = useState(contratos[0]?.nombre ?? "");
+  const chartRef = useRef(null);
+  const contrato = contratos.find(c => c.nombre === selected) ?? contratos[0];
+  const series = contrato?.series ?? [];
+  const option = useMemo(() => buildChartOption(categories, series, chartType), [categories, series, chartType]);
+
+  if (!contratos.length) return <p className="text-sm text-slate-400 p-4">Sin contratos disponibles para graficar.</p>;
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
+      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+        <SearchableSelect
+          options={contratos.map(c => c.nombre)}
+          value={selected || contratos[0]?.nombre}
+          onChange={setSelected}
+        />
+        <button
+          onClick={() => exportChartPng(chartRef, {
+            titulo: `${tituloTema} — ${contrato?.nombre ?? ""}`,
+            filename: `produccion_${(contrato?.nombre ?? "contrato").replace(/\s+/g, "_")}.png`,
+          })}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50"
+        >
+          Exportar PNG
+        </button>
+      </div>
+      <ReactECharts ref={chartRef} option={option} style={{ height: 380 }} notMerge />
+    </div>
+  );
+}
+
+// "Gráfica personalizada" de "Producción por ubicación": el usuario elige UN
+// Ambiente y ve toda su producción (los 8 productos con datos, sumados a
+// través de todas las cuencas) en una sola gráfica, exportable a PNG.
+function CuencaCustomChart({ ubicaciones, resultado, categories, chartType, tituloTema }) {
+  const [selected, setSelected] = useState(ubicaciones[0] ?? "");
+  const chartRef = useRef(null);
+  const ubicacion = selected || ubicaciones[0];
+  const series = useMemo(() => buildUbicacionSeries(resultado, ubicacion), [resultado, ubicacion]);
+  const option = useMemo(() => buildChartOption(categories, series, chartType), [categories, series, chartType]);
+
+  if (!ubicaciones.length) return <p className="text-sm text-slate-400 p-4">Sin ambientes disponibles para graficar.</p>;
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
+      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+        <SearchableSelect
+          options={ubicaciones}
+          value={ubicacion}
+          onChange={setSelected}
+        />
+        <button
+          onClick={() => exportChartPng(chartRef, {
+            titulo: `${tituloTema} — ${ubicacion}`,
+            filename: `produccion_${ubicacion.replace(/\s+/g, "_")}.png`,
+          })}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50"
+        >
+          Exportar PNG
+        </button>
+      </div>
+      <ReactECharts ref={chartRef} option={option} style={{ height: 380 }} notMerge />
+    </div>
+  );
 }
 
 const CHIP_COLORS = [
@@ -591,11 +898,15 @@ function DataTitle({ titulo, period, start_year, end_year }) {
 }
 
 export default function ChartArea() {
-  const { resultado, loading, error, tema, visibleSeries, toggleSerie, setAllVisible, groupBy, setGroupBy, period, start_year, end_year, perfFiltros, prodFiltros, prodOpciones, compareMode } = useExplorer();
+  const { resultado, loading, error, tema, visibleSeries, toggleSerie, setAllVisible, groupBy, setGroupBy, period, start_year, end_year, start_month, end_month, perfFiltros, prodFiltros, prodOpciones, compareMode } = useExplorer();
   const [viewMode, setViewMode]   = useState("tablas");
   const [chartType, setChartType] = useState("line");
-  // Solo para "Producción por ubicación": línea por producto (default) o por cuenca.
-  const [prodChartPor, setProdChartPor] = useState("producto");
+  // Panel flotante de detalle al hacer clic en una fila de asignación
+  // (código ASIG_CONT) en la vista de tablas — solo aplica al tema Asignaciones.
+  const [asignacionSeleccionada, setAsignacionSeleccionada] = useState(null);
+  // Vista general vs. "Gráfica personalizada" (una empresa en Operadores, un
+  // Ambiente en "Producción por ubicación").
+  const [operadorPersonalizada, setOperadorPersonalizada] = useState(false);
 
   if (loading) return (
     <div className="flex items-center justify-center h-64">
@@ -634,19 +945,71 @@ export default function ChartArea() {
   if (resultado.type === "hierarchical") {
     // "Producción por ubicación" reusa los niveles de perforación (Ambiente >
     // Cuenca); "Producto" queda como hoja directa, no como tercer nivel.
-    const esProdCuenca = tema?.json_arg === "Cuenca";
+    const esOperadores = tema?.json_arg === "Operadores";
+    // Cuenca, Contrato, Campo, Asignación y Entidad Federativa comparten el
+    // mismo diseño Nacional → Producto (subtotal) → hoja: los productos son
+    // siempre las series/chips, sin dimensión Cuenca/Ambiente que filtrar
+    // salvo en "Cuenca". buildProdCuencaSeries ya soporta el caso "sin
+    // cuenca(s) filtradas" (solo grupo Nacional), que es el único caso para
+    // los 4 temas nuevos.
+    const esProdCuenca = ["Cuenca", "Contratos", "Campos", "Asignaciones", "Estado", "Gcompo"].includes(tema?.json_arg);
+    // "Producción por Entidad Federativa": jerarquía fija Entidad → Producto →
+    // Ambiente, cada entidad es su propio grupo (groupBy="cuenca" siempre,
+    // ver TopBar.jsx) — mismo patrón que la vista "por empresa" de Operadores,
+    // sin nodo "Nacional" ni dimensión Cuenca/Ambiente que filtrar.
+    const esEstado = tema?.json_arg === "Estado";
+    // Campo/Asignación: al filtrar por Ambiente/Cuenca se agrega un nivel
+    // "Producto" forzado (vía "categorias") para el drill-down de 4 niveles
+    // Ambiente→Cuenca→Producto→hoja del backend.
+    const esProductoNivelForzado = ["Campos", "Asignaciones"].includes(tema?.json_arg);
+    const hayFiltroCuencaUbic = (prodFiltros.cuencas?.length ?? 0) > 0 || (prodFiltros.ubicaciones?.length ?? 0) > 0;
     // Campos y API comparten la misma dimensión cuenca/ambiente que Cuenca.
-    const esProdHier = esProdCuenca || tema?.json_arg === "Campos" || tema?.json_arg === "API";
-    const hierSeries = esProdCuenca ? buildProdCuencaSeries(resultado) : buildHierSeries(resultado, groupBy);
-    // Con 2+ cuencas seleccionadas, permitir el gráfico diferenciado por cuenca.
-    const cuencaCount = esProdCuenca ? (resultado.groups ?? []).filter(g => g.cuenca !== "Nacional").length : 0;
-    const puedeVerPorCuenca = esProdCuenca && cuencaCount >= 2;
-    const verPorCuenca = puedeVerPorCuenca && prodChartPor === "cuenca";
-    const cuencaProductoSeries = verPorCuenca ? buildProdCuencaSeriesPorCuencaTodos(resultado) : [];
-    const chartHierSeries = verPorCuenca ? (cuencaProductoSeries[0]?.series ?? []) : hierSeries;
-    const filtrosActivos = esProdHier
-      ? { cuencas: prodFiltros.cuencas, categorias: [], ubicaciones: prodFiltros.ubicaciones, operadores: [] }
-      : perfFiltros;
+    // "Producción por operador" arma su propia jerarquía en el backend
+    // (Grupo Pemex/Privadas → Empresa) y siempre entrega groupBy=null (ver
+    // TopBar.jsx) — la serie de cabecera (chips/gráfica) viene ya resuelta
+    // en resultado.series en vez de derivarse de "groups" como Campos/API.
+    const esProdHier = esProdCuenca || esOperadores || tema?.json_arg === "Campos" || tema?.json_arg === "API";
+    // Campo/Asignación filtrados por Ambiente/Cuenca activan el drill-down de
+    // 4 niveles (Ambiente→Cuenca→Producto→hoja) — ahí buildProdCuencaSeries
+    // leería la HOJA (campo/asignación) como si fuera la serie, en vez del
+    // producto. Las chips/gráfica siempre son productos: se usa
+    // resultado.series (ya viene un item por producto desde el backend),
+    // igual que Operadores/Estado.
+    const esDrilldownForzado = esProductoNivelForzado && hayFiltroCuencaUbic;
+    const hierSeries = esOperadores || esEstado || esDrilldownForzado ? (resultado.series ?? [])
+      : esProdCuenca ? buildProdCuencaSeries(resultado)
+      : buildHierSeries(resultado, groupBy);
+    const cuencaCount = (resultado.groups ?? []).filter(g => g.cuenca !== "Nacional").length;
+    const chartHierSeries = hierSeries;
+    // Operadores: comparación Pemex vs Privados por producto (vista Nacional
+    // general) — solo existe con esta forma cuando no hay un solo grupo
+    // filtrado; si lo hay, se cae al gráfico simple de siempre.
+    const operadorComparaciones = esOperadores
+      ? (buildOperadoresComparacion(resultado).length ? buildOperadoresComparacion(resultado) : buildEmpresasComparacion(resultado))
+      : [];
+    // "Gráfica personalizada": en Operadores elige una empresa; en "Producción
+    // por ubicación" (Cuenca) elige un Ambiente; en "Producción por contrato"
+    // elige un contrato — reemplaza al viejo toggle "Por cuenca" (se quitó).
+    const esCuencaTopic = tema?.json_arg === "Cuenca";
+    const esContratosTopic = tema?.json_arg === "Contratos";
+    const puedeVerPersonalizada = (esOperadores && (resultado.empresas?.length ?? 0) > 0)
+      || (esCuencaTopic && (prodOpciones?.ubicaciones?.length ?? 0) > 0 && cuencaCount >= 1)
+      || (esContratosTopic && (resultado.contratos?.length ?? 0) > 0);
+    const verPersonalizada = puedeVerPersonalizada && operadorPersonalizada;
+    // Estado no tiene filtro de Cuenca/Ambiente (su groupBy="cuenca" es fijo,
+    // ver TopBar.jsx) — usar prodFiltros aquí filtraría con lo que haya
+    // quedado seleccionado en el tema anterior y activaría por error el
+    // drill-down multinivel.
+    const filtrosActivos = esEstado
+      ? { cuencas: [], categorias: [], ubicaciones: [], operadores: [] }
+      : esProdHier
+        ? {
+            cuencas: prodFiltros.cuencas,
+            categorias: (esProductoNivelForzado && hayFiltroCuencaUbic) ? ["_producto"] : [],
+            ubicaciones: prodFiltros.ubicaciones,
+            operadores: [],
+          }
+        : perfFiltros;
 
     // Sin gráficos si el rango tiene un solo punto (nada que trazar).
     const unaCategoria  = (resultado.categories?.length ?? 0) <= 1;
@@ -658,8 +1021,10 @@ export default function ChartArea() {
     // verde, ambientes en naranja.
     let chartSubtitle;
     if (esProdHier) {
-      const cuencaTotal = prodOpciones?.cuencas?.length ?? 0;
-      const ambienteTotal = prodOpciones?.ubicaciones?.length ?? 0;
+      // Operadores solo tiene 2 grupos posibles (Pemex/Privadas), a diferencia
+      // de las listas abiertas de cuenca/ambiente.
+      const cuencaTotal = esOperadores ? 2 : (prodOpciones?.cuencas?.length ?? 0);
+      const ambienteTotal = esOperadores ? 0 : (prodOpciones?.ubicaciones?.length ?? 0);
       const cuencasSel = (cuencaTotal > 0 && prodFiltros.cuencas.length >= cuencaTotal) ? [] : prodFiltros.cuencas;
       const ambientesSel = (ambienteTotal > 0 && prodFiltros.ubicaciones.length >= ambienteTotal) ? [] : prodFiltros.ubicaciones;
       chartSubtitle = (cuencasSel.length === 0 && ambientesSel.length === 0)
@@ -681,9 +1046,10 @@ export default function ChartArea() {
     }
 
     return (
-      <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      <>
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", minWidth: 0 }}>
         <KpiCards kpis={resultado.kpis} topic={tema?.json_arg} />
-        {(groupBy || esProdCuenca) && chartHierSeries.length > 0 && (
+        {(groupBy || esProdCuenca || esOperadores) && chartHierSeries.length > 0 && (
           <SeriesChips
             items={chartHierSeries}
             visibleSeries={visibleSeries}
@@ -695,33 +1061,64 @@ export default function ChartArea() {
           viewMode={vistaEfectiva} setViewMode={setViewMode}
           chartType={chartType} setChartType={setChartType}
           hideGraphics={hideGraphics}
-          extra={puedeVerPorCuenca && (
-            <div className="flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5">
-              {[["producto", "Por producto"], ["cuenca", "Por cuenca"]].map(([id, label]) => (
-                <button key={id} onClick={() => setProdChartPor(id)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                    prodChartPor === id ? "bg-tih-dark text-white shadow-sm" : "text-slate-500 hover:text-slate-700"
-                  }`}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
+          extraModos={tema?.json_arg === "Asignaciones" ? [{ id: "ranking", label: "Ranking" }] : []}
+          extra={puedeVerPersonalizada ? (
+            <button
+              onClick={() => setOperadorPersonalizada(v => !v)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                operadorPersonalizada ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
+              }`}>
+              Gráfica personalizada
+            </button>
+          ) : null}
         />
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-          {vistaEfectiva === "tablas"
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: "auto" }}>
+          {vistaEfectiva === "ranking"
+            ? <AsignacionesRanking period={period} start_year={start_year} end_year={end_year} start_month={start_month} end_month={end_month} />
+            : vistaEfectiva === "tablas"
             ? <DynamicTable resultado={resultado} visibleSeries={visibleSeries} groupBy={groupBy}
                 titulo={tituloTema} period={period} start_year={start_year} end_year={end_year}
                 compareMode={compareMode}
                 // Campos/API usan groupBy (una dimensión a la vez), no el multinivel
                 // AND de Cuenca: sus filas no tienen marca "subtotal" por categoría.
                 filtros={esProdCuenca ? filtrosActivos : undefined}
-                forceDivisions={esProdCuenca}
+                // Operadores también mezcla unidades (Mbd/MMpcd) en su vista
+                // Nacional por producto — forceDivisions oculta el total que
+                // las sumaría sin sentido, igual que en "Producción por ubicación".
+                forceDivisions={esProdCuenca || esOperadores}
                 entityLabel={
                   tema?.json_arg === "PozosCampos" || tema?.json_arg === "Campos" ? "campos"
                     : tema?.json_arg === "API" ? "clases API"
-                    : tema?.json_arg === "Cuenca" ? "ambientes" : "operadores"
-                } />
+                    : tema?.json_arg === "Cuenca" ? "ambientes"
+                    : tema?.json_arg === "Contratos" ? "contratos"
+                    : tema?.json_arg === "Asignaciones" ? "asignaciones"
+                    : tema?.json_arg === "Estado" ? "entidades"
+                    : tema?.json_arg === "Gcompo" ? "componentes"
+                    : "operadores"
+                }
+                searchPlaceholder={
+                  tema?.json_arg === "PozosCampos" || tema?.json_arg === "Campos" ? "Buscar Campo"
+                    : tema?.json_arg === "API" ? "Buscar Clase API"
+                    : tema?.json_arg === "Cuenca" ? "Buscar Cuenca"
+                    : tema?.json_arg === "Contratos" ? "Buscar Contrato"
+                    : tema?.json_arg === "Asignaciones" ? "Buscar Asignación"
+                    : tema?.json_arg === "Estado" ? "Buscar Entidad Federativa"
+                    : tema?.json_arg === "Gcompo" ? "Buscar Componente"
+                    : undefined
+                }
+                rowHeaderLabel={
+                  esOperadores && prodFiltros.cuencas.length === 1
+                    ? (prodFiltros.cuencas[0] === "Privadas" ? "Privados"
+                        // Sin texto para Pemex (pedido explícito) — un espacio
+                        // (no una cadena vacía) para que siga contando como
+                        // "hay rowHeaderLabel" y conserve el fondo oscuro y el
+                        // botón Expandir/Contraer todo en el header.
+                        : prodFiltros.cuencas[0] === "Pemex Exploración y Producción" ? " "
+                        : undefined)
+                    : undefined
+                }
+                onRowClick={tema?.json_arg === "Asignaciones" ? (code) => setAsignacionSeleccionada(code) : undefined}
+              />
             : chartType === "heatmap"
               ? (
                 <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
@@ -733,21 +1130,27 @@ export default function ChartArea() {
                   <HeatmapChart items={chartHierSeries} categories={resultado.categories ?? []} height={420} visibleSeries={visibleSeries} />
                 </div>
               )
-              : verPorCuenca
+              : esOperadores
                 ? (
-                  // Un mini-gráfico por producto: mezclar todos en un solo eje distorsiona
-                  // la escala (MMpcd es ~1000x los Mbd).
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    {cuencaProductoSeries.map(({ label, series: prodSeries }) => {
-                      const visible = filterSeries(prodSeries, visibleSeries);
-                      return visible.length > 0 && (
-                        <SingleChart key={label} title={tituloTema} categories={resultado.categories ?? []} series={visible} chartType={chartType}
-                          subtitle={`${label} por cuenca`} />
-                      );
-                    })}
-                  </div>
+                  verPersonalizada
+                    ? <OperadorCustomChart empresas={resultado.empresas ?? []} categories={resultado.categories ?? []} chartType={chartType} tituloTema={tituloTema} />
+                    : operadorComparaciones.length > 0
+                      ? (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          {operadorComparaciones
+                            .filter(c => visibleSeries[c.label] !== false)
+                            .map(c => (
+                              <OperadorComparacionChart key={c.label} label={c.label} series={c.series} categories={resultado.categories ?? []} chartType={chartType} />
+                            ))}
+                        </div>
+                      )
+                      : <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={filterSeries(chartHierSeries, visibleSeries)} chartType={chartType} subtitle={chartSubtitle} />
                 )
-                : esProdCuenca
+              : esCuencaTopic && verPersonalizada
+                ? <CuencaCustomChart ubicaciones={prodOpciones?.ubicaciones ?? []} resultado={resultado} categories={resultado.categories ?? []} chartType={chartType} tituloTema={tituloTema} />
+                : esContratosTopic && verPersonalizada
+                  ? <ContratoCustomChart contratos={resultado.contratos ?? []} categories={resultado.categories ?? []} chartType={chartType} tituloTema={tituloTema} />
+                  : esProdCuenca
                   ? (() => {
                       // "Por producto": dos gráficos separados por unidad (Mbd vs MMpcd).
                       const visible = filterSeries(chartHierSeries, visibleSeries);
@@ -769,6 +1172,14 @@ export default function ChartArea() {
           }
         </div>
       </div>
+      {asignacionSeleccionada && (
+        <AsignacionDetallePanel
+          asignacion={asignacionSeleccionada}
+          period={period} start_year={start_year} end_year={end_year} start_month={start_month} end_month={end_month}
+          onClose={() => setAsignacionSeleccionada(null)}
+        />
+      )}
+      </>
     );
   }
 
@@ -787,7 +1198,8 @@ export default function ChartArea() {
         {resultado.tabs.map(tab => {
           const series = filterSeries(tab.series, visibleSeries);
           return viewMode === "tablas"
-            ? <DataTable key={tab.label} title={tab.label} categories={tab.categories} series={series} />
+            ? <DataTable key={tab.label} title={tab.label} categories={tab.categories} series={series}
+                periodoNota={`${PERIOD_LABEL[period] ?? period} · ${start_year} – ${end_year}`} />
             : <SingleChart key={tab.label} title={tab.label} categories={tab.categories} series={series} chartType={chartType} />;
         })}
       </div>
@@ -810,7 +1222,8 @@ export default function ChartArea() {
       />
       <ViewBar viewMode={viewMode} setViewMode={setViewMode} chartType={chartType} setChartType={setChartType} hideGraphics={simpleHideGraphics} />
       {(simpleHideGraphics ? "tablas" : viewMode) === "tablas"
-        ? <DataTable title={tituloTema} categories={resultado.categories ?? []} series={series} />
+        ? <DataTable title={tituloTema} categories={resultado.categories ?? []} series={series}
+            periodoNota={`${PERIOD_LABEL[period] ?? period} · ${start_year} – ${end_year}`} />
         : <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={series} chartType={chartType} />
       }
     </div>

@@ -66,13 +66,13 @@ function BigStat({ label, valor, unidad, promedio, anioPromedio, color, bg }) {
   const cambio = promedio ? Math.round(((valor - promedio) / promedio) * 1000) / 10 : null;
   const up = cambio > 0;
   return (
-    <div className="flex-1 min-w-0 text-center flex flex-col justify-center" style={{ background: bg, padding: "5px 20px" }}>
-      <span className="text-[14px]" style={{ color: INK }}>{label} · {unidad}</span>
-      <span style={{ fontFamily: "'Patria', Georgia, serif", color, fontSize: 40, fontWeight: 700, lineHeight: 1.15, marginTop: 4, textShadow: `0 0 18px ${color}33` }}>
+    <div className="flex-1 min-w-0 text-center flex flex-col justify-center" style={{ background: bg, padding: "4px 20px" }}>
+      <span className="text-[13px]" style={{ color: INK }}>{label} · {unidad}</span>
+      <span style={{ fontFamily: "'Patria', Georgia, serif", color, fontSize: 33, fontWeight: 700, lineHeight: 1.15, marginTop: 3, textShadow: `0 0 18px ${color}33` }}>
         {valor.toLocaleString("es-MX")}
       </span>
       {cambio != null && (
-        <p className="text-[14px] font-semibold mt-1" style={{ color: up ? "#059669" : ORANGE }}>
+        <p className="text-[13px] font-semibold mt-0.5" style={{ color: up ? "#059669" : ORANGE }}>
           {up ? "↑" : "↓"} {Math.abs(cambio)}%{" "}
           <span className="font-normal" style={{ color: MUTED }}>
             vs {promedio.toLocaleString("es-MX")} promedio {anioPromedio}
@@ -102,7 +102,7 @@ function CifrasNacionales({ nacional }) {
   if (!nacional?.liquidos && !nacional?.gas) return null;
   return (
     <div className="rounded-xl min-w-0 overflow-hidden flex flex-col dash-card" style={{ background: "#fff", border: `1px solid ${BORDER}`, height: "100%" }}>
-      <div style={{ padding: "14px 26px 6px" }}>
+      <div style={{ padding: "10px 26px 4px" }}>
         <CardTitle chip="Producción" chipColor="#0d7a4a" chipBg="#daf0df">Mensual por Asignación</CardTitle>
       </div>
       <div className="flex items-stretch flex-wrap flex-1">
@@ -128,18 +128,18 @@ function IndicadorEconomico({ label, valor, fecha, anterior, color, bg }) {
   const subiendo = cambio > 0;
   const bajando = cambio < 0;
   return (
-    <div className="flex-1 min-w-0 text-center flex flex-col justify-center" style={{ background: bg, padding: "5px 20px" }}>
-      <span className="text-[14px] block" style={{ color: INK }}>{label} · USD/barril</span>
-      <span style={{ fontFamily: "'Patria', Georgia, serif", color, fontSize: 40, fontWeight: 700, lineHeight: 1.15, marginTop: 4, display: "block", textShadow: `0 0 18px ${color}33` }}>
+    <div className="flex-1 min-w-0 text-center flex flex-col justify-center" style={{ background: bg, padding: "4px 20px" }}>
+      <span className="text-[13px] block" style={{ color: INK }}>{label} · USD/barril</span>
+      <span style={{ fontFamily: "'Patria', Georgia, serif", color, fontSize: 33, fontWeight: 700, lineHeight: 1.15, marginTop: 3, display: "block", textShadow: `0 0 18px ${color}33` }}>
         ${valor.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
       </span>
       {cambio != null && (
-        <p className="text-[14px] font-semibold" style={{ color: subiendo ? "#059669" : bajando ? ORANGE : MUTED }}>
+        <p className="text-[13px] font-semibold" style={{ color: subiendo ? "#059669" : bajando ? ORANGE : MUTED }}>
           {subiendo ? "↑" : bajando ? "↓" : "→"} {Math.abs(cambio)}%{" "}
           <span className="font-normal" style={{ color: MUTED }}>vs cierre anterior</span>
         </p>
       )}
-      {fecha && <p className="text-[13px]" style={{ color: MUTED }}>{fechaLabelDe(fecha)}</p>}
+      {fecha && <p className="text-[12px]" style={{ color: MUTED }}>{fechaLabelDe(fecha)}</p>}
     </div>
   );
 }
@@ -148,7 +148,7 @@ function IndicadoresEconomicos({ indicadores }) {
   if (!indicadores?.brent && !indicadores?.mezcla_mexicana) return null;
   return (
     <div className="rounded-xl min-w-0 overflow-hidden flex flex-col dash-card" style={{ background: "#fff", border: `1px solid ${BORDER}` }}>
-      <div style={{ padding: "14px 26px 6px" }}>
+      <div style={{ padding: "10px 26px 4px" }}>
         <CardTitle chip="Mercado" chipColor="#8a2c17" chipBg="#fbe3d8">Indicadores Económicos</CardTitle>
       </div>
       <div className="flex items-stretch flex-wrap flex-1">
@@ -325,7 +325,7 @@ function TopCamposContent({ topCampos, fuel, setFuel }) {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex gap-6 flex-1">
+      <div className="flex flex-col sm:flex-row gap-3 sm:gap-6 flex-1">
         <CamposColumn campos={campos.slice(0, mitad)} offset={0} maxValor={maxValor} shades={shades} unidad={unidad} />
         <CamposColumn campos={campos.slice(mitad)} offset={mitad} maxValor={maxValor} shades={shades} unidad={unidad} />
       </div>
@@ -370,7 +370,7 @@ function Top5ReservasContent({ top5Reservas, nivel }) {
   if (!bloque?.aceite?.length && !bloque?.gas?.length) return null;
 
   return (
-    <div className="flex-1 min-h-0 flex gap-6">
+    <div className="flex-1 min-h-0 flex flex-col sm:flex-row gap-3 sm:gap-6">
       <ReservasColumn label="Reservas de aceite" unidad="MMb" color="#0d7a4a" rows={bloque.aceite} shades={RANK_SHADES} />
       <ReservasColumn label="Reservas de gas natural" unidad="MMMpc" color="#1d6fa5" rows={bloque.gas} shades={RANK_SHADES_GAS} />
     </div>
@@ -384,7 +384,7 @@ function CamposCarousel({ topCampos, porOperador, slide, setSlide, count, onPaus
 
   return (
     <Card
-      style={{ height: "100%", display: "flex", flexDirection: "column" }}
+      style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}
       onMouseEnter={onPause} onMouseLeave={onResume}
     >
       <CardTitle
@@ -405,7 +405,7 @@ function CamposCarousel({ topCampos, porOperador, slide, setSlide, count, onPaus
       >
         {slide === 0 ? "Top 8 Productores" : "Producción por Operador"}
       </CardTitle>
-      <div key={slide} className="carousel-slide flex-1 min-h-0 flex flex-col">
+      <div key={slide} className="carousel-slide flex-1 min-h-0 flex flex-col justify-center">
         {slide === 0
           ? <TopCamposContent topCampos={topCampos} fuel={fuel} setFuel={setFuel} />
           : <ProduccionPorOperadorContent porOperador={porOperador} fuel={fuelOperador} />}
@@ -474,7 +474,7 @@ function ProduccionPorOperadorContent({ porOperador, fuel }) {
   const maxOtros = Math.max(...bloque.otros_contratos.map(c => c.valor), 1);
 
   return (
-    <div className="grid grid-cols-2 gap-7">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-7">
       <div className="flex flex-col items-center justify-center gap-5">
         <OperadorDonut
           pct={pct} color={color} unidad={unidad}
@@ -498,7 +498,7 @@ function ProduccionPorOperadorContent({ porOperador, fuel }) {
         </div>
       </div>
 
-      <div className="flex flex-col gap-4 pl-7" style={{ borderLeft: `1px solid ${BORDER}` }}>
+      <div className="flex flex-col gap-4 sm:pl-7 pt-4 sm:pt-0 border-t sm:border-t-0 sm:border-l" style={{ borderColor: BORDER }}>
         <div>
           <span className="text-[12px] font-semibold uppercase tracking-wide block mb-2" style={{ color: MUTED }}>
             PEMEX por contrato
@@ -558,7 +558,7 @@ function PozosOperando({ pozosOperando }) {
 
   return (
     <Card style={{ padding: "10px 26px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-      <div className="grid gap-4 items-center" style={{ gridTemplateColumns: "200px minmax(0,1fr)" }}>
+      <div className="grid gap-4 items-center grid-cols-1 sm:grid-cols-[200px_minmax(0,1fr)]">
         <div>
           <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "#8a2c17", opacity: 0.75 }}>
             Pozos operando
@@ -573,7 +573,7 @@ function PozosOperando({ pozosOperando }) {
           </div>
         </div>
 
-        <div className="flex gap-4">
+        <div className="flex gap-4 flex-wrap">
           <PozoOperandoStat label="Petróleo y gas asociado" valor={pozos_aceite} pct={pct_aceite} color="#0d7a4a" bg="#daf0df" />
           <PozoOperandoStat label="Gas no asociado y condensado" valor={pozos_gas} pct={pct_gas} color="#1d6fa5" bg="#dbeafb" />
         </div>
@@ -648,12 +648,12 @@ export default function HomeDashboard() {
         )}
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col gap-4">
+      <div className="flex flex-col gap-4 lg:flex-1 lg:min-h-0">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 shrink-0">
           <CifrasNacionales nacional={data.nacional} />
           <IndicadoresEconomicos indicadores={data.indicadores_economicos} />
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" style={{ flex: "1.3 1 0%" }}>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 shrink-0 lg:shrink lg:flex-[1.45_1_0%] lg:min-h-0">
           <CamposCarousel
             topCampos={data.top_campos} porOperador={data.por_operador}
             slide={carouselSlide} setSlide={setCarouselSlide} count={carouselCount}
@@ -661,7 +661,7 @@ export default function HomeDashboard() {
           />
           <Top5ReservasCard top5Reservas={data.top5_reservas} />
         </div>
-        <div style={{ flex: "0 0 auto" }}>
+        <div style={{ flex: "0 0 auto", marginTop: 4 }}>
           <PozosOperando pozosOperando={data.pozos_operando} />
         </div>
       </div>

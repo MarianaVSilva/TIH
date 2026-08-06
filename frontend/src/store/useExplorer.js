@@ -27,19 +27,20 @@ function buildVisible(resultado, groupBy) {
   return v;
 }
 
-// ── Default de series para "Producción por ubicación" (topic Cuenca): al
-// cargar, solo Petróleo/Condensado/Gas quedan prendidas (el resto de los 8
-// productos —líquidos, gas asociado/no asociado, nitrógeno, agua— arrancan
-// apagados, el usuario los prende si los necesita).
+// ── Default de series para "Producción por ubicación" (topic Cuenca) y
+// "Producción por operador" (topic Operadores): al cargar, solo
+// Petróleo/Condensado/Gas quedan prendidas (el resto de los productos
+// —líquidos, gas asociado/no asociado, nitrógeno, agua— arrancan apagados,
+// el usuario los prende si los necesita). Se basa en resultado.series (la
+// serie de cabecera, un producto por item) en vez de "groups" para que
+// funcione igual sin importar la forma de la jerarquía (Nacional o Empresa).
 const PROD_CUENCA_DEFAULT_ON = new Set(["Petróleo", "Condensado", "Gas"]);
+const PRODUCTO_DEFAULT_TOPICS = new Set(["Cuenca", "Operadores", "Contratos", "Campos", "Asignaciones", "Estado"]);
 function buildProdCuencaVisible(resultado) {
-  const nac = resultado.groups?.find(g => g.cuenca === "Nacional");
-  const sg = nac?.subgroups?.find(s => s.ubicacion === "Nacional");
   const v = {};
-  (sg?.rows ?? []).forEach(row => {
-    if (row.type !== "subtotal") return;
-    const base = row.label.split(" (")[0].trim();
-    v[row.label] = PROD_CUENCA_DEFAULT_ON.has(base);
+  (resultado.series ?? []).forEach(s => {
+    const base = s.name.split(" (")[0].trim();
+    v[s.name] = PROD_CUENCA_DEFAULT_ON.has(base);
   });
   return v;
 }
@@ -65,8 +66,15 @@ export const useExplorer = create((set, get) => ({
   setPerfFiltros: (patch) =>
     set(state => ({ perfFiltros: { ...state.perfFiltros, ...patch } })),
 
-  // Filtros de "Producción por ubicación" (topic Cuenca): cuenca y ubicación
-  // (el producto se elige en las chips de series, no como filtro aparte)
+  // Universo de opciones de Perforación del tema activo (para saber si una
+  // selección de filtros equivale a "todas", p. ej. para el resumen de
+  // filtros junto al título de la tabla).
+  perfOpciones: null,
+  setPerfOpciones: (perfOpciones) => set({ perfOpciones }),
+
+  // Filtros de "Producción por ubicación" (topic Cuenca) y "Producción por
+  // operador" (topic Operadores, donde "cuencas" guarda el grupo Pemex/Privadas
+  // elegido) — el producto se elige en las chips de series, no como filtro aparte.
   prodFiltros: { cuencas: [], ubicaciones: [] },
   setProdFiltros: (patch) =>
     set(state => ({ prodFiltros: { ...state.prodFiltros, ...patch } })),
@@ -101,7 +109,7 @@ export const useExplorer = create((set, get) => ({
         resultado,
         loading: false,
         error: null,
-        visibleSeries: state.tema?.json_arg === "Cuenca" && !state.groupBy
+        visibleSeries: PRODUCTO_DEFAULT_TOPICS.has(state.tema?.json_arg) && !state.groupBy
           ? buildProdCuencaVisible(resultado)
           : buildVisible(resultado, state.groupBy ?? null),
       };
@@ -117,6 +125,18 @@ export const useExplorer = create((set, get) => ({
   }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error, loading: false }),
+
+  // Selección de pozo pendiente al saltar desde otro tema (p. ej. el panel de
+  // detalle de Asignaciones) hacia "Producción por pozo" — PozosExplorer la
+  // consume y limpia en cuanto monta la selección.
+  pendingPozoSelection: null,
+  setPendingPozoSelection: (pendingPozoSelection) => set({ pendingPozoSelection }),
+
+  // Texto de búsqueda pendiente al saltar a otro tema (p. ej. Asignaciones →
+  // Producción por campo, para dejar el campo ya filtrado) — DynamicTable la
+  // consume y limpia en cuanto la aplica a su buscador local.
+  pendingBusqueda: null,
+  setPendingBusqueda: (pendingBusqueda) => set({ pendingBusqueda }),
 
   visibleSeries: {},
   toggleSerie: (name) => set(state => ({

@@ -8,18 +8,9 @@ export default function App() {
   const [chatOpen, setChatOpen] = useState(false);
 
   return (
-    <div className="bg-slate-50 font-sans" style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
+    <div className="bg-slate-50 font-sans flex flex-col min-h-screen lg:h-screen">
       <TopBar />
-      <main
-        style={{
-          flex: 1,
-          minHeight: 0,
-          padding: "24px",
-          overflow: "clip",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
+      <main className="flex-1 min-h-0 min-w-0 p-6 flex flex-col overflow-visible lg:overflow-clip">
         <ChartArea />
       </main>
       <ChatButton open={chatOpen} onClick={() => setChatOpen(o => !o)} />

@@ -483,27 +483,36 @@ def get_pozos_ranking(
 
 def get_pozos_comparar(engine: Engine, especificaciones: list[tuple[str, str]], start_year: int = 2019, end_year: int = 2023, start_month: int = 1, end_month: int = 12, period: str = "monthly", years: str = "") -> dict:
     """Series superpuestas + tabla comparativa de 2-4 pozos, filtradas por período."""
-    where_fecha, _ = _where_fecha(start_year, start_month, end_year, end_month, period, years)
+    _, period = _where_fecha(start_year, start_month, end_year, end_month, period, years)
     series, tabla = [], []
     for campo, pozo in especificaciones:
-        serie, _ = _serie_mensual_pozo(engine, campo, pozo)
+        serie, _, unidad = _serie_mensual_pozo(engine, campo, pozo)
         if serie.empty:
             continue
-        # Filtrar serie por período
         serie_filtrada = serie[(serie["fecha"].dt.year >= start_year) & (serie["fecha"].dt.year <= end_year)]
         if start_month > 1 or end_month < 12:
             serie_filtrada = serie_filtrada[
                 ((serie_filtrada["fecha"].dt.year > start_year) | (serie_filtrada["fecha"].dt.month >= start_month)) &
                 ((serie_filtrada["fecha"].dt.year < end_year) | (serie_filtrada["fecha"].dt.month <= end_month))
             ]
+        # Mbd/MMpcd son tasas diarias: en vista anual se promedian los meses
+        # del año (no se suman), igual que el resto del tablero (_rollup_periodo).
+        serie_filtrada = serie_filtrada.copy()
+        serie_filtrada["periodo"] = (
+            serie_filtrada["fecha"].dt.strftime("%Y-%m") if period == "monthly"
+            else serie_filtrada["fecha"].dt.strftime("%Y")
+        )
+        rollup = serie_filtrada.groupby("periodo", as_index=False)["valor"].mean().sort_values("periodo")
         analisis = get_pozo_analisis(engine, campo, pozo)
         series.append({
             "name": pozo,
-            "categories": serie_filtrada["fecha"].dt.strftime("%Y-%m").tolist(),
-            "data": [round(float(v), 2) for v in serie_filtrada["liquidos_mbd"]],
+            "unidad": unidad,
+            "categories": rollup["periodo"].tolist(),
+            "data": [round(float(v), 2) for v in rollup["valor"]],
         })
         tabla.append({
             "pozo": pozo, "campo": campo,
+            "unidad": analisis.get("unidad"),
             "produccion_actual_mbd": analisis.get("produccion_actual_mbd"),
             "tasa_declinacion_anual": analisis.get("tasa_declinacion_anual"),
             "tendencia": analisis.get("tendencia"),

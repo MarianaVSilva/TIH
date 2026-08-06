@@ -9,9 +9,12 @@ const TYPE_STYLE = {
   planheader:  { label: "text-[13.5px] font-bold pl-2",                                  num: "font-bold text-[13.5px]" },
   total:       { label: "text-[13.5px] font-bold text-teal-700 pl-4",                   num: "text-teal-700 font-bold text-[13.5px]" },
   subtotal:    { label: "text-[13px] font-semibold text-teal-600 pl-6",                 num: "text-teal-600 font-semibold text-[13px]" },
+  subtotalcol: { label: "text-[13px] font-semibold text-teal-600 pl-6",                 num: "text-teal-600 font-semibold text-[13px]" },
   operator:    { label: "text-[12.5px] text-slate-600 pl-8",                            num: "text-slate-600 text-[12.5px]" },
   planoperator:{ label: "text-[12.5px] text-slate-600 pl-4",                            num: "text-slate-600 text-[12.5px]" },
   totaloperator:{ label: "text-[12.5px] font-bold text-teal-700 pl-8",                  num: "text-teal-700 font-bold text-[12.5px]" },
+  totalmbd:    { label: "text-[13px] font-bold text-blue-700 pl-4",                    num: "text-blue-700 font-bold text-[13px]" },
+  totalmmpcd:  { label: "text-[13px] font-bold text-orange-700 pl-4",                  num: "text-orange-700 font-bold text-[13px]" },
 };
 
 const ROW_BG = {
@@ -21,9 +24,12 @@ const ROW_BG = {
   planheader:  "border-b border-teal-200",
   total:       "bg-teal-50/70 border-b border-teal-100",
   subtotal:    "bg-white border-b border-slate-100",
+  subtotalcol: "bg-white border-b border-slate-100 cursor-pointer hover:bg-slate-50/60",
   operator:    "bg-white border-b border-slate-50 hover:bg-slate-50/80 transition-colors",
   planoperator:"bg-white border-b border-slate-50 hover:bg-slate-50/80 transition-colors",
   totaloperator:"bg-teal-50/40 border-b border-slate-100 hover:bg-teal-50/70 transition-colors",
+  totalmbd:    "bg-blue-100 border-b border-blue-200",
+  totalmmpcd:  "bg-orange-100 border-b border-orange-200",
 };
 
 // ── Tonos por nivel de anidamiento (Ambiente → Cuenca → Tipo/Categoría) ───────
@@ -37,7 +43,7 @@ const PLANHEADER_TONES = [
 ];
 
 // ── Tipos que tienen chevron y son colapsables ────────────────────────────────
-const COLLAPSIBLE = new Set(["ubicacion", "planheader"]);
+const COLLAPSIBLE = new Set(["ubicacion", "planheader", "subtotalcol"]);
 
 // ── Inicializar grupos abiertos según el modo ─────────────────────────────────
 function initOpenGroups(resultado, groupBy) {
@@ -50,7 +56,16 @@ function initOpenGroups(resultado, groupBy) {
   }
   if (groupBy === "cuenca") {
     for (const g of resultado.groups) {
-      if (g.cuenca !== "Nacional") init.add(`cuenca|${g.cuenca}`);
+      if (g.cuenca === "Nacional") continue;
+      // "Producción por operador" trae muchas empresas (Producto→Contrato
+      // dentro de cada una) — arrancan colapsadas, a diferencia de Campos/API
+      // que solo tienen unas pocas cuencas y sí conviene ver expandidas.
+      const filasGrupo = g.subgroups?.[0]?.rows ?? [];
+      // Empresas/cuencas sin producción en el rango (rows vacío) no tienen nada
+      // que abrir — sin este guard contaban como "sin subtotal" y se forzaban
+      // a "abiertas", inflando hasOpenGroups aunque todo estuviera colapsado.
+      const tieneSubtotal = filasGrupo.length === 0 || filasGrupo.some(r => r.type === "subtotal");
+      if (!tieneSubtotal) init.add(`cuenca|${g.cuenca}`);
     }
   }
   if (groupBy === "ubicacion") {
@@ -77,7 +92,7 @@ function hasData(dataArr) {
 // Filas de operadores de un subgrupo. Sin divisiones: junta los operadores
 // repetidos entre categorías (Desarrollo/Exploración/etc.) sumando sus
 // valores en vez de mostrar al mismo operador varias veces.
-function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisions, groupBy, vis, q, forceDivisions) {
+function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisions, groupBy, vis, q, forceDivisions, openGroups) {
   if (hideDivisions) {
     let totalRow = null;
     const merged = new Map();
@@ -105,7 +120,7 @@ function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisio
     for (const op of visible) {
       rows.push({
         _id: `r|${gk}|${op.label}`, _type: "operator",
-        _cuenca: cuenca, _ub: ubicacion, label: op.label,
+        _cuenca: cuenca, _ub: ubicacion, label: op.label, _code: op.code,
         ...Object.fromEntries(cats.map((c, ci) => [c, op.data[ci] ?? 0])),
       });
     }
@@ -120,14 +135,6 @@ function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisio
       // Con forceDivisions el subtotal ES el producto que controlan los chips
       // de series: se oculta el bloque entero si está apagado.
       const skipGroup = forceDivisions && vis[row.label] === false;
-      // El header "Total (Pozos)" es redundante con la fila "Total" de abajo.
-      if (row.type !== "total" && !skipGroup) {
-        rows.push({
-          _id: `r|${gk}|${row.label}`, _type: row.type,
-          _cuenca: cuenca, _ub: ubicacion, label: row.label,
-          ...Object.fromEntries(cats.map((c, ci) => [c, row.data[ci] ?? 0])),
-        });
-      }
       i++;
       const ops = [];
       while (i < sgRows.length && sgRows[i].type === "operator") { ops.push(sgRows[i]); i++; }
@@ -135,11 +142,32 @@ function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisio
       let visible = groupBy === "operador" ? ops.filter(o => vis[o.label] !== false) : ops;
       visible = visible.filter(o => hasData(o.data));
       if (q) visible = visible.filter(o => o.label.toLowerCase().includes(q));
+      // Con forceDivisions cada subtotal (producto) es colapsable — el estado
+      // "abierto" es la convención "cerrado si está en openGroups" (igual que
+      // planheader/ubicacion), así por defecto arrancan expandidos.
+      // Con un único hijo visible (p. ej. un solo tipo de pozo bajo esta
+      // cuenca), la cifra del subtotal repetiría exactamente la del hijo de
+      // abajo — pero solo es redundante mientras el hijo esté VISIBLE
+      // (expandido); si está colapsado, es la única cifra en pantalla, así
+      // que se muestra ahí y se oculta justo al expandir.
+      const subgk = `sub|${gk}|${row.label}`;
+      const isOpenSub = !forceDivisions || !openGroups?.has(subgk);
+      const soloUnHijo = visible.length === 1 && isOpenSub;
+      if (row.type !== "total" && !skipGroup) {
+        rows.push({
+          _id: `r|${gk}|${row.label}`, _type: forceDivisions ? "subtotalcol" : row.type,
+          _cuenca: cuenca, _ub: ubicacion, label: row.label,
+          ...(forceDivisions ? { _groupKey: subgk, _open: isOpenSub } : {}),
+          ...Object.fromEntries(cats.map((c, ci) => [c, soloUnHijo ? null : (row.data[ci] ?? 0)])),
+        });
+      }
+      if (!isOpenSub) continue;
       for (const op of visible) {
         const isTotalRow = op.label === "Todos los operadores";
         rows.push({
           _id: `r|${gk}|${parentLabel}|${op.label}`, _type: isTotalRow ? "totaloperator" : "operator",
           _cuenca: cuenca, _ub: ubicacion, label: isTotalRow ? "Total" : op.label,
+          _code: isTotalRow ? undefined : op.code,
           ...Object.fromEntries(cats.map((c, ci) => [c, op.data[ci] ?? 0])),
         });
       }
@@ -167,6 +195,20 @@ function mergeSubgroups(subgroups, cats) {
   return { total, ops: [...merged.values()] };
 }
 
+// Extrae los 2 totales por unidad (Mbd/MMpcd) de las filas de subtotal de
+// producto de una entidad/Nacional — usa los rollups ya calculados por el
+// backend ("Hidrocarburos líquidos (Mbd)" y "Gas (MMpcd)"), que ya suman sus
+// componentes (Petróleo+Condensado / Gas asociado+no asociado) sin duplicar.
+function totalesPorUnidad(sgRows, cats) {
+  const buscar = (label) => sgRows.find(r => r.type === "subtotal" && r.label === label);
+  const liquidos = buscar("Hidrocarburos líquidos (Mbd)");
+  const gas = buscar("Gas (MMpcd)");
+  return {
+    mbd: liquidos ? cats.map((c, ci) => liquidos.data[ci] ?? 0) : null,
+    mmpcd: gas ? cats.map((c, ci) => gas.data[ci] ?? 0) : null,
+  };
+}
+
 // Agrupación multinivel (AND de filtros): Ambiente → Cuenca → Categoría → Operador.
 // Solo se anida por dimensiones con filtro activo; el backend ya aplica el AND,
 // aquí solo se re-organiza el desglose.
@@ -189,7 +231,7 @@ function extractLeaves(resultado) {
         if (row.type === "total")    { cat = null; continue; }
         if (row.type === "operator") {
           if (row.label === "Todos los operadores" || cat == null) continue;
-          leaves.push({ cuenca: g.cuenca, ubicacion: sg.ubicacion, categoria: cat, operator: row.label, data: row.data });
+          leaves.push({ cuenca: g.cuenca, ubicacion: sg.ubicacion, categoria: cat, operator: row.label, code: row.code, data: row.data });
         }
       }
     }
@@ -209,34 +251,127 @@ function activeHierLevels(perfFiltros) {
   return HIER_LEVELS.filter(lv => (perfFiltros?.[lv.filter]?.length ?? 0) > 0);
 }
 
-function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forceDivisions) {
+// ── Exportar: tabla PLANA/pivote (1 fila por combinación hoja, 1 columna por
+// producto/serie) en vez del árbol indentado que se ve en pantalla — pedido
+// explícito del usuario, con TIH_Producción por cuenca y ubicación_ejemplo.xlsx
+// como referencia exacta de formato. `categoria` (producto) se pivotea a
+// columnas cuando distingue valores reales (drill-down a nivel Producto);
+// si no, se pivotea `operator` (que en temas sin dimensión de operador propia
+// —Cuenca, Gcompo— es directamente el nombre del producto).
+function buildPivotExport(resultado, filtrosActivos, visibleSeries, search, displayCats, entityLabel) {
+  let leaves = extractLeaves(resultado);
+  // Sin filtros de Cuenca/Ambiente activos, el backend solo trae el grupo
+  // "Nacional" (extractLeaves lo descarta a propósito para el drill-down) —
+  // en ese caso se arma un solo "leaf" por cada producto de ese grupo, para
+  // que la vista Nacional también exporte filas en vez de quedar vacía.
+  if (!leaves.length) {
+    const nac = resultado?.groups?.find(g => g.cuenca === "Nacional");
+    const sg = nac?.subgroups?.find(s => s.ubicacion === "Nacional") ?? nac?.subgroups?.[0];
+    let cat = null;
+    for (const row of sg?.rows ?? []) {
+      if (row.type === "subtotal") { cat = row.label; continue; }
+      if (row.type === "total") { cat = null; continue; }
+      if (row.type === "operator") {
+        if (row.label === "Todos los operadores" || cat == null) continue;
+        leaves.push({ cuenca: "Nacional", ubicacion: "Nacional", categoria: cat, operator: row.label, data: row.data });
+      }
+    }
+  }
+  const levels = activeHierLevels(filtrosActivos);
+  const q = search.trim().toLowerCase();
+  const vis = visibleSeries ?? {};
+
+  const catValues = new Set(leaves.map(l => l.categoria));
+  const opValues = new Set(leaves.map(l => l.operator));
+  const categoriaEsNivel = levels.some(l => l.key === "categoria") && catValues.size > 1;
+  const pivotField = categoriaEsNivel ? "categoria" : "operator";
+
+  const identityFields = [];
+  if (levels.some(l => l.key === "ubicacion") || !levels.length) identityFields.push({ key: "ubicacion", header: "Ambiente" });
+  if (levels.some(l => l.key === "cuenca") || !levels.length) identityFields.push({ key: "cuenca", header: "Cuenca" });
+  if (pivotField !== "operator" && opValues.size > 1) {
+    identityFields.push({ key: "operator", header: entityLabel ? entityLabel[0].toUpperCase() + entityLabel.slice(1) : "Entidad" });
+  }
+
+  // La visibilidad de "series" (chips) solo aplica al primer nivel activo de
+  // la jerarquía — igual que en pantalla (flattenMultiLevel solo respeta vis
+  // en el nivel más externo). Aplicarla a producto/operador descartaría casi
+  // todo, porque esas chips vienen apagadas por defecto para la mayoría.
+  const nivelConVis = levels[0]?.key;
+  const filtered = leaves.filter(lf => {
+    if (nivelConVis && vis[lf[nivelConVis]] === false) return false;
+    if (q) {
+      const texto = `${lf.ubicacion} ${lf.cuenca} ${lf.categoria ?? ""} ${lf.operator}`.toLowerCase();
+      if (!texto.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const idxPorCat = displayCats.map(c => resultado.categories.indexOf(c));
+  const colOrder = [];
+  for (const lf of filtered) if (!colOrder.includes(lf[pivotField])) colOrder.push(lf[pivotField]);
+
+  const groupMap = new Map();
+  for (const lf of filtered) {
+    const idKey = identityFields.map(f => lf[f.key]).join("||");
+    if (!groupMap.has(idKey)) {
+      groupMap.set(idKey, { identidad: identityFields.map(f => lf[f.key]), valores: new Map() });
+    }
+    const grupo = groupMap.get(idKey);
+    const colKey = lf[pivotField];
+    if (!grupo.valores.has(colKey)) grupo.valores.set(colKey, displayCats.map(() => 0));
+    const acc = grupo.valores.get(colKey);
+    idxPorCat.forEach((idx, i) => { acc[i] += lf.data[idx] ?? 0; });
+  }
+
+  const multiPeriodo = displayCats.length > 1;
+  const columnasValor = multiPeriodo
+    ? colOrder.flatMap(col => displayCats.map(c => `${col} — ${c}`))
+    : colOrder;
+
+  const filas = [...groupMap.values()].map(g => ({
+    identidad: g.identidad,
+    valores: multiPeriodo
+      ? colOrder.flatMap(col => (g.valores.get(col) ?? displayCats.map(() => null)))
+      : colOrder.map(col => (g.valores.get(col)?.[0] ?? null)),
+  }));
+
+  return { columnasIdentidad: identityFields.map(f => f.header), columnasValor, filas };
+}
+
+function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forceDivisions, ocultarTotalesUnidad) {
   const cats = resultado.categories;
   const q = search.trim().toLowerCase();
   const levels = activeHierLevels(perfFiltros);
   const leaves = extractLeaves(resultado);
   const rows = [];
 
-  // Se omite el total con forceDivisions: ahí las categorías tienen unidades
-  // distintas (Mbd, MMpcd) y sumarlas no tiene sentido.
   rows.push({ _id: "banner|Nacional", _type: "banner", label: "Nacional", ...dataObj(cats, cats.map(() => null)) });
   if (!forceDivisions) {
     rows.push({ _id: "total|Nacional", _type: "total", label: "Total", ...dataObj(cats, sumLeaves(leaves, cats)) });
+  } else if (!ocultarTotalesUnidad) {
+    // Con forceDivisions un solo "Total" mezclaría unidades distintas
+    // (Mbd, MMpcd) — se muestran los 2 totales por unidad en su lugar.
+    const mbdLeaves = leaves.filter(l => l.categoria === "Hidrocarburos líquidos (Mbd)");
+    const mmpcdLeaves = leaves.filter(l => l.categoria === "Gas (MMpcd)");
+    if (mbdLeaves.length) rows.push({ _id: "total|Nacional|mbd", _type: "totalmbd", label: "Total Mbd", ...dataObj(cats, sumLeaves(mbdLeaves, cats)) });
+    if (mmpcdLeaves.length) rows.push({ _id: "total|Nacional|mmpcd", _type: "totalmmpcd", label: "Total MMpcd", ...dataObj(cats, sumLeaves(mmpcdLeaves, cats)) });
   }
 
-  function renderOperators(bucket, key, indentDepth) {
+  function renderOperators(bucket, key, indentDepth, qLocal) {
     const merged = new Map();
     for (const lf of bucket) {
-      if (!merged.has(lf.operator)) merged.set(lf.operator, cats.map(() => 0));
+      if (!merged.has(lf.operator)) merged.set(lf.operator, { data: cats.map(() => 0), code: lf.code });
       const acc = merged.get(lf.operator);
-      lf.data.forEach((v, i) => { acc[i] += v ?? 0; });
+      lf.data.forEach((v, i) => { acc.data[i] += v ?? 0; });
     }
-    let ops = [...merged].map(([label, data]) => ({ label, data }));
-    ops = ops.filter(o => hasData(o.data) && (!q || o.label.toLowerCase().includes(q)));
+    let ops = [...merged].map(([label, v]) => ({ label, data: v.data, code: v.code }));
+    ops = ops.filter(o => hasData(o.data) && (!qLocal || o.label.toLowerCase().includes(qLocal)));
     ops.sort((a, b) => a.label.localeCompare(b.label));
     for (const op of ops) {
       rows.push({
         _id: `o|${key}|${op.label}`, _type: "planoperator", _indent: 12 + indentDepth * 18 + 6,
-        label: op.label, ...dataObj(cats, op.data),
+        label: op.label, _code: op.code, ...dataObj(cats, op.data),
       });
     }
   }
@@ -244,7 +379,13 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
   // Si un nivel solo tiene un valor posible, no aporta mostrarlo en su propia
   // fila (repetiría el número de su padre): se combina su nombre con el del
   // siguiente nivel real ("Aguas someras · Cuencas del Sureste · Desarrollo").
-  const walk = (subLeaves, levelIdx, pathKey, depth, applyVis, pendingLabels) => {
+  //
+  // Búsqueda: aplica en CUALQUIER nivel (Ambiente, Cuenca, Producto), no solo
+  // en la hoja — así se puede buscar directamente por nombre de cuenca (p. ej.
+  // "Burgos"). Si el nombre del propio nivel coincide, se muestran todos sus
+  // hijos sin seguir filtrando hacia abajo (mismo patrón que "nombreCoincide"
+  // en la vista por operador).
+  const walk = (subLeaves, levelIdx, pathKey, depth, applyVis, pendingLabels, qLocal) => {
     const lv = levels[levelIdx];
     const buckets = new Map();
     for (const lf of subLeaves) {
@@ -256,52 +397,73 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
     const isSingleton = entries.length === 1;
 
     for (const [name, bucket] of entries) {
-      if (applyVis && vis[name] === false) continue;
+      // Las chips de series (Petróleo/Condensado/Gas/…) controlan el nivel
+      // Producto sin importar la profundidad — a diferencia de Ambiente, que
+      // solo se filtra por "vis" en el nivel raíz (applyVis).
+      if ((applyVis || lv.key === "categoria") && vis[name] === false) continue;
       const key = `${pathKey}/${name}`;
 
       const bucketTotal = sumLeaves(bucket, cats);
       if (!hasData(bucketTotal)) continue;
 
+      const nombreCoincide = !!qLocal && name.toLowerCase().includes(qLocal);
+      // No basta con mirar el nombre de este nivel o el operador de la hoja:
+      // el término buscado puede vivir en un nivel intermedio más abajo (p.
+      // ej. buscar una cuenca estando parado en el nivel Ambiente) — hay que
+      // revisar todos los campos de cada leaf del bucket antes de podar la rama.
+      const tieneCoincidencia = !qLocal || nombreCoincide || bucket.some(lf =>
+        [lf.cuenca, lf.ubicacion, lf.categoria, lf.operator].some(v => v && v.toLowerCase().includes(qLocal))
+      );
+      if (!tieneCoincidencia) continue;
+      const qEfectiva = nombreCoincide ? "" : qLocal;
+
+      // Se muestra la suma real en todos los niveles (Ambiente, Cuenca,
+      // Producto) — pedido explícito, aunque en Ambiente/Cuenca combine
+      // productos de distintas unidades (Mbd, MMpcd). Excepción: cuando este
+      // nivel es singleton (una sola categoría) Y su padre ya tiene fila
+      // propia (no venía combinándose por el camino "· "), la cifra sería
+      // idéntica a la del padre — se oculta por redundante.
       if (isSingleton) {
         const nextPending = [...pendingLabels, name];
         if (levelIdx + 1 < levels.length) {
-          walk(bucket, levelIdx + 1, key, depth, false, nextPending);
+          walk(bucket, levelIdx + 1, key, depth, false, nextPending, qEfectiva);
         } else {
           const isOpen = !openGroups.has(key);
+          // Redundante con la fila del padre solo mientras esté expandida
+          // (visible el hijo de abajo); colapsada, es la única cifra visible.
+          const esRedundante = pendingLabels.length === 0 && isOpen;
           rows.push({
             _id: `h|${key}`, _type: "planheader", _groupKey: key, _open: isOpen, _indent: 12 + depth * 18, _depth: depth,
-            label: nextPending.join(" · "), ...dataObj(cats, forceDivisions ? cats.map(() => null) : bucketTotal),
+            label: nextPending.join(" · "), ...dataObj(cats, esRedundante ? cats.map(() => null) : bucketTotal),
           });
           if (!isOpen) continue;
-          renderOperators(bucket, key, depth + 1);
+          renderOperators(bucket, key, depth + 1, qEfectiva);
         }
         continue;
       }
 
       const label = pendingLabels.length ? [...pendingLabels, name].join(" · ") : name;
       const isOpen = !openGroups.has(key);
-      // Con forceDivisions, los encabezados de nivel no muestran número:
-      // mezclarían unidades distintas (Mbd, MMpcd) de los productos que agrupan.
       rows.push({
         _id: `h|${key}`, _type: "planheader", _groupKey: key, _open: isOpen, _indent: 12 + depth * 18, _depth: depth,
-        label, ...dataObj(cats, forceDivisions ? cats.map(() => null) : bucketTotal),
+        label, ...dataObj(cats, bucketTotal),
       });
       if (!isOpen) continue;
 
       if (levelIdx + 1 < levels.length) {
-        walk(bucket, levelIdx + 1, key, depth + 1, false, []);
+        walk(bucket, levelIdx + 1, key, depth + 1, false, [], qEfectiva);
       } else {
-        renderOperators(bucket, key, depth + 1);
+        renderOperators(bucket, key, depth + 1, qEfectiva);
       }
     }
   };
 
-  walk(leaves, 0, "ml", 0, true, []);
+  walk(leaves, 0, "ml", 0, true, [], q);
   return rows;
 }
 
 // ── Aplanar según el modo activo ──────────────────────────────────────────────
-function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions) {
+function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, ocultarTotalesUnidad) {
   const rows = [];
   if (!resultado?.groups) return rows;
   const cats = resultado.categories;
@@ -333,7 +495,12 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
 
       if (!isOpen) continue;
 
-      pushOperatorRows(rows, sg.rows, gk, "Nacional", sg.ubicacion, cats, hideDivisions, groupBy, vis, q, forceDivisions);
+      if (mostrarTotalesUnidad && !ocultarTotalesUnidad) {
+        const { mbd, mmpcd } = totalesPorUnidad(sg.rows, cats);
+        if (mbd) rows.push({ _id: `${gk}|totalmbd`, _type: "totalmbd", _cuenca: "Nacional", _ub: sg.ubicacion, label: "Total Mbd", ...dataObj(cats, mbd) });
+        if (mmpcd) rows.push({ _id: `${gk}|totalmmpcd`, _type: "totalmmpcd", _cuenca: "Nacional", _ub: sg.ubicacion, label: "Total MMpcd", ...dataObj(cats, mmpcd) });
+      }
+      pushOperatorRows(rows, sg.rows, gk, "Nacional", sg.ubicacion, cats, hideDivisions, groupBy, vis, q, forceDivisions, openGroups);
     }
     return rows;
   }
@@ -343,15 +510,23 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
     // Banner NACIONAL + Total general arriba
     const nacSg = nacGroup?.subgroups?.find(s => s.ubicacion === "Nacional");
     if (nacSg) {
-      const { total } = mergeSubgroups([nacSg], cats);
       rows.push({
         _id: "banner|Nacional", _type: "banner", _cuenca: "Nacional", _ub: "", label: "Nacional",
         ...Object.fromEntries(cats.map(c => [c, null])),
       });
-      rows.push({
-        _id: "total|Nacional", _type: "total", _cuenca: "Nacional", _ub: "", label: "Total",
-        ...Object.fromEntries(cats.map((c, ci) => [c, total[ci]])),
-      });
+      if (mostrarTotalesUnidad) {
+        // Con productos de distintas unidades (Mbd/MMpcd), un solo "Total"
+        // los mezclaría sin sentido — se muestran los 2 totales por unidad.
+        const { mbd, mmpcd } = totalesPorUnidad(nacSg.rows, cats);
+        if (mbd && !ocultarTotalesUnidad) rows.push({ _id: "total|Nacional|mbd", _type: "totalmbd", _cuenca: "Nacional", _ub: "", label: "Total Mbd", ...dataObj(cats, mbd) });
+        if (mmpcd && !ocultarTotalesUnidad) rows.push({ _id: "total|Nacional|mmpcd", _type: "totalmmpcd", _cuenca: "Nacional", _ub: "", label: "Total MMpcd", ...dataObj(cats, mmpcd) });
+      } else {
+        const { total } = mergeSubgroups([nacSg], cats);
+        rows.push({
+          _id: "total|Nacional", _type: "total", _cuenca: "Nacional", _ub: "", label: "Total",
+          ...Object.fromEntries(cats.map((c, ci) => [c, total[ci]])),
+        });
+      }
     }
 
     for (const g of resultado.groups) {
@@ -359,6 +534,34 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
       if (vis[g.cuenca] === false) continue;
 
       const gk     = `cuenca|${g.cuenca}`;
+      const sgRows = g.subgroups?.[0]?.rows ?? [];
+      const nombreCoincide = q ? g.cuenca.toLowerCase().includes(q) : false;
+      // "Producción por operador": cada empresa trae Producto (subtotal) →
+      // Contrato (hoja) — mergeSubgroups aplanaría el subtotal y mezclaría
+      // unidades (Mbd/MMpcd) en un solo total, por eso aquí se respeta la
+      // jerarquía con pushOperatorRows en vez del merge plano de abajo.
+      if (sgRows.some(r => r.type === "subtotal")) {
+        const contratoCoincide = q ? sgRows.some(r => r.type === "operator" && r.label.toLowerCase().includes(q)) : true;
+        if (q && !nombreCoincide && !contratoCoincide) continue; // ni la empresa ni ningún contrato coincide con la búsqueda
+        // Si coincide el nombre de la empresa, se muestran todos sus contratos
+        // (la búsqueda ya cumplió su propósito a ese nivel).
+        const qEfectiva = nombreCoincide ? "" : q;
+        const isOpen = q ? true : openGroups.has(gk); // autoexpandir resultados de búsqueda
+        rows.push({
+          _id: `ph|${gk}`, _type: "planheader",
+          _cuenca: g.cuenca, _ub: "", _groupKey: gk, _open: isOpen, label: g.cuenca,
+          ...Object.fromEntries(cats.map(c => [c, null])),
+        });
+        if (!isOpen) continue;
+        if (mostrarTotalesUnidad && !ocultarTotalesUnidad) {
+          const { mbd, mmpcd } = totalesPorUnidad(sgRows, cats);
+          if (mbd) rows.push({ _id: `${gk}|totalmbd`, _type: "totalmbd", _cuenca: g.cuenca, _ub: "", label: "Total Mbd", ...dataObj(cats, mbd) });
+          if (mmpcd) rows.push({ _id: `${gk}|totalmmpcd`, _type: "totalmmpcd", _cuenca: g.cuenca, _ub: "", label: "Total MMpcd", ...dataObj(cats, mmpcd) });
+        }
+        pushOperatorRows(rows, sgRows, gk, g.cuenca, "Nacional", cats, false, groupBy, vis, qEfectiva, true, openGroups);
+        continue;
+      }
+
       const isOpen = openGroups.has(gk);
       const { total, ops } = mergeSubgroups(g.subgroups, cats);
 
@@ -480,41 +683,67 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
 // ── Toolbar ───────────────────────────────────────────────────────────────────
 const PERIOD_LABEL = { annually: "Anual", monthly: "Mensual" };
 
-function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, allRows, titulo, period, start_year, end_year, opCount, entityLabel = "operadores", sumaDisponible, sumaOculta, setSumaOculta, isMonthly }) {
+function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, titulo, filtroLabel, period, start_year, end_year, opCount, entityLabel = "operadores", sumaDisponible, sumaOculta, setSumaOculta, totalesUnidadDisponible, totalesUnidadOcultos, setTotalesUnidadOcultos, isMonthly, searchPlaceholder = "Buscar Operador o contrato", onExportExcel }) {
   const [showCols, setShowCols] = useState(false);
+  const [exportando, setExportando] = useState(false);
 
-  function exportCSV() {
-    const visCats = categories.filter(c => !hiddenCols.has(c));
-    const header  = ["Tipo", "Cuenca Geológica", "Ambiente", "Etiqueta", ...visCats].join(",");
-    const lines   = allRows.map(r =>
-      [r._type, r._cuenca, r._ub, `"${r.label}"`, ...visCats.map(c => r[c] ?? "")].join(",")
-    );
-    const blob = new Blob([[header, ...lines].join("\n")], { type: "text/csv;charset=utf-8;" });
-    const url  = URL.createObjectURL(blob);
-    const a    = Object.assign(document.createElement("a"), { href: url, download: "datos.csv" });
-    a.click(); URL.revokeObjectURL(url);
+  async function handleExportExcel() {
+    setExportando(true);
+    try { await onExportExcel(); } finally { setExportando(false); }
   }
 
   return (
     <div className="flex items-center gap-2 mb-3 flex-wrap">
       {titulo && (
-        <div className="flex flex-col justify-center mr-2 min-w-0">
+        <div className="flex flex-col justify-center mr-2 min-w-0 gap-1">
           <span style={{ fontFamily: "'Patria', Georgia, serif", color: "#10312B", fontSize: 17, fontWeight: 700, lineHeight: 1.1, whiteSpace: "nowrap" }}>
             {titulo}
           </span>
-          <span style={{ fontFamily: "'Noto Sans', sans-serif", fontSize: 10, color: "#94a3b8", fontWeight: 500, marginTop: 1, letterSpacing: "0.03em", whiteSpace: "nowrap" }}>
-            {PERIOD_LABEL[period] ?? period} · {start_year} – {end_year}
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span style={{ fontFamily: "'Noto Sans', sans-serif", fontSize: 10, color: "#94a3b8", fontWeight: 500, letterSpacing: "0.03em", whiteSpace: "nowrap" }}>
+              {PERIOD_LABEL[period] ?? period} · {start_year} – {end_year}
+            </span>
+            {filtroLabel && (
+              <span className="inline-flex items-center gap-1 rounded-full whitespace-nowrap"
+                style={{ background: "#e6f4f1", color: "#0d6a5c", fontSize: 11, fontWeight: 600, padding: "2px 9px 2px 7px", fontFamily: "'Noto Sans', sans-serif" }}>
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2 3h12l-4.5 5.5V13l-3 1.5V8.5Z" />
+                </svg>
+                {filtroLabel}
+              </span>
+            )}
+          </div>
         </div>
       )}
       <div className="flex-1" />
+      {totalesUnidadDisponible && (
+        <button
+          onClick={() => setTotalesUnidadOcultos(v => !v)}
+          title={totalesUnidadOcultos ? "Mostrar totales Mbd/MMpcd" : "Ocultar totales Mbd/MMpcd"}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] text-slate-500 border border-slate-200 rounded-lg bg-white hover:bg-slate-50"
+        >
+          {totalesUnidadOcultos ? (
+            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8Z" opacity="0.4" />
+              <circle cx="8" cy="8" r="2" opacity="0.4" />
+              <line x1="1.5" y1="1.5" x2="14.5" y2="14.5" />
+            </svg>
+          ) : (
+            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8Z" />
+              <circle cx="8" cy="8" r="2" />
+            </svg>
+          )}
+          Totales Mbd/MMpcd
+        </button>
+      )}
       <div className="relative min-w-[180px] max-w-[240px]">
         <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
           <circle cx="6.5" cy="6.5" r="4.5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/>
         </svg>
         <input
           className="w-full pl-8 pr-8 py-1.5 text-[13px] text-slate-800 placeholder-slate-400 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-400 bg-white"
-          placeholder="Buscar operador, categoría…"
+          placeholder={searchPlaceholder}
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
@@ -557,11 +786,11 @@ function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, all
         )}
       </div>
 
-      <button onClick={exportCSV} className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50">
+      <button onClick={handleExportExcel} disabled={exportando} className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 disabled:opacity-60">
         <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M8 2v10M4 8l4 4 4-4"/><path d="M2 14h12"/>
         </svg>
-        Exportar CSV
+        {exportando ? "Exportando…" : "Exportar Excel"}
       </button>
 
       <span className="text-[11px] text-slate-400 whitespace-nowrap">
@@ -572,14 +801,24 @@ function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, all
 }
 
 // ── Componente principal ──────────────────────────────────────────────────────
-export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros }) {
+export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick }) {
+  const { pendingBusqueda, setPendingBusqueda } = useExplorer();
   const [search,     setSearch]     = useState("");
+
+  // Búsqueda pendiente al saltar desde otro tema (p. ej. Asignaciones →
+  // Producción por campo con el campo ya elegido) — se aplica una sola vez.
+  useEffect(() => {
+    if (pendingBusqueda == null) return;
+    setSearch(pendingBusqueda);
+    setPendingBusqueda(null);
+  }, [pendingBusqueda, setPendingBusqueda]);
   const [hiddenCols, setHiddenCols] = useState(new Set());
   const [openGroups, setOpenGroups] = useState(() => initOpenGroups(resultado, groupBy));
   const [hoveredRow,  setHoveredRow]  = useState(null);
   const [selectedRow, setSelectedRow] = useState(null);
   const [hoveredCol,  setHoveredCol]  = useState(null);
   const [sumaOculta,  setSumaOculta]  = useState(false);
+  const [totalesUnidadOcultos, setTotalesUnidadOcultos] = useState(false);
 
   // Resetear grupos abiertos al cambiar de modo o al cambiar los datos (filtros)
   useEffect(() => {
@@ -594,48 +833,93 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
     });
   }
 
-  // "openGroups" guarda las cerradas en flattenMultiLevel y las abiertas en
-  // flattenGroups — semántica opuesta entre modos.
-  function collapseAll() {
-    if (!resultado?.groups) return;
-    if (hierLevels.length > 0) {
-      const keys = new Set();
-      rows.forEach(r => { if (r._type === "planheader") keys.add(r._groupKey); });
-      setOpenGroups(keys);
-    } else {
-      setOpenGroups(new Set());
-    }
-  }
-
-  function expandAll() {
-    if (!resultado?.groups) return;
-    if (hierLevels.length > 0) {
-      setOpenGroups(new Set()); // vacío = todo abierto (isOpen = !openGroups.has)
-    } else {
-      setOpenGroups(new Set(["Nacional|Nacional"])); // única llave colapsable en este modo
-    }
-  }
-
+  // Distintas partes de la tabla usan convenciones opuestas para el mismo Set
+  // "openGroups" — algunas filas están abiertas cuando su llave SÍ está en el
+  // Set (p. ej. cada empresa en la vista "por operador"), otras cuando NO lo
+  // está (p. ej. cada producto colapsable, con llave "sub|...", o el
+  // planheader de ambiente/cuenca/producto, con llave "ml/..."). La convención
+  // de cada llave se deduce de su propio prefijo (no de comparar el estado ya
+  // renderizado contra el Set, que fallaba en dejar sin tocar los productos
+  // anidados dentro de una empresa al Contraer/Expandir todo).
   function toggleAllGroups() {
-    hasOpenGroups ? collapseAll() : expandAll();
+    setOpenGroups(prev => {
+      const targetOpen = !hasOpenGroups;
+      let next = new Set(prev);
+      // Expandir todo: limpiar las llaves de convención "cerrado si está en
+      // el Set" (planheader de Ambiente/Cuenca/Producto con prefijo "ml/", y
+      // el subtotal de producto colapsable con prefijo "sub|") abre TODOS los
+      // niveles de un tirón, incluidos los que estaban ocultos detrás de un
+      // padre todavía cerrado (p. ej. los productos dentro de cada empresa en
+      // "por operador", o el nivel Producto en el drill-down de Campo/
+      // Asignación) — iterar solo "rows" no bastaba, porque un nivel cerrado
+      // nunca renderiza a sus hijos y sus llaves no aparecían para abrirlas.
+      if (targetOpen) {
+        next = new Set([...next].filter(k => !k.startsWith("ml/") && !k.startsWith("sub|")));
+      }
+      rows.forEach(r => {
+        if (r._groupKey == null) return;
+        // El envoltorio interno "Nacional" (fila tipo "ubicacion" sin cuenca
+        // real detrás, usado en Contrato/Campo/Operadores sin filtrar) nunca
+        // debe cerrarse: es solo un gate interno, no una categoría real — si
+        // se cierra, esconde de un tirón TODAS las categorías de producto que
+        // "Contraer todo" debía dejar visibles (colapsadas, no ocultas).
+        if (r._type === "ubicacion" && r.label === "Nacional") return;
+        const convencionInvertida = r._groupKey.startsWith("sub|") || r._groupKey.startsWith("ml/");
+        const debeEstarEnSet = convencionInvertida ? !targetOpen : targetOpen;
+        debeEstarEnSet ? next.add(r._groupKey) : next.delete(r._groupKey);
+      });
+      return next;
+    });
   }
 
-  const { perfFiltros } = useExplorer();
+  const { perfFiltros, perfOpciones, prodOpciones } = useExplorer();
   const filtrosActivos = filtros ?? perfFiltros;
   // Dimensiones con filtro activo → niveles de anidamiento (Ambiente > Cuenca > Categoría).
   const hierLevels = activeHierLevels(filtrosActivos);
   const hideDivisions = !forceDivisions && filtrosActivos.categorias.length === 0;
 
+  // Resumen legible de los filtros activos, para mostrar junto al título
+  // (p. ej. "Cuenca Geológica: Burgos · Categoría: Desarrollo") — mismo
+  // vocabulario que ya usa el export a Excel. Si la selección cubre todas
+  // las opciones disponibles de esa dimensión, se muestra solo el nombre de
+  // la dimensión (equivale a "todas", no aporta listar cada una).
+  const filtroLabel = useMemo(() => {
+    const partes = [];
+    const parte = (nombre, seleccion, universo) => {
+      const sel = seleccion ?? [];
+      if (!sel.length) return;
+      const esTodas = universo?.length && sel.length >= universo.length;
+      partes.push(esTodas ? nombre : `${nombre}: ${sel.join(", ")}`);
+    };
+    // Perforación (perfOpciones) y Producción (prodOpciones) traen cada una su
+    // propio universo de opciones — según el tema activo solo una de las dos
+    // está poblada, se usa la que tenga datos.
+    parte("Cuenca Geológica", filtrosActivos?.cuencas, perfOpciones?.cuencas?.length ? perfOpciones.cuencas : prodOpciones?.cuencas);
+    parte("Ambiente", filtrosActivos?.ubicaciones, perfOpciones?.ubicaciones?.length ? perfOpciones.ubicaciones : prodOpciones?.ubicaciones);
+    const categoriasReales = (filtrosActivos?.categorias ?? []).filter(c => c !== "_producto");
+    parte("Categoría", categoriasReales, perfOpciones?.categorias);
+    parte("Operador", filtrosActivos?.operadores, perfOpciones?.operadores);
+    return partes.join(" · ");
+  }, [filtrosActivos, perfOpciones, prodOpciones]);
+
   const categories = resultado?.categories ?? [];
   const visCats    = categories.filter(c => !hiddenCols.has(c));
 
+  // forceDivisions ya identifica exactamente los temas de Producción donde
+  // cada entidad/grupo mezcla productos de distintas unidades (Mbd/MMpcd):
+  // Cuenca, Contratos, Campos, Asignaciones, Estado, Gcompo y Operadores —
+  // en todos aplican los mismos 2 totales por unidad, ocultables.
+  const mostrarTotalesUnidad = forceDivisions;
   const rows = useMemo(
     () => hierLevels.length > 0
-      ? flattenMultiLevel(resultado, filtrosActivos, openGroups, search, visibleSeries ?? {}, forceDivisions)
-      : flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions),
-    [resultado, visibleSeries, search, openGroups, filtrosActivos, hierLevels.length, hideDivisions, forceDivisions, groupBy]
+      ? flattenMultiLevel(resultado, filtrosActivos, openGroups, search, visibleSeries ?? {}, forceDivisions, totalesUnidadOcultos)
+      : flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, totalesUnidadOcultos),
+    [resultado, visibleSeries, search, openGroups, filtrosActivos, hierLevels.length, hideDivisions, forceDivisions, groupBy, mostrarTotalesUnidad, totalesUnidadOcultos]
   );
   const cuencaCount = useMemo(() => rows.filter(r => r._type === "cuenca").length, [rows]);
+  // Índice de la primera fila que sí se renderiza (la fila "cuenca" se
+  // descarta cuando cuencaCount === 1, así que no cuenta como "primera").
+  const primeraFilaVisibleIdx = rows.findIndex(r => !(r._type === "cuenca" && cuencaCount === 1));
 
   if (!resultado?.groups?.length) {
     return (
@@ -653,9 +937,15 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
     );
   }
 
-  const opCount = new Set(
-    rows.filter(r => r._type === "operator" || r._type === "planoperator").map(r => r.label)
-  ).size;
+  // En la jerarquía multinivel (Ambiente > Cuenca > Producto), las filas
+  // "planoperator" son el producto/hoja final, no la entidad que describe
+  // entityLabel (p. ej. "ambientes") — ahí se cuenta el primer nivel real
+  // (profundidad 0) en vez de las hojas.
+  const opCount = hierLevels.length > 0
+    ? new Set(rows.filter(r => r._type === "planheader" && r._depth === 0).map(r => r.label)).size
+    : new Set(
+        rows.filter(r => r._type === "operator" || r._type === "planoperator").map(r => r.label)
+      ).size;
 
   // Detectar si las categorías son mensuales (formato "YYYY-MM")
   const isMonthly = visCats.length > 0 && /^\d{4}-\d{2}$/.test(visCats[0]);
@@ -711,27 +1001,103 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   // Resalte de columna al hacer hover (overlay translúcido, no pisa el color de fondo existente)
   const colHighlightShadow = "inset 0 0 0 9999px rgba(13,148,136,0.12)";
 
-  const hasOpenGroups = hierLevels.length > 0
-    ? rows.some(r => r._type === "planheader" && r._open)
-    : openGroups.size > 0;
+  // Universal: cualquier fila colapsable (empresa, ambiente, cuenca,
+  // producto…) ya trae su "_open" resuelto al aplanar — sin importar qué
+  // convención de "openGroups" use esa rama. El envoltorio interno "Nacional"
+  // (ver toggleAllGroups) se excluye: siempre está abierto, así que contarlo
+  // dejaría "hasOpenGroups" en true para siempre e impediría mostrar
+  // "Expandir todo" una vez colapsadas las categorías reales.
+  const hasOpenGroups = rows.some(r => r._groupKey != null && r._open && !(r._type === "ubicacion" && r.label === "Nacional"));
+
+  const hasCollapsible = rows.some(r => r._groupKey != null);
+  const hasBanner = rows.some(r => r._type === "banner");
+  // Cuando el encabezado de la columna de nombres tiene su propia etiqueta
+  // (p. ej. "Privados" en Operadores filtrado a un solo grupo), esa etiqueta
+  // ES la "categoría padre" — el botón va junto a ella, en el encabezado, no
+  // junto a la primera empresa. Con banner "Nacional" (Cuenca/Gcompo/etc.), el
+  // botón vive en esa misma fila. Sin ninguno de los dos (Contrato/Campo/
+  // Asignación sin nodo "Nacional" con banner propio), se ofrece junto a la
+  // PRIMERA fila renderizada, sea cual sea su tipo.
+  const showHeaderToggle = hasCollapsible && !hasBanner && !!rowHeaderLabel;
+  const showToggleEnPrimeraFila = hasCollapsible && !hasBanner && !rowHeaderLabel;
+
+  function ToggleTodoBtn({ dark }) {
+    return (
+      <button
+        onClick={(e) => { e.stopPropagation(); toggleAllGroups(); }}
+        title={hasOpenGroups ? "Contraer todos los grupos" : "Expandir todos los grupos"}
+        className="inline-flex items-center gap-1 px-2 py-0.5 text-[10.5px] font-medium rounded-md border transition-colors normal-case tracking-normal shrink-0"
+        style={dark
+          ? { color: "#a7f3d0", borderColor: "rgba(167,243,208,0.35)", background: "rgba(255,255,255,0.06)" }
+          : { color: "#0f766e", borderColor: "#99f6e4", background: "#f0fdfa" }}
+        onMouseEnter={e => { e.currentTarget.style.background = dark ? "rgba(255,255,255,0.14)" : "#ccfbf1"; }}
+        onMouseLeave={e => { e.currentTarget.style.background = dark ? "rgba(255,255,255,0.06)" : "#f0fdfa"; }}
+      >
+        <svg className={`w-3 h-3 transition-transform duration-150 ${hasOpenGroups ? "" : "rotate-180"}`}
+          viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <polyline points="2.5,4 6,7.5 9.5,4" />
+        </svg>
+        {hasOpenGroups ? "Contraer todo" : "Expandir todo"}
+      </button>
+    );
+  }
+
+  // Nivel de sangría de cada fila tal como se ve en pantalla (misma jerarquía
+  // visual: Nacional/banner en el tope, luego subtotales de producto/ambiente,
+  // luego el detalle/hoja) — para que el Excel se lea igual que la tabla.
+  function nivelDeFila(row) {
+    if (row._indent != null) return Math.max(0, Math.round((row._indent - 12) / 18));
+    if (row._type === "banner" || row._type === "cuenca" || row._type === "ubicacion") return 0;
+    if (row._type === "total" || row._type === "subtotal" || row._type === "subtotalcol" || row._type === "planheader" || row._type === "totalmbd" || row._type === "totalmmpcd") return 1;
+    return 2;
+  }
+
+  async function exportExcel() {
+    const { exportarProduccionExcel } = await import("../../utils/exportExcel");
+    const tablaPivot = buildPivotExport(resultado, filtrosActivos, visibleSeries, search, displayCats, entityLabel);
+    // Descripción de lo que el usuario tiene seleccionado/filtrado en este
+    // momento (Cuenca/Ambiente activos, grupo Pemex/Privadas, búsqueda) — el
+    // mismo contexto que se ve en pantalla, para que el archivo no quede
+    // "mudo" sobre qué recorte de datos representa. Cada filtro en su propia
+    // línea (formato del ejemplo de referencia).
+    const partes = [];
+    if (filtrosActivos?.cuencas?.length) partes.push(`Cuenca Geológica: ${filtrosActivos.cuencas.join(", ")}`);
+    else partes.push("Cuenca Geológica: Todas");
+    if (filtrosActivos?.ubicaciones?.length) partes.push(`Ambiente: ${filtrosActivos.ubicaciones.join(", ")}`);
+    else partes.push("Ambiente: Todos");
+    if (rowHeaderLabel) partes.push(`Grupo: ${rowHeaderLabel}`);
+    if (search.trim()) partes.push(`Búsqueda: "${search.trim()}"`);
+    const subtitulo = `Filtros — ${partes.join("\n")}`;
+
+    await exportarProduccionExcel({
+      titulo: titulo || "Datos",
+      subtitulo,
+      periodoNota: `${PERIOD_LABEL[period] ?? period} — ${start_year} — ${end_year}`,
+      tablaPivot,
+      nombreArchivo: `TIH_${titulo || "datos"}.xlsx`,
+    });
+  }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minWidth: 0 }}>
       <Toolbar search={search} setSearch={setSearch} hiddenCols={hiddenCols}
-        setHiddenCols={setHiddenCols} categories={categories} allRows={rows}
-        titulo={titulo} period={period} start_year={start_year} end_year={end_year}
+        setHiddenCols={setHiddenCols} categories={categories}
+        titulo={titulo} filtroLabel={filtroLabel} period={period} start_year={start_year} end_year={end_year}
         opCount={opCount} entityLabel={entityLabel}
-        sumaDisponible={sumaDisponible} sumaOculta={sumaOculta} setSumaOculta={setSumaOculta} isMonthly={isMonthly} />
+        sumaDisponible={sumaDisponible} sumaOculta={sumaOculta} setSumaOculta={setSumaOculta} isMonthly={isMonthly}
+        totalesUnidadDisponible={mostrarTotalesUnidad} totalesUnidadOcultos={totalesUnidadOcultos} setTotalesUnidadOcultos={setTotalesUnidadOcultos}
+        onExportExcel={exportExcel}
+        {...(searchPlaceholder ? { searchPlaceholder } : {})} />
 
-      <div className="rounded-xl border border-slate-200 shadow-sm bg-white overflow-auto" style={{ flex: 1, minHeight: 0 }}>
-          <table className="border-collapse" style={{ width: isMonthly ? "100%" : "auto", tableLayout: isMonthly ? "fixed" : "auto", minWidth: isMonthly ? `${240 + visCats.length * 52 + (showSuma ? yearGroups.length * 56 : 0)}px` : undefined }}>
+      <div className="rounded-xl border border-slate-200 shadow-sm bg-white overflow-auto" style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
+          <table className="border-collapse" style={{ width: isMonthly ? "100%" : "auto", tableLayout: isMonthly ? "fixed" : "auto", minWidth: isMonthly ? `${240 + visCats.length * 68 + (showSuma ? yearGroups.length * 76 : 0)}px` : undefined }}>
             {isMonthly && (
               <colgroup>
                 <col style={{ width: "240px" }} />
                 {yearGroups.map(([year, cols]) => (
                   <Fragment key={year}>
                     {cols.map(c => <col key={c} />)}
-                    {showSuma && <col key={`${year}-suma`} style={{ width: "56px" }} />}
+                    {showSuma && <col key={`${year}-suma`} style={{ width: "76px" }} />}
                   </Fragment>
                 ))}
               </colgroup>
@@ -741,14 +1107,14 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                 <>
                   {/* Fila 1: años */}
                   <tr className="border-b border-slate-200">
-                    <th className="sticky left-0 bg-white z-10 px-4 py-2" style={{ minWidth: 280 }} />
+                    <th className="static sm:sticky sm:left-0 bg-white z-10 px-4 py-2" style={{ minWidth: 280 }} />
                     {yearGroups.map(([year, cols], yi) => {
                       const clr = YEAR_COLORS[yi % YEAR_COLORS.length];
                       return (
                         <th key={year}
                           colSpan={cols.length + (showSuma ? 1 : 0)}
                           className="text-center px-2 py-2 text-[12px] font-bold whitespace-nowrap"
-                          style={{ minWidth: cols.length * 52, background: clr.bg, color: clr.text, borderLeft: yi > 0 ? `2px solid ${clr.border}` : undefined }}
+                          style={{ minWidth: cols.length * 68, background: clr.bg, color: clr.text, borderLeft: yi > 0 ? `2px solid ${clr.border}` : undefined }}
                         >
                           {year}
                         </th>
@@ -757,7 +1123,15 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                   </tr>
                   {/* Fila 2: meses */}
                   <tr className="border-b-2 border-slate-300">
-                    <th className="sticky left-0 bg-white z-10 px-4 py-2" style={{ minWidth: 280 }} />
+                    <th
+                      className="text-left static sm:sticky sm:left-0 z-10 px-4 py-2 text-[13px] font-bold text-white uppercase tracking-widest"
+                      style={{ minWidth: 280, background: rowHeaderLabel ? "linear-gradient(90deg,#10312B,#1a4a3a)" : "#fff" }}
+                    >
+                      <span className="flex items-center justify-between gap-2">
+                        <span>{rowHeaderLabel}</span>
+                        {showHeaderToggle && <ToggleTodoBtn dark />}
+                      </span>
+                    </th>
                     {yearGroups.map(([year, cols], yi) => {
                       const clr = YEAR_COLORS[yi % YEAR_COLORS.length];
                       return (
@@ -768,7 +1142,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                               <th key={c}
                                 className="text-center px-1 py-1.5 text-[11px] font-semibold whitespace-nowrap"
                                 style={{
-                                  minWidth: 52,
+                                  minWidth: 68,
                                   background: clr.monthBg,
                                   color: clr.text,
                                   borderLeft: ci === 0 && yi > 0 ? `2px solid ${clr.border}` : undefined,
@@ -783,7 +1157,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                           })}
                           {showSuma && (
                             <th className="text-center px-1 py-1.5 text-[11px] font-semibold whitespace-nowrap"
-                              style={{ minWidth: 56, background: "#eef2ff", color: "#6366f1" }}>
+                              style={{ minWidth: 76, background: "#eef2ff", color: "#6366f1" }}>
                               Suma
                             </th>
                           )}
@@ -794,7 +1168,15 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                 </>
               ) : (
                 <tr className="border-b-2 border-slate-200 bg-white">
-                  <th className="text-left px-4 py-3 sticky left-0 bg-white z-10" style={{ minWidth: 160 }} />
+                  <th
+                    className="text-left px-4 py-3 static sm:sticky sm:left-0 z-10 text-[13px] font-bold text-white uppercase tracking-widest"
+                    style={{ minWidth: 160, background: rowHeaderLabel ? "linear-gradient(90deg,#10312B,#1a4a3a)" : "#fff" }}
+                  >
+                    <span className="flex items-center justify-between gap-2">
+                      <span>{rowHeaderLabel}</span>
+                      {showHeaderToggle && <ToggleTodoBtn dark />}
+                    </span>
+                  </th>
                   {displayCats.map((c) => {
                     const clr = ANNUAL_COLORS[colYearIdx[c] % ANNUAL_COLORS.length];
                     return (
@@ -822,16 +1204,27 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
               )}
             </thead>
             <tbody>
-              {rows.map(row => {
+              {rows.map((row, idx) => {
                 const cfg         = TYPE_STYLE[row._type] ?? TYPE_STYLE.operator;
                 const bg          = ROW_BG[row._type];
-                const isCollapse  = COLLAPSIBLE.has(row._type);
+                // El envoltorio interno "Nacional" (fila "ubicacion" sin cuenca
+                // real detrás, ver toggleAllGroups) es solo un gate estructural,
+                // no una categoría real — no debe poder colapsarse con clic
+                // directo (encogería todo el desglose de abajo sin avisar).
+                const esWrapperNacional = row._type === "ubicacion" && row.label === "Nacional";
+                const isCollapse  = COLLAPSIBLE.has(row._type) && !esWrapperNacional;
                 const useColSpan  = row._type === "ubicacion" || row._type === "cuenca" || row._type === "banner";
                 const isCuencaRow = row._type === "cuenca";
 
                 if (isCuencaRow && cuencaCount === 1) return null;
 
                 const isDark      = isCuencaRow || row._type === "ubicacion" || row._type === "banner";
+                // El botón "Contraer/Expandir todo" va junto al banner
+                // "Nacional" si existe, o si no (y no hay rowHeaderLabel para
+                // mostrarlo en el encabezado) junto a la primera fila VISIBLE,
+                // sea cual sea (la fila "cuenca" se descarta arriba cuando
+                // cuencaCount === 1, así que no cuenta como "primera").
+                const esPrimeraVisible = idx === primeraFilaVisibleIdx;
                 const isSelected  = selectedRow === row._id && !isDark;
                 const isHovered   = hoveredRow === row._id && !isDark && !isSelected;
                 const selectedBg  = "#ccfbf1";
@@ -840,7 +1233,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
 
                 return (
                   <tr key={row._id}
-                    className={`${bg ?? ""} ${isCollapse ? "cursor-pointer select-none" : ""} transition-colors duration-100`}
+                    className={`${bg ?? ""} ${isCollapse || row._code ? "cursor-pointer select-none" : ""} transition-colors duration-100`}
                     style={{
                       ...(isDark ? { background: "linear-gradient(90deg,#10312B,#1a4a3a)" } : {}),
                       ...(tone && !isSelected && !isHovered ? { background: tone.bg + "60" } : {}),
@@ -853,11 +1246,12 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                     onClick={() => {
                       if (isCollapse) toggleGroup(row._groupKey);
                       if (!isDark) setSelectedRow(selectedRow === row._id ? null : row._id);
+                      if (row._code && onRowClick) onRowClick(row._code, row.label);
                     }}
                   >
-                    <td className={`px-4 py-[5px] whitespace-nowrap overflow-hidden text-ellipsis ${cfg.label}`}
+                    <td className={`px-4 py-[5px] whitespace-nowrap overflow-hidden text-ellipsis static sm:sticky sm:left-0 ${cfg.label}`}
                       style={{
-                        position: "sticky", left: 0, zIndex: isDark ? 25 : 10,
+                        zIndex: isDark ? 25 : 10,
                         ...(row._indent != null ? { paddingLeft: row._indent } : {}),
                         ...(tone ? { color: tone.text, borderLeft: `3px solid ${tone.border}` } : {}),
                         background: isDark      ? "linear-gradient(90deg,#10312B,#1a4a3a)"
@@ -876,21 +1270,8 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                       )}
                       <span className="inline-flex items-center gap-2">
                         {row.label}
-                        {row._type === "banner" && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); toggleAllGroups(); }}
-                            title={hasOpenGroups ? "Contraer todos los grupos" : "Expandir todos los grupos"}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 text-[10.5px] font-medium rounded-md border transition-colors normal-case tracking-normal"
-                            style={{ color: "#a7f3d0", borderColor: "rgba(167,243,208,0.35)", background: "rgba(255,255,255,0.06)" }}
-                            onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,255,255,0.14)"; }}
-                            onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
-                          >
-                            <svg className={`w-3 h-3 transition-transform duration-150 ${hasOpenGroups ? "" : "rotate-180"}`}
-                              viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                              <polyline points="2.5,4 6,7.5 9.5,4" />
-                            </svg>
-                            {hasOpenGroups ? "Contraer todo" : "Expandir todo"}
-                          </button>
+                        {((row._type === "banner" && hasCollapsible) || (showToggleEnPrimeraFila && esPrimeraVisible)) && (
+                          <ToggleTodoBtn dark={isDark || !!tone} />
                         )}
                       </span>
                     </td>

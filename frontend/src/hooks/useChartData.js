@@ -63,7 +63,7 @@ export function useChartData() {
         },
       });
     } else if (PRODUCCION_SECCIONES.has(seccion)) {
-      const esProdHier = json_arg === "Cuenca" || json_arg === "Campos" || json_arg === "API";
+      const esProdHier = json_arg === "Cuenca" || json_arg === "Campos" || json_arg === "API" || json_arg === "Operadores" || json_arg === "Gcompo" || json_arg === "Asignaciones";
       promise = api.get("/produccion/", {
         params: {
           ...base,

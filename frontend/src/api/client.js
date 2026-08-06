@@ -28,13 +28,19 @@ export const fetchProduccionPozosResumen = (p) => api.get("/produccion/pozos/res
 export const fetchPozoAnalisis      = (p) => api.get("/produccion/pozos/analisis", { params: p }).then(r => r.data);
 export const fetchPozosRanking      = (p) => api.get("/produccion/pozos/ranking",  { params: p }).then(r => r.data);
 export const fetchPozosComparar     = (p) => api.get("/produccion/pozos/comparar", { params: p }).then(r => r.data);
-export const fetchPozosFiltrados    = (p) => api.get("/produccion/pozos/filtrados",{ params: p }).then(r => r.data);
+// Consulta nacional (todos los pozos del rango, sin acotar a cuenca/campo) —
+// más pesada que el resto de endpoints de pozos, necesita más margen que
+// el timeout global de 30s.
+export const fetchPozosFiltrados    = (p) => api.get("/produccion/pozos/filtrados",{ params: p, timeout: 90000 }).then(r => r.data);
 export const exportarPozosCsvUrl    = (p) => {
   const limpio = Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined && v !== null));
   return `${api.defaults.baseURL}/produccion/pozos/exportar?${new URLSearchParams(limpio).toString()}`;
 };
 
 export const fetchPozosCacheStatus  = () => api.get("/produccion/pozos/cache-status").then(r => r.data);
+
+export const fetchAsignacionesRanking = (p) => api.get("/produccion/asignaciones/ranking", { params: p }).then(r => r.data);
+export const fetchAsignacionDetalle   = (p) => api.get("/produccion/asignaciones/detalle",  { params: p }).then(r => r.data);
 
 export const fetchResumen = () => api.get("/resumen/").then(r => r.data);
 

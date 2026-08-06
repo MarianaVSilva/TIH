@@ -25,3 +25,13 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# Claude session files (not part of the app)
+.claude/
+
+# Session notes, docs and one-off exports — not part of the running app
+*.md
+*.pdf
+*.csv
+*.xlsx
+*.xls
+backend/check_columns.py

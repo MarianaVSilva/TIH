@@ -61,8 +61,14 @@ const year = new Date().getFullYear();
 const YEARS = Array.from({ length: year - 1959 }, (_, i) => year - i);
 const PERFORACION_TOPICS = new Set(["PozPerf", "PozTerm", "EqPerf", "PozosCampos"]);
 // Temas de Producción con dimensión Cuenca/Ambiente real (comparten el mismo
-// universo de filtros que "Cuenca" — Campos y API solo agregan otra hoja).
-const PRODUCCION_HIER_TOPICS = new Set(["Cuenca", "Campos", "API"]);
+// universo de filtros que "Cuenca" — API/Gcompo/Campos/Asignaciones solo
+// agregan otra hoja bajo Producto). "Gcompo"/"Campos"/"Asignaciones" son
+// Nacional sin clasificación por defecto; al elegir Ambiente/Cuenca se activa
+// el drill-down Ambiente→Cuenca→Producto→hoja.
+const PRODUCCION_HIER_TOPICS = new Set(["Cuenca", "API", "Operadores", "Gcompo", "Campos", "Asignaciones"]);
+// Contrato: mismo diseño Nacional → Producto → hoja, pero sin dimensión
+// Cuenca/Ambiente que filtrar — no lleva drawer de filtros, solo chips de producto.
+const PRODUCTO_FLAT_TOPICS = new Set(["Contratos"]);
 const PRODUCCION_SECCIONES = new Set(["Producción", "Produccion"]);
 
 // ── Selector de rango de años ─────────────────────────────────────────────────
@@ -80,7 +86,7 @@ function YearRangeSelector({ startYear, endYear, onChangeStart, onChangeEnd }) {
 }
 
 // ── DrawerSection: lista de checkboxes con título y búsqueda opcional ────────
-function DrawerSection({ titulo, opciones, seleccionados, onChange, conBusqueda = false }) {
+function DrawerSection({ titulo, opciones, seleccionados, onChange, conBusqueda = false, expandir = false }) {
   const [busqueda, setBusqueda] = useState("");
   const masterRef = useRef(null);
 
@@ -105,7 +111,7 @@ function DrawerSection({ titulo, opciones, seleccionados, onChange, conBusqueda 
   const toggleAll = () => onChange(allSelected ? [] : [...opciones]);
 
   return (
-    <div>
+    <div style={expandir ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 } : undefined}>
       {titulo && (
         <div style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -146,13 +152,16 @@ function DrawerSection({ titulo, opciones, seleccionados, onChange, conBusqueda 
             width: "100%", border: "1px solid #e2e8f0", borderRadius: 6,
             padding: "6px 10px", fontSize: 12, marginBottom: 8,
             outline: "none", boxSizing: "border-box",
+            color: "#1f2937", background: "#fff",
           }}
         />
       )}
-      <div style={{
-        display: "flex", flexDirection: "column", gap: 2,
-        maxHeight: conBusqueda ? 180 : "none", overflowY: conBusqueda ? "auto" : "visible",
-      }}>
+      <div style={expandir
+        ? { display: "flex", flexDirection: "column", gap: 2, flex: 1, minHeight: 0, overflowY: "auto" }
+        : {
+            display: "flex", flexDirection: "column", gap: 2,
+            maxHeight: conBusqueda ? 180 : "none", overflowY: conBusqueda ? "auto" : "visible",
+          }}>
         {visibles.map(op => {
           const checked = seleccionados.includes(op);
           return (
@@ -296,7 +305,7 @@ function PerfDrawer({ open, onClose, perfOpciones, perfFiltros, setPerfFiltros, 
         </div>
 
         {/* Footer */}
-        <div className="mt-auto px-5 py-4 border-t border-slate-200">
+        <div className="mt-auto px-5 py-4 border-t border-slate-200 shrink-0">
           <button
             onClick={onClose}
             className="w-full py-2.5 rounded-lg bg-tih-dark text-white text-sm font-semibold hover:bg-tih-mid transition-colors cursor-pointer border-none"
@@ -312,7 +321,7 @@ function PerfDrawer({ open, onClose, perfOpciones, perfFiltros, setPerfFiltros, 
 // ── ProdDrawer: filtro de cuenca/ambiente para los temas de Producción con
 // esa dimensión (Cuenca, Campos, API) — el producto ya se elige en las
 // chips de series (Petróleo/Condensado/Gas/etc.), no aquí ─────────────────
-function ProdDrawer({ open, onClose, prodOpciones, prodFiltros, setProdFiltros }) {
+function ProdDrawer({ open, onClose, prodOpciones, prodFiltros, setProdFiltros, esOperadores }) {
   return (
     <>
       {open && (
@@ -322,9 +331,9 @@ function ProdDrawer({ open, onClose, prodOpciones, prodFiltros, setProdFiltros }
         role="dialog"
         aria-modal="true"
         aria-label="Filtros de producción"
-        className={`fixed top-0 right-0 bottom-0 w-80 bg-white shadow-[-4px_0_24px_rgba(0,0,0,0.12)] z-[1001] flex flex-col overflow-y-auto transition-transform duration-300 ease-in-out ${open ? "translate-x-0" : "translate-x-full"}`}
+        className={`fixed top-0 right-0 bottom-0 w-80 bg-white shadow-[-4px_0_24px_rgba(0,0,0,0.12)] z-[1001] flex flex-col transition-transform duration-300 ease-in-out ${open ? "translate-x-0" : "translate-x-full"}`}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 shrink-0">
           <span className="font-bold text-sm text-slate-900">Filtros de producción</span>
           <div className="flex items-center gap-2">
             <button
@@ -342,21 +351,65 @@ function ProdDrawer({ open, onClose, prodOpciones, prodFiltros, setProdFiltros }
             </button>
           </div>
         </div>
-        <div className="p-5 flex flex-col gap-6">
-          <DrawerSection
-            titulo="Cuenca Geológica"
-            opciones={prodOpciones?.cuencas ?? []}
-            seleccionados={prodFiltros.cuencas}
-            onChange={(vals) => setProdFiltros({ cuencas: vals })}
-          />
-          <DrawerSection
-            titulo="Ambiente"
-            opciones={prodOpciones?.ubicaciones ?? []}
-            seleccionados={prodFiltros.ubicaciones}
-            onChange={(vals) => setProdFiltros({ ubicaciones: vals })}
-          />
+        <div className="p-5 flex flex-col gap-6 flex-1 min-h-0 overflow-y-auto">
+          {esOperadores ? (
+            <div className="flex-1 min-h-0 flex flex-col">
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.06em] mb-2.5">Operador</p>
+              <div className="flex gap-1.5 mb-2.5 flex-wrap">
+                {[
+                  { id: "todos",    label: "Todos" },
+                  { id: "pemex",    label: "Pemex" },
+                  { id: "privados", label: "Privados" },
+                ].map(({ id, label }) => {
+                  const activo =
+                    id === "todos"    ? prodFiltros.cuencas.length === 0 :
+                    id === "pemex"    ? prodFiltros.cuencas.length === 1 && prodFiltros.cuencas[0] === "Pemex Exploración y Producción" :
+                    prodFiltros.cuencas.length === 1 && prodFiltros.cuencas[0] === "Privadas";
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => setProdFiltros({
+                        // El grupo se combina con las empresas puntuales elegidas
+                        // abajo (p. ej. Pemex + ENI México), no las reemplaza.
+                        cuencas: id === "todos" ? [] : id === "pemex" ? ["Pemex Exploración y Producción"] : ["Privadas"],
+                      })}
+                      className={`px-3 py-1 rounded-full text-xs cursor-pointer border transition-colors min-h-[36px] ${
+                        activo
+                          ? "border-tih-teal bg-tih-teal text-white font-semibold"
+                          : "border-slate-200 bg-white text-slate-500 hover:border-tih-teal hover:text-tih-teal"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <DrawerSection
+                opciones={prodOpciones?.empresas ?? []}
+                seleccionados={prodFiltros.ubicaciones}
+                onChange={(vals) => setProdFiltros({ ubicaciones: vals })}
+                conBusqueda
+                expandir
+              />
+            </div>
+          ) : (
+            <>
+              <DrawerSection
+                titulo="Cuenca Geológica"
+                opciones={prodOpciones?.cuencas ?? []}
+                seleccionados={prodFiltros.cuencas}
+                onChange={(vals) => setProdFiltros({ cuencas: vals })}
+              />
+              <DrawerSection
+                titulo="Ambiente"
+                opciones={prodOpciones?.ubicaciones ?? []}
+                seleccionados={prodFiltros.ubicaciones}
+                onChange={(vals) => setProdFiltros({ ubicaciones: vals })}
+              />
+            </>
+          )}
         </div>
-        <div className="mt-auto px-5 py-4 border-t border-slate-200">
+        <div className="mt-auto px-5 py-4 border-t border-slate-200 shrink-0">
           <button
             onClick={onClose}
             className="w-full py-2.5 rounded-lg bg-tih-dark text-white text-sm font-semibold hover:bg-tih-mid transition-colors cursor-pointer border-none"
@@ -381,6 +434,7 @@ export default function TopBar() {
     setFiltro,
     setResultado,
     perfFiltros, setPerfFiltros,
+    perfOpciones, setPerfOpciones,
     prodFiltros, setProdFiltros,
     prodOpciones, setProdOpciones,
     setGroupBy,
@@ -392,7 +446,6 @@ export default function TopBar() {
   const isPerf = PERFORACION_TOPICS.has(tema?.json_arg);
   const isProd = PRODUCCION_SECCIONES.has(tema?.seccion);
   const isProdHier = PRODUCCION_HIER_TOPICS.has(tema?.json_arg);
-  const [perfOpciones, setPerfOpciones] = useState(null);
   const [prodDrawerOpen, setProdDrawerOpen] = useState(false);
   const pendingTopicSync = useRef(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -446,18 +499,59 @@ export default function TopBar() {
     }
   }, [isProdHier, prodOpciones]);
 
+  // "Producción por ubicación" (Cuenca): vista inicial con las dos categorías
+  // de filtros (Cuenca Geológica y Ambiente) totalmente prendidas — arranca
+  // ya en el drill-down completo, en vez de la vista Nacional sin clasificar.
+  useEffect(() => {
+    if (tema?.json_arg !== "Cuenca" || !prodOpciones) return;
+    setProdFiltros({ cuencas: prodOpciones.cuencas, ubicaciones: prodOpciones.ubicaciones });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prodOpciones, tema?.json_arg === "Cuenca"]);
+
+  // "cuencas"/"ubicaciones" en prodFiltros tiene un significado distinto por
+  // tema (cuencas geológicas reales en Cuenca/Campos/Asignaciones/Gcompo,
+  // pero Grupo Pemex/Privadas en Operadores) — al salir de "Cuenca" con su
+  // default de todas prendidas, hay que limpiar para no contaminar el
+  // siguiente tema con una selección que no le pertenece.
+  useEffect(() => {
+    if (tema?.json_arg === "Cuenca") return;
+    if (prodFiltros.cuencas.length || prodFiltros.ubicaciones.length) {
+      setProdFiltros({ cuencas: [], ubicaciones: [] });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tema?.json_arg]);
+
   // groupBy para Producción (Campos/API), igual patrón que perforación pero en
-  // base a prodFiltros. "Cuenca" arma su propia jerarquía en ChartArea (vía
-  // "filtros", no "groupBy"), por eso se fuerza a null.
+  // base a prodFiltros. "Cuenca" arma su propia jerarquía producto-primero en
+  // ChartArea (vía "filtros", no "groupBy"), por eso se fuerza a null.
+  // "Operadores" sin un solo grupo elegido (ni empresas específicas) muestra
+  // la vista Nacional (producto → Pemex/Privadas); al filtrar por exactamente
+  // uno de los dos grupos, o por una o más empresas puntuales (reutiliza
+  // "ubicaciones", sin uso propio en Operadores), pasa a "cuenca" para listar
+  // esas empresas (Producto → Contrato dentro de cada una).
   useEffect(() => {
     if (!isProdHier) return;
     const target = tema?.json_arg === "Cuenca" ? null :
+      tema?.json_arg === "Operadores" ? ((prodFiltros.cuencas.length === 1 || prodFiltros.ubicaciones.length > 0) ? "cuenca" : null) :
       prodFiltros.ubicaciones.length ? "ubicacion" :
       prodFiltros.cuencas.length     ? "cuenca"    :
       null;
     setGroupBy(target);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prodFiltros, isProdHier, tema?.json_arg]);
+
+  // Contrato: sin dimensión Cuenca/Ambiente que filtrar, siempre vista
+  // Nacional → Producto → hoja (groupBy null).
+  useEffect(() => {
+    if (PRODUCTO_FLAT_TOPICS.has(tema?.json_arg)) setGroupBy(null);
+  }, [tema?.json_arg]);
+
+  // "Producción por Entidad Federativa": jerarquía fija Entidad → Producto →
+  // Ambiente (cada entidad es su propio grupo colapsable, sin filtro que
+  // elegir) — mismo patrón que la vista "por empresa" de Operadores.
+  useEffect(() => {
+    if (tema?.json_arg === "Estado") setGroupBy("cuenca");
+  }, [tema?.json_arg]);
 
   // Cada topic de perforación trae sus propias opciones de filtro, así que se
   // recarga por json_arg y no solo la primera vez.
@@ -676,7 +770,9 @@ export default function TopBar() {
               </div>
             )}
 
-            {/* ── Filtros para temas de Producción con cuenca/ambiente (Cuenca, Campos, API) ── */}
+            {/* ── Filtros para temas de Producción con cuenca/ambiente (Cuenca, Campos, API) ──
+                 "Operadores" lo usa para el filtro de Producto (Grupo Pemex/Privadas ya
+                 se puede alternar desde las chips de Series). ── */}
             {isProdHier && (
               <div className="tih-filterbar__group">
                 <button
@@ -715,6 +811,7 @@ export default function TopBar() {
         prodOpciones={prodOpciones}
         prodFiltros={prodFiltros}
         setProdFiltros={setProdFiltros}
+        esOperadores={tema?.json_arg === "Operadores"}
       />
     </header>
   );

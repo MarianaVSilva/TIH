@@ -42,6 +42,8 @@ function estadoColor(estado) {
 }
 
 const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626" };
+// Pozo sin producción actual: la tendencia no tiene sentido, se omite.
+const ESTADOS_SIN_TENDENCIA = ["Cerrado", "Inactivo", "Abandono permanente", "Abandono temporal"];
 
 function KpiRow({ title, subtitle, kpis, numPozos, periodoNota, onExport, exportando }) {
   const items = kpis.filter(k => k.valor);
@@ -111,7 +113,7 @@ function CacheBanner({ status }) {
 }
 
 export default function PozosExplorer() {
-  const { period, start_year, end_year, start_month, end_month } = useExplorer();
+  const { period, start_year, end_year, start_month, end_month, pendingPozoSelection, setPendingPozoSelection } = useExplorer();
   const [arbol, setArbol] = useState(null);
   const [openCuencas, setOpenCuencas] = useState(new Set());
   const [openCampos, setOpenCampos] = useState(new Set());
@@ -162,6 +164,15 @@ export default function PozosExplorer() {
   }, []);
 
   useEffect(() => { setChartMetric("auto"); }, [selected]);
+
+  // Selección de pozo llegada desde otro tema (panel de detalle de
+  // Asignaciones) — se consume una sola vez y se limpia del store.
+  useEffect(() => {
+    if (!pendingPozoSelection) return;
+    setSelected({ campo: pendingPozoSelection.campo, pozo: pendingPozoSelection.pozo });
+    setModoComparar(false);
+    setPendingPozoSelection(null);
+  }, [pendingPozoSelection, setPendingPozoSelection]);
 
   useEffect(() => {
     if (!selected) { setDetalle(null); setAnalisis(null); return; }
@@ -469,7 +480,7 @@ export default function PozosExplorer() {
                           {analisis.estado_operativo}
                         </span>
                       )}
-                      {analisis.tendencia && analisis.tendencia !== "SIN_DATOS" && (
+                      {analisis.tendencia && analisis.tendencia !== "SIN_DATOS" && !ESTADOS_SIN_TENDENCIA.includes(analisis.estado_operativo) && (
                         <span className="px-2 py-0.5 rounded-full text-[10.5px] font-semibold text-white" style={{ background: TENDENCIA_COLOR[analisis.tendencia] ?? "#94a3b8" }}>
                           {analisis.tendencia}
                         </span>
