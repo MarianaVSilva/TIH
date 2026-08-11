@@ -10,7 +10,7 @@ export default function App() {
   return (
     <div className="bg-slate-50 font-sans flex flex-col min-h-screen lg:h-screen">
       <TopBar />
-      <main className="flex-1 min-h-0 min-w-0 p-6 flex flex-col overflow-visible lg:overflow-clip">
+      <main className="flex-1 min-h-0 min-w-0 p-6 flex flex-col overflow-y-auto overflow-x-hidden">
         <ChartArea />
       </main>
       <ChatButton open={chatOpen} onClick={() => setChatOpen(o => !o)} />
