@@ -9,8 +9,13 @@ const PERFORACION_TOPICS = new Set(["PozPerf", "PozTerm", "EqPerf", "PozosCampos
 const PRODUCCION_SECCIONES = new Set(["Producción", "Produccion"]);
 const RESERVAS_SECCIONES   = new Set(["Recursos y reservas", "Reservas"]);
 const CONTRATOS_SECCIONES  = new Set(["Licitaciones y Contratos", "Contratos"]);
-const PRECIOS_SECCIONES    = new Set(["Indicadores Económicos", "Indicadores Economicos", "Precios"]);
-const INVERSIONES_SECCIONES= new Set(["Inversión", "Inversion", "Inversiones"]);
+// "Indicadores Economicos" agrupa Precios E Inversiones (InvCuenca/InvCont/
+// InvTipo/InvEst) — no alcanza con la sección para separarlos, hace falta el
+// json_arg. Antes se enrutaba todo lo de "Indicadores Economicos" a /precios/
+// solo por la sección, así que Inversiones también pegaba ahí y volvía una
+// respuesta vacía/con forma equivocada (todo en 0 en pantalla).
+const PRECIOS_TOPICS       = new Set(["Precios"]);
+const INVERSIONES_SECCIONES= new Set(["Inversión", "Inversion", "Inversiones", "Indicadores Económicos", "Indicadores Economicos"]);
 const ESTADO_SECCIONES     = new Set(["Estado de Pozos", "Estado"]);
 
 export function useChartData() {
@@ -27,7 +32,7 @@ export function useChartData() {
     const state = useExplorer.getState();
     const {
       tema, period,
-      start_year, end_year, start_month, end_month,
+      start_year, end_year, start_month, end_month, start_date, end_date,
       perfFiltros, prodFiltros,
       compareMode, compareYearA, compareYearB,
       setResultado, setLoading, setError,
@@ -37,6 +42,8 @@ export function useChartData() {
     // "Producción por pozo" maneja su propio fetch (árbol + detalle bajo
     // demanda) en PozosExplorer — no pasa por el flujo genérico de resultado.
     if (tema.json_arg === "Pozos") { setResultado(null); setLoading(false); return; }
+    // "Diario" con calendario necesita un rango de días elegido antes de consultar.
+    if (period === "daily" && (!start_date || !end_date)) { setLoading(false); return; }
 
     const myReq = ++reqSeq;
     setLoading(true);
@@ -80,8 +87,8 @@ export function useChartData() {
       promise = api.get("/reservas/", { params: { start_year, end_year, tipo: json_arg } });
     } else if (CONTRATOS_SECCIONES.has(seccion)) {
       promise = api.get("/contratos/", { params: base });
-    } else if (PRECIOS_SECCIONES.has(seccion)) {
-      promise = api.get("/precios/", { params: base });
+    } else if (PRECIOS_TOPICS.has(json_arg)) {
+      promise = api.get("/precios/", { params: { ...base, ...(period === "daily" ? { start_date, end_date } : {}) } });
     } else if (INVERSIONES_SECCIONES.has(seccion)) {
       promise = api.get("/inversiones/", { params: { start_year, end_year, subtopic: json_arg } });
     } else if (ESTADO_SECCIONES.has(seccion)) {

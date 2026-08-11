@@ -1,4 +1,5 @@
 import pandas as pd
+from sqlalchemy import text as sqlalchemy_text
 from sqlalchemy.engine import Engine
 from app.config import settings
 from app.services.cache_utils import cached
@@ -14,6 +15,14 @@ TOPIC_MAP = {
 CAT_MAP = {
     "DELIMITADOR": "Exploración",
     "EXPLORACION": "Exploración",
+}
+
+# "Pozos Terminados" y "Pozos Perforados": "Aguas ultra profundas" se agrupa
+# con "Aguas profundas" (pedido explícito) — ambas son Ambiente (UBICACION),
+# no dos categorías distintas para efectos del tablero.
+UBICACION_MAP_MERGE_TOPICS = {"PozTerm", "PozPerf"}
+UBICACION_MAP = {
+    "Aguas ultra profundas": "Aguas profundas",
 }
 
 
@@ -43,6 +52,8 @@ def get_perforacion_filtros(engine: Engine, topic: str = "PozPerf") -> dict:
         df = pd.read_sql(sql, conn)
     df.columns = df.columns.str.lower()
     df["categoria_pozo"] = df["categoria_pozo"].replace(CAT_MAP).str.title().fillna("Otro")
+    if topic in UBICACION_MAP_MERGE_TOPICS:
+        df["ubicacion"] = df["ubicacion"].replace(UBICACION_MAP)
     return {
         "cuencas":     sorted(df["cuenca"].dropna().unique().tolist()),
         "categorias":  sorted(df["categoria_pozo"].dropna().unique().tolist()),
@@ -110,6 +121,8 @@ def get_perforacion(
     df["categoria_pozo"] = (
         df["categoria_pozo"].replace(CAT_MAP).str.title().fillna("Otro")
     )
+    if topic in UBICACION_MAP_MERGE_TOPICS:
+        df["ubicacion"] = df["ubicacion"].replace(UBICACION_MAP)
 
     def _parse(s):
         # Separador "|" (no ","): los nombres de operadores contienen comas.
@@ -222,6 +235,169 @@ def get_perforacion(
     }
 
 
+_HISTORICO_MESES = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+]
+
+
+def get_perforacion_historico(engine: Engine, topic: str) -> dict:
+    """"Descargar todo": consulta directa a la tabla de origen, SIN filtros ni
+    agregación — el histórico completo, una fila por registro real (pedido
+    explícito, referencia: export crudo de PRODUCCION_CAMPOS_POZOS que ya se
+    bajaba por fuera del tablero). A diferencia de get_perforacion/
+    _get_pozos_campos, aquí no se agrupa por periodo ni se corrige nada
+    (ni CAT_MAP ni UBICACION_MAP) — es la tabla tal cual está en la BD."""
+    # Sin ORDER BY: en SQL Server ordenar ~150k filas server-side es la parte
+    # más lenta de la consulta — se trae sin ordenar y se ordena en pandas
+    # (in-memory, prácticamente gratis) antes de devolver.
+    if topic == "PozosCampos":
+        sql = f"""
+            SELECT FECHA, CAMPO_PORTAL AS CAMPO, CUENCA, UBICACION, POZOS_ACEITE, POZOS_GAS
+            FROM {SCHEMA}PRODUCCION_CAMPOS_POZOS
+        """
+        orden = ["FECHA", "CUENCA", "CAMPO"]
+        columnas = ["Fecha", "Campo", "Cuenca", "Ambiente", "Pozos de petróleo y gas asociado", "Pozos de gas no asociado"]
+    elif topic in TOPIC_MAP:
+        tabla, var = TOPIC_MAP[topic]
+        sql = f"""
+            SELECT FECHA, OPERADOR, CATEGORIA_POZO, CUENCA, UBICACION, {var}
+            FROM {SCHEMA}{tabla}
+        """
+        orden = ["FECHA", "CUENCA", "OPERADOR"]
+        columnas = ["Fecha", "Operador", "Categoría", "Cuenca", "Ambiente", var.replace("_", " ").title()]
+    else:
+        return {"columnas": [], "filas": [], "periodo_nota": ""}
+
+    with engine.connect() as conn:
+        df = pd.read_sql(sql, conn)
+
+    if df.empty:
+        return {"columnas": columnas, "filas": [], "periodo_nota": ""}
+
+    df.sort_values(orden, inplace=True)
+    df.columns = df.columns.str.lower()
+    df["fecha"] = pd.to_datetime(df["fecha"])
+    ultima = df["fecha"].max()
+    periodo_nota = f"Datos a {_HISTORICO_MESES[ultima.month - 1]} de {ultima.year}."
+
+    df["fecha"] = df["fecha"].dt.strftime("%d/%m/%Y")
+    # Los conteos vienen de SQL Server como float (0.0, 154.0, …) — como int
+    # el JSON pesa bastante menos (menos dígitos, sin ".0" repetido 150k
+    # veces) y se comprime/transmite más rápido.
+    for c in df.columns:
+        if c != "fecha" and pd.api.types.is_numeric_dtype(df[c]):
+            df[c] = df[c].fillna(0).round().astype(int)
+        elif c != "fecha":
+            df[c] = df[c].fillna("")
+    filas = df.values.tolist()
+
+    return {"columnas": columnas, "filas": filas, "periodo_nota": periodo_nota}
+
+
+def get_perforacion_pozos_detalle(
+    engine: Engine, topic: str, periodo: str,
+    cuenca: str = "", ubicacion: str = "", operador: str = "", categoria_pozo: str = "",
+) -> dict:
+    """Desglose por nombre de pozo detrás de una celda de PozPerf/PozTerm —
+    consulta cmde_valid.dbo.bd_pozos (la MISMA fuente de las vistas
+    perforacion_pozos_perf/term, ver su definición con
+    OBJECT_DEFINITION(OBJECT_ID('dbo.perforacion_pozos_perf'))), reconstruyendo
+    en pandas la clasificación categoria_pozo desde TYPE en vez de depender de
+    la redacción exacta del CASE de cada vista (evita duplicar SQL frágil).
+
+    cuenca/ubicacion/operador/categoria_pozo son opcionales: la tabla en
+    pantalla puede agrupar por distintas dimensiones según los filtros
+    activos (a veces una fila mezcla varias cuencas o categorías bajo un
+    mismo operador) — cuando una dimensión no está disponible en la fila
+    clickeada, se omite ese filtro y se listan los pozos de esa dimensión
+    completa (superset), nunca se inventa un valor.
+    """
+    if topic not in ("PozPerf", "PozTerm"):
+        return {"pozos": [], "total": 0}
+
+    campo_fecha = "DRILLING_FINISH_DATE" if topic == "PozPerf" else "COMPLETION_FINISH_DATE"
+
+    params = {}
+    where = [f"{campo_fecha} IS NOT NULL", "[YEAR] >= 1960", "PETROLEUM_PROVINCE IS NOT NULL", "[TYPE] IS NOT NULL"]
+    if topic == "PozTerm":
+        where.append("STATUS = 'CONCLUIDO'")
+    if cuenca:
+        where.append("PETROLEUM_PROVINCE = :cuenca")
+        params["cuenca"] = cuenca
+    if ubicacion:
+        where.append("ENVIRONMENT = :ubicacion")
+        params["ubicacion"] = ubicacion
+    if operador:
+        where.append("OPERATOR = :operador")
+        params["operador"] = operador
+
+    periodo = periodo.strip()
+    if len(periodo) == 4:
+        where.append(f"YEAR({campo_fecha}) = :anio")
+        params["anio"] = int(periodo)
+    else:
+        anio, mes = periodo.split("-")
+        where.append(f"YEAR({campo_fecha}) = :anio")
+        where.append(f"MONTH({campo_fecha}) = :mes")
+        params["anio"], params["mes"] = int(anio), int(mes)
+
+    sql = f"""
+        SELECT WELL_NAME, {campo_fecha} AS FECHA_EVENTO, [TYPE], OPERATOR
+        FROM cmde_valid.dbo.bd_pozos
+        WHERE {" AND ".join(where)}
+    """
+    with engine.connect() as conn:
+        df = pd.read_sql(sqlalchemy_text(sql), conn, params=params)
+    if df.empty:
+        return {"pozos": [], "total": 0}
+
+    df.columns = df.columns.str.lower()
+    base = df["type"].str.upper().replace({"DELIMITADOR": "EXPLORACION", "EXPLORATORIO": "EXPLORACION", "INYECTOR": "DESARROLLO"})
+    df["categoria_pozo"] = base.replace(CAT_MAP).str.title()
+    if categoria_pozo:
+        df = df[df["categoria_pozo"] == categoria_pozo]
+
+    df = df.dropna(subset=["well_name"]).drop_duplicates("well_name").sort_values("well_name")
+    if df.empty:
+        return {"pozos": [], "total": 0}
+
+    # "campo" (ASIG_CONT completo, ej. "A-0001-5M - CAMPO ABKATUN") para poder
+    # saltar a Producción por pozo — se resuelve por nombre contra la MISMA
+    # fuente que usa esa vista (PRODUCCION_POZOS/caché), no contra bd_pozos,
+    # que no tiene esa columna. bd_pozos usa mayúsculas/minúsculas mixtas
+    # ("Agua Nacida-134DES") y PRODUCCION_POZOS todo en mayúsculas
+    # ("AGUA NACIDA-134DES") para el mismo pozo — se compara en mayúsculas.
+    # No todos los pozos perforados ya tienen producción registrada, así que
+    # puede no encontrarse (queda en None).
+    campo_por_pozo = {}
+    try:
+        from app.services import pozos_service
+        source = pozos_service._source_table()
+        nombres = df["well_name"].str.upper().tolist()
+        placeholders = ", ".join(f":n{i}" for i in range(len(nombres)))
+        sql_campo = f"SELECT DISTINCT WELL_NAME, ASIG_CONT FROM {source} WHERE UPPER(WELL_NAME) IN ({placeholders})"
+        params_campo = {f"n{i}": n for i, n in enumerate(nombres)}
+        with engine.connect() as conn:
+            df_campo = pd.read_sql(sqlalchemy_text(sql_campo), conn, params=params_campo)
+        df_campo.columns = df_campo.columns.str.lower()
+        campo_por_pozo = dict(zip(df_campo["well_name"].str.upper(), df_campo["asig_cont"]))
+    except Exception:
+        pass
+
+    pozos = [
+        {
+            "pozo": r["well_name"],
+            "fecha": r["fecha_evento"].isoformat() if pd.notna(r["fecha_evento"]) else None,
+            "categoria_pozo": r["categoria_pozo"],
+            "operador": r["operator"],
+            "campo": campo_por_pozo.get(r["well_name"].upper()),
+        }
+        for r in df[["well_name", "fecha_evento", "categoria_pozo", "operator"]].to_dict("records")
+    ]
+    return {"pozos": pozos, "total": len(pozos)}
+
+
 def _make_row(label, row_type, categories, series_by_periodo, vc, topic):
     is_int = topic != "EqPerf"
     data = []
@@ -289,6 +465,14 @@ def _get_pozos_campos(
     df[["pozos_aceite", "pozos_gas"]] = df[["pozos_aceite", "pozos_gas"]].apply(
         pd.to_numeric, errors="coerce"
     ).fillna(0)
+    # groupby descarta filas con clave NaN por defecto — un CAMPO_PORTAL (o
+    # cuenca/ubicacion) nulo se perdía silenciosamente del desglose por campo,
+    # aunque sí contaba en el total nacional de "Pozos operando" (Panorama
+    # general), que no agrupa por campo. Sin este fillna los dos totales no
+    # cuadraban entre sí.
+    df["campo"] = df["campo"].fillna("Sin campo asignado")
+    df["cuenca"] = df["cuenca"].fillna("Sin cuenca asignada")
+    df["ubicacion"] = df["ubicacion"].fillna("Sin ambiente asignado")
 
     def _parse(s):
         return [x.strip() for x in s.split("|") if x.strip()]

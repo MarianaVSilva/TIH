@@ -3,6 +3,7 @@ import json
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.gzip import GZipMiddleware
 from app.config import settings
 from app.routers import temas, produccion, reservas, contratos, precios, inversiones, estado, perforacion, chat, resumen
 from app.services import pozos_cache
@@ -40,6 +41,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Comprime respuestas grandes (p. ej. "Descargar todo" en Actividad Petrolera,
+# ~10MB de JSON sin comprimir para 150k filas) — reduce bastante el tiempo de
+# transferencia sin tocar dependencias nuevas (GZipMiddleware ya viene con
+# Starlette, que FastAPI ya trae). compresslevel bajo (no el default 9): con
+# payloads de este tamaño, comprimir al máximo cuesta más CPU de lo que ahorra
+# en transferencia — nivel 3 sigue comprimiendo JSON repetitivo ~8-10x pero en
+# una fracción del tiempo.
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=3)
 
 
 @app.middleware("http")

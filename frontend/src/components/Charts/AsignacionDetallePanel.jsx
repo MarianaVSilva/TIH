@@ -198,7 +198,7 @@ export default function AsignacionDetallePanel({ asignacion, period, start_year,
                     <table className="w-full border-collapse">
                       <thead style={{ position: "sticky", top: 0 }}>
                         <tr style={{ background: "linear-gradient(90deg,#10312B,#1a4a3a)" }}>
-                          <th className="text-center px-3 py-2 text-[10.5px] font-bold text-white/90 uppercase tracking-wide whitespace-nowrap">Período</th>
+                          <th className="text-center px-3 py-2 text-[10.5px] font-bold text-white/90 uppercase tracking-wide whitespace-nowrap">Periodo</th>
                           {data.series.map(s => (
                             <th key={s.label} className="text-center px-3 py-2 text-[10.5px] font-bold text-white/80 whitespace-nowrap">{s.label}</th>
                           ))}

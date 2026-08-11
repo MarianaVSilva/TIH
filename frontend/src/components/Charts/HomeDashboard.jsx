@@ -21,6 +21,18 @@ function Card({ children, style, ...rest }) {
   );
 }
 
+function UnidadesNota({ style, texto = "Mbd: miles de barriles diarios · MMpcd: millones de pies cúbicos diarios" }) {
+  return (
+    <p
+      className="text-[10px] leading-tight"
+      style={{ color: MUTED, marginTop: 8, ...style }}
+      title={texto}
+    >
+      {texto}
+    </p>
+  );
+}
+
 function Chip({ children, color, bg }) {
   return (
     <span
@@ -103,7 +115,7 @@ function CifrasNacionales({ nacional }) {
   return (
     <div className="rounded-xl min-w-0 overflow-hidden flex flex-col dash-card" style={{ background: "#fff", border: `1px solid ${BORDER}`, height: "100%" }}>
       <div style={{ padding: "10px 26px 4px" }}>
-        <CardTitle chip="Producción" chipColor="#0d7a4a" chipBg="#daf0df">Mensual por Asignación</CardTitle>
+        <CardTitle chip="Producción" chipColor="#0d7a4a" chipBg="#daf0df">Mensual</CardTitle>
       </div>
       <div className="flex items-stretch flex-wrap flex-1">
         <BigStat
@@ -117,7 +129,9 @@ function CifrasNacionales({ nacional }) {
           anioPromedio={nacional.gas?.anio_promedio} color="#1d6fa5" bg="#dbeafb"
         />
       </div>
-      <p className="text-[10px]" style={{ padding: "4px 26px", visibility: "hidden" }}>·</p>
+      <div style={{ padding: "4px 26px 0" }}>
+        <UnidadesNota style={{ marginTop: 0 }} />
+      </div>
     </div>
   );
 }
@@ -222,19 +236,19 @@ function nombreDisplay(nombre) {
 function CampoRow({ rank, nombre, valor, ratio, color }) {
   const nombreMostrado = nombreDisplay(nombre);
   return (
-    <div className="flex items-center gap-3 py-1">
+    <div className="flex items-start gap-3 py-1">
       <div className="flex items-baseline gap-1.5 shrink-0" style={{ width: 106 }}>
         <span className="text-[13px]" style={{ color: MUTED }}>{rank}.</span>
-        <span className="text-[13.5px] font-medium truncate" style={{ color: INK }} title={nombreMostrado}>
+        <span className="text-[12px] font-medium leading-tight" style={{ color: INK }} title={nombreMostrado}>
           {nombreMostrado}
         </span>
       </div>
-      <div className="flex gap-1 shrink-0">
+      <div className="flex gap-1 shrink-0 self-center">
         {Array.from({ length: 5 }).map((_, i) => (
           <BarrelPartial key={i} fraction={ratio * 5 - i} color={color} size={28} />
         ))}
       </div>
-      <span className="text-[13.5px] font-semibold tabular-nums text-right" style={{ color: INK }}>
+      <span className="text-[13.5px] font-semibold tabular-nums text-right self-center" style={{ color: INK }}>
         {valor.toLocaleString("es-MX")}
       </span>
     </div>
@@ -410,6 +424,7 @@ function CamposCarousel({ topCampos, porOperador, slide, setSlide, count, onPaus
           ? <TopCamposContent topCampos={topCampos} fuel={fuel} setFuel={setFuel} />
           : <ProduccionPorOperadorContent porOperador={porOperador} fuel={fuelOperador} />}
       </div>
+      <UnidadesNota />
     </Card>
   );
 }
@@ -445,8 +460,8 @@ function OperadorDonut({ pct, color, unidad, pemexTotal, otrosTotal }) {
         emphasis: { scaleSize: 6 },
         labelLine: { show: false },
         data: [
-          { name: "PEMEX E&P", value: pemexTotal, itemStyle: { color } },
-          { name: "Otros operadores", value: otrosTotal, itemStyle: { color: "#c7c9c3" } },
+          { name: "PEMEX", value: pemexTotal, itemStyle: { color } },
+          { name: "PRIVADOS", value: otrosTotal, itemStyle: { color: "#c7c9c3" } },
         ],
       },
     ],
@@ -483,14 +498,14 @@ function ProduccionPorOperadorContent({ porOperador, fuel }) {
         <div className="flex flex-col gap-1.5 min-w-0 w-full">
           <div className="flex items-center gap-2 text-[13.5px]" style={{ color: INK }}>
             <span className="rounded-full shrink-0" style={{ width: 7, height: 7, background: color }} />
-            <span className="truncate">PEMEX E&amp;P</span>
+            <span className="truncate">PEMEX</span>
             <span className="font-semibold whitespace-nowrap ml-auto">
               {bloque.pemex_total.toLocaleString("es-MX")} {unidad}
             </span>
           </div>
           <div className="flex items-center gap-2 text-[13.5px]" style={{ color: INK }}>
             <span className="rounded-full shrink-0" style={{ width: 7, height: 7, background: "#c7c9c3" }} />
-            <span className="truncate">Otros operadores</span>
+            <span className="truncate">PRIVADOS</span>
             <span className="font-semibold whitespace-nowrap ml-auto">
               {bloque.otros_total.toLocaleString("es-MX")} {unidad}
             </span>
@@ -501,7 +516,7 @@ function ProduccionPorOperadorContent({ porOperador, fuel }) {
       <div className="flex flex-col gap-4 sm:pl-7 pt-4 sm:pt-0 border-t sm:border-t-0 sm:border-l" style={{ borderColor: BORDER }}>
         <div>
           <span className="text-[12px] font-semibold uppercase tracking-wide block mb-2" style={{ color: MUTED }}>
-            PEMEX por contrato
+            PEMEX
           </span>
           {bloque.pemex_contratos.map(c => (
             <ContratoBar key={c.nombre} nombre={c.nombre} valor={c.valor} maxValor={maxPemex} color={color} />
@@ -509,7 +524,7 @@ function ProduccionPorOperadorContent({ porOperador, fuel }) {
         </div>
         <div>
           <span className="text-[12px] font-semibold uppercase tracking-wide block mb-2" style={{ color: MUTED }}>
-            Otros por contrato
+            PRIVADOS
           </span>
           {bloque.otros_contratos.map(c => (
             <ContratoBar key={c.nombre} nombre={c.nombre} valor={c.valor} maxValor={maxOtros} color="#9a9d96" />
@@ -533,6 +548,7 @@ function Top5ReservasCard({ top5Reservas }) {
       <div className="flex-1 min-h-0 flex flex-col">
         <Top5ReservasContent top5Reservas={top5Reservas} nivel={nivel} />
       </div>
+      <UnidadesNota texto="MMb: millones de barriles · MMMpc: miles de millones de pies cúbicos" />
     </Card>
   );
 }
@@ -634,18 +650,13 @@ export default function HomeDashboard() {
   return (
     <div className="h-full flex flex-col" style={{ overflowY: "auto", overflowX: "hidden" }}>
       <div className="flex items-center justify-between mb-3 shrink-0">
-        <span className="text-[13px] font-semibold uppercase tracking-wider" style={{ color: ORANGE }}>
-          ● Panorama general
+        <span
+          className="text-[13px] font-semibold uppercase tracking-wider"
+          style={{ color: ORANGE }}
+          title="Último mes con datos de producción disponibles en la base."
+        >
+          ● {periodoGeneral ? `Datos a ${periodoGeneral.replace(" ", " de ")}` : "Panorama general"}
         </span>
-        {periodoGeneral && (
-          <span
-            className="text-[13px]"
-            style={{ fontFamily: "'JetBrains Mono', monospace", color: MUTED }}
-            title="Último mes con datos de producción disponibles en la base."
-          >
-            Datos a {periodoGeneral}
-          </span>
-        )}
       </div>
 
       <div className="flex flex-col gap-4 lg:flex-1 lg:min-h-0">

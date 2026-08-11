@@ -55,10 +55,14 @@ export const useExplorer = create((set, get) => ({
   setTema: (tema) => set({ tema, resultado: null }),
 
   period: "annually",
-  start_year: year - 1,
-  end_year: year - 1,
+  start_year: year,
+  end_year: year,
   start_month: 1,
   end_month: 12,
+  // Rango exacto de días — solo se usa con period="daily" (selector de
+  // calendario en Precios).
+  start_date: null,
+  end_date: null,
   setPeriod: (period) => set({ period }),
   setFiltro: (patch) => set(patch),
 

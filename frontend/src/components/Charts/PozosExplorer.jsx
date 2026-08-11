@@ -12,6 +12,53 @@ import PozoProyeccion from "./PozoProyeccion";
 import PozosFiltrosPanel from "./PozosFiltrosPanel";
 import PozosComparar from "./PozosComparar";
 
+// Croma-key en vivo del video "pozo sin producción" — el archivo trae un
+// fondo gris claro sólido (rgb 242,242,242) horneado en los píxeles; en vez
+// de tapar ese gris con una caja del mismo color (se nota el borde contra el
+// blanco de la card), se pinta cada frame en un canvas oculto y se vuelve
+// transparente todo píxel cercano a ese gris, dejando ver el fondo real.
+function VideoSinFondo({ src, className }) {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    let raf;
+    const UMBRAL = 18; // distancia máxima a (242,242,242) para volverse transparente
+
+    function pintar() {
+      raf = requestAnimationFrame(pintar);
+      if (video.videoWidth === 0) return;
+      if (canvas.width !== video.videoWidth) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+      }
+      ctx.drawImage(video, 0, 0);
+      const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d = frame.data;
+      for (let i = 0; i < d.length; i += 4) {
+        if (Math.abs(d[i] - 242) < UMBRAL && Math.abs(d[i + 1] - 242) < UMBRAL && Math.abs(d[i + 2] - 242) < UMBRAL) {
+          d[i + 3] = 0;
+        }
+      }
+      ctx.putImageData(frame, 0, 0);
+    }
+    video.play().catch(() => {});
+    raf = requestAnimationFrame(pintar);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  return (
+    <>
+      <video ref={videoRef} src={src} loop muted playsInline style={{ display: "none" }} />
+      <canvas ref={canvasRef} className={className} />
+    </>
+  );
+}
+
 // Diseño de dos pasos: el árbol Cuenca→Campo→Pozo se trae una sola vez sin
 // cifras; la serie de un pozo puntual se pide solo al seleccionarlo. El caché
 // local indexado (pozos_cache.py) acelera esto a milisegundos una vez sincronizado.
@@ -75,7 +122,7 @@ function KpiRow({ title, subtitle, kpis, numPozos, periodoNota, onExport, export
       </div>
       {periodoNota && (
         <p className="text-[10.5px] text-slate-400 px-1 mb-2">
-          Datos de <span className="font-semibold text-slate-500">{periodoNota}</span> — el último período dentro del rango seleccionado arriba, no un promedio del rango completo.
+          Datos de <span className="font-semibold text-slate-500">{periodoNota}</span> — el último periodo dentro del rango seleccionado arriba, no un promedio del rango completo.
         </p>
       )}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
@@ -175,7 +222,9 @@ export default function PozosExplorer() {
   }, [pendingPozoSelection, setPendingPozoSelection]);
 
   useEffect(() => {
-    if (!selected) { setDetalle(null); setAnalisis(null); return; }
+    // Pozo perforado pero que aún no reporta producción (llegó sin "campo"
+    // desde el panel de Perforación) — no hay nada que consultar.
+    if (!selected || !selected.campo) { setDetalle(null); setAnalisis(null); return; }
     setLoadingDetalle(true);
     let vigente = true;
     fetchProduccionPozoDetalle({
@@ -346,7 +395,7 @@ export default function PozosExplorer() {
           <KpiRow title={kpiBlock.title} subtitle={kpiBlock.subtitle} kpis={kpiBlock.kpis} numPozos={kpiBlock.numPozos} periodoNota={kpiBlock.periodoNota} onExport={handleExport} exportando={exportando} />
         )
       )}
-      {!modoComparar && !loadingResumen && !kpiBlock && (
+      {!modoComparar && !loadingResumen && !kpiBlock && !selected && (
         <p className="text-[11px] text-slate-400 px-1 mb-2">Selecciona una cuenca, campo o pozo para ver el resumen de producción.</p>
       )}
 
@@ -355,7 +404,7 @@ export default function PozosExplorer() {
           <div className="p-2 border-b border-slate-100 space-y-1.5">
             <input
               className="w-full px-3 py-1.5 text-[13px] text-slate-700 placeholder:text-slate-400 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-400"
-              placeholder="Buscar cuenca, campo o pozo…"
+              placeholder="Buscar Campo"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
@@ -461,6 +510,16 @@ export default function PozosExplorer() {
             ) : (
               <p className="text-sm text-slate-400 text-center py-16">Selecciona un pozo del árbol para ver su producción.</p>
             )
+          ) : !selected.campo ? (
+            <div className="flex flex-col items-center justify-center h-full text-center px-6 py-6">
+              <p className="text-[13px] font-bold uppercase tracking-wide text-slate-600">{selected.pozo}</p>
+              <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold text-white bg-slate-400 mt-1">Pozo sin producción registrada</span>
+              {/* "?v=" fuerza a descargar de nuevo si el archivo cambia — sin
+                  esto el navegador puede seguir sirviendo una versión vieja
+                  del video desde caché para esta misma URL. Súbele el
+                  número cada vez que se reemplace pozo-sin-produccion.mp4. */}
+              <VideoSinFondo src="/pozo-sin-produccion.mp4?v=3" className="w-full max-w-xs mt-1" />
+            </div>
           ) : loadingDetalle ? (
             <div className="flex items-center justify-center h-64">
               <LoadingSpinner message="Consultando pozo…" />

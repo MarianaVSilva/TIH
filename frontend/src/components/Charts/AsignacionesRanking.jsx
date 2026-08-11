@@ -62,7 +62,7 @@ function Chip({ children }) {
 
 // Card de podio (top 3) — el 1er lugar va al centro, más grande y elevado;
 // 2do a la izquierda y 3ro a la derecha, mismo patrón visual de un podio.
-function PodioCard({ a, rank, unidad }) {
+function PodioCard({ a, rank, unidad, colorValor }) {
   const m = MEDALLA[rank];
   const esPrimero = rank === 1;
   return (
@@ -91,7 +91,7 @@ function PodioCard({ a, rank, unidad }) {
 
       <div className="flex items-end justify-between mt-auto pt-2">
         <div>
-          <p className="text-[22px] font-bold leading-none tabular-nums" style={{ color: INK }}>
+          <p className="text-[22px] font-bold leading-none tabular-nums" style={{ color: colorValor }}>
             {a.valor != null ? a.valor.toLocaleString("es-MX") : "—"}
           </p>
           <p className="text-[10.5px] text-slate-400 mt-0.5">{unidad}</p>
@@ -134,6 +134,7 @@ export default function AsignacionesRanking({ period, start_year, end_year, star
 
   const campoValor = metrica === "gas" ? "gas_mmpcd" : "liquidos_mbd";
   const unidadValor = metrica === "gas" ? "MMpcd" : "Mbd";
+  const colorValor = metrica === "gas" ? "#1d6fa5" : "#059669";
 
   const q = busqueda.trim().toLowerCase();
   const filas = data.asignaciones
@@ -193,7 +194,7 @@ export default function AsignacionesRanking({ period, start_year, end_year, star
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6 pt-2">
                 {/* Orden visual 2-1-3, con el 1er lugar al centro */}
                 {podio.map((a, i) => (
-                  <PodioCard key={a.asignacion} a={a} rank={i + 1} unidad={unidadValor} />
+                  <PodioCard key={a.asignacion} a={a} rank={i + 1} unidad={unidadValor} colorValor={colorValor} />
                 ))}
               </div>
             )}
@@ -201,11 +202,11 @@ export default function AsignacionesRanking({ period, start_year, end_year, star
             {resto.length > 0 && (
               <div
                 className="rounded-2xl border border-slate-200 shadow-sm overflow-hidden"
-                style={{ background: "linear-gradient(135deg, rgba(13,148,136,0.09) 0%, rgba(13,148,136,0.03) 35%, rgba(255,255,255,1) 75%)" }}
+                style={{ background: `linear-gradient(135deg, ${colorValor}17 0%, ${colorValor}08 35%, rgba(255,255,255,1) 75%)` }}
               >
                 <table className="w-full border-collapse">
                   <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
-                    <tr className="border-b-2 border-slate-200" style={{ background: "linear-gradient(135deg, rgba(13,148,136,0.14), rgba(13,148,136,0.05))" }}>
+                    <tr className="border-b-2 border-slate-200" style={{ background: `linear-gradient(135deg, ${colorValor}24, ${colorValor}0d)` }}>
                       {[
                         ["#", "left"], ["Asignación", "left"], ["Cuenca / Ambiente", "left"],
                         ["Vigencia", "left"], [unidadValor, "right"], ["Productividad", "right"],
@@ -218,7 +219,7 @@ export default function AsignacionesRanking({ period, start_year, end_year, star
                   </thead>
                   <tbody>
                     {resto.map((a, i) => (
-                      <tr key={a.asignacion} className="border-b border-slate-100/70 hover:bg-teal-100/50 transition-colors">
+                      <tr key={a.asignacion} className={`border-b border-slate-100/70 transition-colors ${metrica === "gas" ? "hover:bg-blue-100/50" : "hover:bg-teal-100/50"}`}>
                         <td className="px-4 py-3 text-[12px] text-slate-400 tabular-nums">{i + 4}</td>
                         <td className="px-4 py-3 text-[13px] font-semibold" style={{ color: INK }} title={a.block_name ? a.asignacion : undefined}>
                           {a.block_name ?? a.asignacion}
@@ -227,7 +228,7 @@ export default function AsignacionesRanking({ period, start_year, end_year, star
                           {[a.cuenca, a.ubicacion].filter(Boolean).join(" · ") || "—"}
                         </td>
                         <td className="px-4 py-3"><VigenciaBadge vigente={a.vigente} endDate={a.end_date} /></td>
-                        <td className="px-4 py-3 text-[13px] font-bold text-right tabular-nums" style={{ color: INK }}>
+                        <td className="px-4 py-3 text-[13px] font-bold text-right tabular-nums" style={{ color: colorValor }}>
                           {a.valor != null ? a.valor.toLocaleString("es-MX") : "—"} <span className="font-normal text-slate-400 text-[11px]">{unidadValor}</span>
                         </td>
                         <td className="px-4 py-3 text-[12px] font-medium text-right tabular-nums" style={{ color: "#d97706" }}>

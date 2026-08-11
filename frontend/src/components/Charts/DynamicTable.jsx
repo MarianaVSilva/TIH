@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, Fragment } from "react";
 import { useExplorer } from "../../store/useExplorer";
+import ReportBuilderModal from "./ReportBuilderModal";
 
 // ── Estilos por tipo ──────────────────────────────────────────────────────────
 const TYPE_STYLE = {
@@ -258,7 +259,7 @@ function activeHierLevels(perfFiltros) {
 // columnas cuando distingue valores reales (drill-down a nivel Producto);
 // si no, se pivotea `operator` (que en temas sin dimensión de operador propia
 // —Cuenca, Gcompo— es directamente el nombre del producto).
-function buildPivotExport(resultado, filtrosActivos, visibleSeries, search, displayCats, entityLabel) {
+export function buildPivotExport(resultado, filtrosActivos, visibleSeries, search, displayCats, entityLabel) {
   let leaves = extractLeaves(resultado);
   // Sin filtros de Cuenca/Ambiente activos, el backend solo trae el grupo
   // "Nacional" (extractLeaves lo descarta a propósito para el drill-down) —
@@ -339,6 +340,62 @@ function buildPivotExport(resultado, filtrosActivos, visibleSeries, search, disp
   return { columnasIdentidad: identityFields.map(f => f.header), columnasValor, filas };
 }
 
+// ── Exportar plano para "Actividad Petrolera" (Perforación): una fila por
+// Ambiente + Campo/Operador, con "Cant. pozos" (o "Cant. pozos — <periodo>"
+// si hay 2+ periodos) como columna de valor — sin pivotear la entidad
+// (Campo/Operador) a columnas, que es lo que hacía buildPivotExport (correcto
+// para Producción, donde el operador SÍ tiene sentido como serie/columna,
+// pero aquí producía una columna por cada campo/operador). Se suma a través
+// de Cuenca y Categoría (tipo de pozo) — no se exponen como columnas aparte,
+// pedido explícito: Ambiente, Campo/Operador, Cant. pozos y ya.
+export function buildFlatExport(resultado, filtrosActivos, visibleSeries, search, displayCats, entidadHeader, valorLabel) {
+  let leaves = extractLeaves(resultado);
+  if (!leaves.length) {
+    const nac = resultado?.groups?.find(g => g.cuenca === "Nacional");
+    const sg = nac?.subgroups?.find(s => s.ubicacion === "Nacional") ?? nac?.subgroups?.[0];
+    let cat = null;
+    for (const row of sg?.rows ?? []) {
+      if (row.type === "subtotal") { cat = row.label; continue; }
+      if (row.type === "total") { cat = null; continue; }
+      if (row.type === "operator") {
+        if (row.label === "Todos los operadores" || cat == null) continue;
+        leaves.push({ cuenca: "Nacional", ubicacion: "Nacional", categoria: cat, operator: row.label, data: row.data });
+      }
+    }
+  }
+  const q = search.trim().toLowerCase();
+  const vis = visibleSeries ?? {};
+  const levels = activeHierLevels(filtrosActivos);
+  const nivelConVis = levels[0]?.key;
+
+  const filtered = leaves.filter(lf => {
+    if (nivelConVis && vis[lf[nivelConVis]] === false) return false;
+    if (q) {
+      const texto = `${lf.ubicacion} ${lf.cuenca} ${lf.categoria ?? ""} ${lf.operator}`.toLowerCase();
+      if (!texto.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const idxPorCat = displayCats.map(c => resultado.categories.indexOf(c));
+  const groupMap = new Map();
+  for (const lf of filtered) {
+    const idKey = `${lf.ubicacion}||${lf.operator}`;
+    if (!groupMap.has(idKey)) {
+      groupMap.set(idKey, { identidad: [lf.ubicacion, lf.operator], valores: displayCats.map(() => 0) });
+    }
+    const acc = groupMap.get(idKey);
+    idxPorCat.forEach((idx, i) => { acc.valores[i] += lf.data[idx] ?? 0; });
+  }
+
+  const multiPeriodo = displayCats.length > 1;
+  const columnasValor = multiPeriodo ? displayCats.map(c => `${valorLabel} — ${c}`) : [valorLabel];
+
+  const filas = [...groupMap.values()].map(g => ({ identidad: g.identidad, valores: g.valores }));
+
+  return { columnasIdentidad: ["Ambiente", entidadHeader], columnasValor, filas };
+}
+
 function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forceDivisions, ocultarTotalesUnidad) {
   const cats = resultado.categories;
   const q = search.trim().toLowerCase();
@@ -346,19 +403,27 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
   const leaves = extractLeaves(resultado);
   const rows = [];
 
+  // Con búsqueda activa, el Total nacional también se recalcula solo sobre
+  // lo que coincide con la búsqueda — mismo criterio que los encabezados de
+  // rama en walk() (ver bucketMostrado), para no mostrar el total de TODOS
+  // los operadores cuando el usuario ya filtró por uno.
+  const leavesMostradas = q
+    ? leaves.filter(lf => [lf.cuenca, lf.ubicacion, lf.categoria, lf.operator].some(v => v && v.toLowerCase().includes(q)))
+    : leaves;
+
   rows.push({ _id: "banner|Nacional", _type: "banner", label: "Nacional", ...dataObj(cats, cats.map(() => null)) });
   if (!forceDivisions) {
-    rows.push({ _id: "total|Nacional", _type: "total", label: "Total", ...dataObj(cats, sumLeaves(leaves, cats)) });
+    rows.push({ _id: "total|Nacional", _type: "total", label: "Total", ...dataObj(cats, sumLeaves(leavesMostradas, cats)) });
   } else if (!ocultarTotalesUnidad) {
     // Con forceDivisions un solo "Total" mezclaría unidades distintas
     // (Mbd, MMpcd) — se muestran los 2 totales por unidad en su lugar.
-    const mbdLeaves = leaves.filter(l => l.categoria === "Hidrocarburos líquidos (Mbd)");
-    const mmpcdLeaves = leaves.filter(l => l.categoria === "Gas (MMpcd)");
+    const mbdLeaves = leavesMostradas.filter(l => l.categoria === "Hidrocarburos líquidos (Mbd)");
+    const mmpcdLeaves = leavesMostradas.filter(l => l.categoria === "Gas (MMpcd)");
     if (mbdLeaves.length) rows.push({ _id: "total|Nacional|mbd", _type: "totalmbd", label: "Total Mbd", ...dataObj(cats, sumLeaves(mbdLeaves, cats)) });
     if (mmpcdLeaves.length) rows.push({ _id: "total|Nacional|mmpcd", _type: "totalmmpcd", label: "Total MMpcd", ...dataObj(cats, sumLeaves(mmpcdLeaves, cats)) });
   }
 
-  function renderOperators(bucket, key, indentDepth, qLocal) {
+  function renderOperators(bucket, key, indentDepth, qLocal, dims = {}) {
     const merged = new Map();
     for (const lf of bucket) {
       if (!merged.has(lf.operator)) merged.set(lf.operator, { data: cats.map(() => 0), code: lf.code });
@@ -371,7 +436,13 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
     for (const op of ops) {
       rows.push({
         _id: `o|${key}|${op.label}`, _type: "planoperator", _indent: 12 + indentDepth * 18 + 6,
-        label: op.label, _code: op.code, ...dataObj(cats, op.data),
+        label: op.label, _code: op.code,
+        // Dimensiones efectivamente activas en esta rama del árbol (Ambiente/
+        // Cuenca/Categoría) — a diferencia de flattenGroups, aquí SÍ pueden
+        // coexistir varias a la vez (AND de filtros), por eso van en objeto
+        // aparte en vez de reusar _cuenca/_ub.
+        _dimUbicacion: dims.ubicacion, _dimCuenca: dims.cuenca, _dimCategoria: dims.categoria,
+        ...dataObj(cats, op.data),
       });
     }
   }
@@ -385,7 +456,7 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
   // "Burgos"). Si el nombre del propio nivel coincide, se muestran todos sus
   // hijos sin seguir filtrando hacia abajo (mismo patrón que "nombreCoincide"
   // en la vista por operador).
-  const walk = (subLeaves, levelIdx, pathKey, depth, applyVis, pendingLabels, qLocal) => {
+  const walk = (subLeaves, levelIdx, pathKey, depth, applyVis, pendingLabels, qLocal, dims = {}) => {
     const lv = levels[levelIdx];
     const buckets = new Map();
     for (const lf of subLeaves) {
@@ -405,6 +476,7 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
 
       const bucketTotal = sumLeaves(bucket, cats);
       if (!hasData(bucketTotal)) continue;
+      const nextDims = { ...dims, [lv.key]: name };
 
       const nombreCoincide = !!qLocal && name.toLowerCase().includes(qLocal);
       // No basta con mirar el nombre de este nivel o el operador de la hoja:
@@ -417,6 +489,18 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
       if (!tieneCoincidencia) continue;
       const qEfectiva = nombreCoincide ? "" : qLocal;
 
+      // Con búsqueda activa (y sin que el propio nombre de esta rama sea lo
+      // que coincidió), el número que se muestra en el encabezado debe
+      // reflejar solo lo que coincide con la búsqueda (p. ej. un operador) —
+      // no el total de TODOS los operadores de esa rama, que hacía parecer
+      // que el operador buscado tenía producción en ramas donde no tiene
+      // nada. Si el nombre de la propia rama coincidió (el usuario buscó esa
+      // cuenca/ambiente), se sigue mostrando el total real sin filtrar.
+      const bucketMostrado = (qLocal && !nombreCoincide)
+        ? bucket.filter(lf => [lf.cuenca, lf.ubicacion, lf.categoria, lf.operator].some(v => v && v.toLowerCase().includes(qLocal)))
+        : bucket;
+      const bucketTotalMostrado = bucketMostrado === bucket ? bucketTotal : sumLeaves(bucketMostrado, cats);
+
       // Se muestra la suma real en todos los niveles (Ambiente, Cuenca,
       // Producto) — pedido explícito, aunque en Ambiente/Cuenca combine
       // productos de distintas unidades (Mbd, MMpcd). Excepción: cuando este
@@ -426,7 +510,7 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
       if (isSingleton) {
         const nextPending = [...pendingLabels, name];
         if (levelIdx + 1 < levels.length) {
-          walk(bucket, levelIdx + 1, key, depth, false, nextPending, qEfectiva);
+          walk(bucket, levelIdx + 1, key, depth, false, nextPending, qEfectiva, nextDims);
         } else {
           const isOpen = !openGroups.has(key);
           // Redundante con la fila del padre solo mientras esté expandida
@@ -434,10 +518,10 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
           const esRedundante = pendingLabels.length === 0 && isOpen;
           rows.push({
             _id: `h|${key}`, _type: "planheader", _groupKey: key, _open: isOpen, _indent: 12 + depth * 18, _depth: depth,
-            label: nextPending.join(" · "), ...dataObj(cats, esRedundante ? cats.map(() => null) : bucketTotal),
+            label: nextPending.join(" · "), ...dataObj(cats, esRedundante ? cats.map(() => null) : bucketTotalMostrado),
           });
           if (!isOpen) continue;
-          renderOperators(bucket, key, depth + 1, qEfectiva);
+          renderOperators(bucket, key, depth + 1, qEfectiva, nextDims);
         }
         continue;
       }
@@ -446,14 +530,14 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
       const isOpen = !openGroups.has(key);
       rows.push({
         _id: `h|${key}`, _type: "planheader", _groupKey: key, _open: isOpen, _indent: 12 + depth * 18, _depth: depth,
-        label, ...dataObj(cats, bucketTotal),
+        label, ...dataObj(cats, bucketTotalMostrado),
       });
       if (!isOpen) continue;
 
       if (levelIdx + 1 < levels.length) {
-        walk(bucket, levelIdx + 1, key, depth + 1, false, [], qEfectiva);
+        walk(bucket, levelIdx + 1, key, depth + 1, false, [], qEfectiva, nextDims);
       } else {
-        renderOperators(bucket, key, depth + 1, qEfectiva);
+        renderOperators(bucket, key, depth + 1, qEfectiva, nextDims);
       }
     }
   };
@@ -680,16 +764,67 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
   return rows;
 }
 
+// ── Ordenar por columna ────────────────────────────────────────────────────────
+// Solo se reordenan las filas de "dato" (hoja: operador/producto), nunca los
+// encabezados de categoría/subcategoría (banner, cuenca, ubicación, planheader,
+// subtotal, total…) — se reordena cada corrida contigua de filas hoja por
+// separado, así cada grupo/subcategoría conserva su propio orden interno sin
+// mezclarse con el de otro grupo.
+const SORTABLE_ROW_TYPES = new Set(["operator", "planoperator"]);
+
+function sortLeafRuns(rows, sortState) {
+  if (!sortState) return rows;
+  const { col, dir } = sortState;
+  const result = [...rows];
+  let i = 0;
+  while (i < result.length) {
+    if (!SORTABLE_ROW_TYPES.has(result[i]._type)) { i++; continue; }
+    let j = i;
+    while (j < result.length && SORTABLE_ROW_TYPES.has(result[j]._type)) j++;
+    const run = result.slice(i, j);
+    run.sort((a, b) => {
+      const av = a[col];
+      const bv = b[col];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return dir === "asc" ? av - bv : bv - av;
+    });
+    result.splice(i, j - i, ...run);
+    i = j;
+  }
+  return result;
+}
+
+// Flechita de orden en el encabezado de columna: apagada (gris tenue) cuando
+// esa columna no es la que ordena, resaltada con la dirección activa cuando sí.
+function SortIcon({ active, dir }) {
+  return (
+    <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+      style={{ opacity: active ? 1 : 0.35, flexShrink: 0 }}>
+      {dir === "asc"
+        ? <polyline points="2.5,6 5,3 7.5,6" />
+        : <polyline points="2.5,4 5,7 7.5,4" />}
+    </svg>
+  );
+}
+
 // ── Toolbar ───────────────────────────────────────────────────────────────────
 const PERIOD_LABEL = { annually: "Anual", monthly: "Mensual" };
 
-function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, titulo, filtroLabel, period, start_year, end_year, opCount, entityLabel = "operadores", sumaDisponible, sumaOculta, setSumaOculta, totalesUnidadDisponible, totalesUnidadOcultos, setTotalesUnidadOcultos, isMonthly, searchPlaceholder = "Buscar Operador o contrato", onExportExcel }) {
+function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, titulo, filtroLabel, period, start_year, end_year, opCount, entityLabel = "operadores", sumaDisponible, sumaOculta, setSumaOculta, totalesUnidadDisponible, totalesUnidadOcultos, setTotalesUnidadOcultos, isMonthly, searchPlaceholder = "Buscar Operador o contrato", onExportExcel, onExportHistorico, onOpenReport }) {
   const [showCols, setShowCols] = useState(false);
   const [exportando, setExportando] = useState(false);
+  const [exportandoTodo, setExportandoTodo] = useState(false);
 
   async function handleExportExcel() {
     setExportando(true);
     try { await onExportExcel(); } finally { setExportando(false); }
+  }
+
+  async function handleExportHistorico() {
+    setExportandoTodo(true);
+    try { await onExportHistorico(); } finally { setExportandoTodo(false); }
   }
 
   return (
@@ -793,6 +928,28 @@ function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, tit
         {exportando ? "Exportando…" : "Exportar Excel"}
       </button>
 
+      {onExportHistorico && (
+        <button onClick={handleExportHistorico} disabled={exportandoTodo}
+          title="Descarga el histórico completo de esta tabla, sin filtros ni periodo — consulta directa a la base"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 disabled:opacity-60">
+          <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="2" y="2" width="12" height="12" rx="1.5" />
+            <path d="M5 6.5h6M5 9h6M5 11.5h3.5" />
+          </svg>
+          {exportandoTodo ? "Descargando…" : "Descargar todo"}
+        </button>
+      )}
+
+      <button onClick={onOpenReport}
+        title="Arma un PDF personalizado eligiendo qué bloques incluir y en qué orden"
+        className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50">
+        <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="2.5" y="1.5" width="11" height="13" rx="1.2" />
+          <path d="M5 5h6M5 7.5h6M5 10h3.5" />
+        </svg>
+        Generar reporte
+      </button>
+
       <span className="text-[11px] text-slate-400 whitespace-nowrap">
         {opCount} {entityLabel}{search && ` · "${search}"`}
       </span>
@@ -801,7 +958,7 @@ function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, tit
 }
 
 // ── Componente principal ──────────────────────────────────────────────────────
-export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick }) {
+export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick, onCellClick, flatExportEntidad, historicoTopic }) {
   const { pendingBusqueda, setPendingBusqueda } = useExplorer();
   const [search,     setSearch]     = useState("");
 
@@ -819,6 +976,15 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   const [hoveredCol,  setHoveredCol]  = useState(null);
   const [sumaOculta,  setSumaOculta]  = useState(false);
   const [totalesUnidadOcultos, setTotalesUnidadOcultos] = useState(false);
+  const [sortState, setSortState] = useState(null); // { col, dir: "asc" | "desc" }
+
+  function toggleSort(col) {
+    setSortState(prev => {
+      if (!prev || prev.col !== col) return { col, dir: "desc" };
+      if (prev.dir === "desc") return { col, dir: "asc" };
+      return null;
+    });
+  }
 
   // Resetear grupos abiertos al cambiar de modo o al cambiar los datos (filtros)
   useEffect(() => {
@@ -910,12 +1076,13 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   // Cuenca, Contratos, Campos, Asignaciones, Estado, Gcompo y Operadores —
   // en todos aplican los mismos 2 totales por unidad, ocultables.
   const mostrarTotalesUnidad = forceDivisions;
-  const rows = useMemo(
+  const rowsSinOrdenar = useMemo(
     () => hierLevels.length > 0
       ? flattenMultiLevel(resultado, filtrosActivos, openGroups, search, visibleSeries ?? {}, forceDivisions, totalesUnidadOcultos)
       : flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, totalesUnidadOcultos),
     [resultado, visibleSeries, search, openGroups, filtrosActivos, hierLevels.length, hideDivisions, forceDivisions, groupBy, mostrarTotalesUnidad, totalesUnidadOcultos]
   );
+  const rows = useMemo(() => sortLeafRuns(rowsSinOrdenar, sortState), [rowsSinOrdenar, sortState]);
   const cuencaCount = useMemo(() => rows.filter(r => r._type === "cuenca").length, [rows]);
   // Índice de la primera fila que sí se renderiza (la fila "cuenca" se
   // descarta cuando cuencaCount === 1, así que no cuenta como "primera").
@@ -971,6 +1138,9 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
     { bg: "#edf1e6", border: "#9aad88", text: "#364c2e" },
   ];
 
+  // Mapa de columna → índice (para colorear, vista anual)
+  const colYearIdx = Object.fromEntries(visCats.map((c, i) => [c, i]));
+
   // Agrupar por año para el encabezado de dos niveles (mensual)
   const yearGroups = isMonthly
     ? Object.entries(
@@ -981,9 +1151,6 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
         }, {})
       )
     : null;
-
-  // Mapa de columna → índice (para colorear, vista anual)
-  const colYearIdx = Object.fromEntries(visCats.map((c, i) => [c, i]));
 
   // Modo "Comparar años": exactamente 2 años, en orden cronológico + columna de diferencia.
   const isCompare = !!compareMode && !isMonthly && visCats.length === 2;
@@ -1052,14 +1219,12 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
     return 2;
   }
 
-  async function exportExcel() {
-    const { exportarProduccionExcel } = await import("../../utils/exportExcel");
-    const tablaPivot = buildPivotExport(resultado, filtrosActivos, visibleSeries, search, displayCats, entityLabel);
-    // Descripción de lo que el usuario tiene seleccionado/filtrado en este
-    // momento (Cuenca/Ambiente activos, grupo Pemex/Privadas, búsqueda) — el
-    // mismo contexto que se ve en pantalla, para que el archivo no quede
-    // "mudo" sobre qué recorte de datos representa. Cada filtro en su propia
-    // línea (formato del ejemplo de referencia).
+  // Descripción de lo que el usuario tiene seleccionado/filtrado en este
+  // momento (Cuenca/Ambiente activos, grupo Pemex/Privadas, búsqueda) — el
+  // mismo contexto que se ve en pantalla, para que el archivo no quede
+  // "mudo" sobre qué recorte de datos representa. Compartido entre "Exportar
+  // Excel" y "Generar reporte" (PDF).
+  function buildFiltrosPartes() {
     const partes = [];
     if (filtrosActivos?.cuencas?.length) partes.push(`Cuenca Geológica: ${filtrosActivos.cuencas.join(", ")}`);
     else partes.push("Cuenca Geológica: Todas");
@@ -1067,7 +1232,15 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
     else partes.push("Ambiente: Todos");
     if (rowHeaderLabel) partes.push(`Grupo: ${rowHeaderLabel}`);
     if (search.trim()) partes.push(`Búsqueda: "${search.trim()}"`);
-    const subtitulo = `Filtros — ${partes.join("\n")}`;
+    return partes;
+  }
+
+  async function exportExcel() {
+    const { exportarProduccionExcel } = await import("../../utils/exportExcel");
+    const tablaPivot = flatExportEntidad
+      ? buildFlatExport(resultado, filtrosActivos, visibleSeries, search, displayCats, flatExportEntidad, "Cant. pozos")
+      : buildPivotExport(resultado, filtrosActivos, visibleSeries, search, displayCats, entityLabel);
+    const subtitulo = `Filtros — ${buildFiltrosPartes().join("\n")}`;
 
     await exportarProduccionExcel({
       titulo: titulo || "Datos",
@@ -1075,6 +1248,69 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
       periodoNota: `${PERIOD_LABEL[period] ?? period} — ${start_year} — ${end_year}`,
       tablaPivot,
       nombreArchivo: `TIH_${titulo || "datos"}.xlsx`,
+    });
+  }
+
+  // Reporte PDF: usa las mismas filas ya calculadas para lo que se ve en
+  // pantalla (con la sangría por nivel de nivelDeFila) — a diferencia del
+  // export a Excel (que aplana/pivotea), aquí se busca que la tabla del PDF
+  // se lea igual que el árbol en pantalla.
+  const REPORTE_TIPOS_NEGRITA = new Set([
+    "banner", "cuenca", "ubicacion", "total", "subtotal", "subtotalcol",
+    "planheader", "totalmbd", "totalmmpcd", "totaloperator",
+  ]);
+  function buildReporteTabla() {
+    const columnas = ["", ...displayCats];
+    const filas = [];
+    const filasNegritas = new Set();
+    rows.forEach((row, i) => {
+      const nivel = nivelDeFila(row);
+      const label = "    ".repeat(nivel) + (row.label ?? "");
+      const valores = displayCats.map(c => {
+        const v = row[c];
+        return v === null || v === undefined ? "" : (v === 0 ? "—" : v.toLocaleString("es-MX"));
+      });
+      filas.push([label, ...valores]);
+      if (REPORTE_TIPOS_NEGRITA.has(row._type)) filasNegritas.add(i);
+    });
+    return { columnas, filas, filasNegritas };
+  }
+
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+
+  async function generarReportePdf(bloquesSeleccionados) {
+    const { exportarReportePdf } = await import("../../utils/exportPdf");
+    const bloques = [];
+    for (const id of bloquesSeleccionados) {
+      if (id === "filtros") {
+        bloques.push({ tipo: "filtros", lineas: buildFiltrosPartes() });
+      } else if (id === "tabla") {
+        bloques.push({ tipo: "titulo", texto: titulo || "Tabla de datos" });
+        bloques.push({ tipo: "tabla", ...buildReporteTabla() });
+      }
+    }
+    await exportarReportePdf({
+      titulo: titulo || "Reporte",
+      periodoNota: `${PERIOD_LABEL[period] ?? period} — ${start_year} — ${end_year}`,
+      bloques,
+      nombreArchivo: `TIH_${titulo || "reporte"}_reporte.pdf`,
+    });
+  }
+
+  // "Descargar todo": consulta directa a la tabla de origen, sin filtros ni
+  // periodo — histórico completo (pedido explícito, distinto de "Exportar
+  // Excel" que respeta lo que está viendo el usuario en pantalla).
+  async function exportHistorico() {
+    const [{ exportarProduccionExcel }, { fetchPerforacionHistorico }] = await Promise.all([
+      import("../../utils/exportExcel"),
+      import("../../api/client"),
+    ]);
+    const { columnas, filas, periodo_nota } = await fetchPerforacionHistorico(historicoTopic);
+    await exportarProduccionExcel({
+      titulo: titulo ? `${titulo} — Histórico completo` : "Histórico completo",
+      periodoNota: periodo_nota,
+      tablaHistorica: { columnas, filas },
+      nombreArchivo: `TIH_${titulo || "datos"}_historico.xlsx`,
     });
   }
 
@@ -1087,7 +1323,16 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
         sumaDisponible={sumaDisponible} sumaOculta={sumaOculta} setSumaOculta={setSumaOculta} isMonthly={isMonthly}
         totalesUnidadDisponible={mostrarTotalesUnidad} totalesUnidadOcultos={totalesUnidadOcultos} setTotalesUnidadOcultos={setTotalesUnidadOcultos}
         onExportExcel={exportExcel}
+        onExportHistorico={historicoTopic ? exportHistorico : undefined}
+        onOpenReport={() => setReportModalOpen(true)}
         {...(searchPlaceholder ? { searchPlaceholder } : {})} />
+
+      {reportModalOpen && (
+        <ReportBuilderModal
+          onClose={() => setReportModalOpen(false)}
+          onGenerar={generarReportePdf}
+        />
+      )}
 
       <div className="rounded-xl border border-slate-200 shadow-sm bg-white overflow-auto" style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
           <table className="border-collapse" style={{ width: isMonthly ? "100%" : "auto", tableLayout: isMonthly ? "fixed" : "auto", minWidth: isMonthly ? `${240 + visCats.length * 68 + (showSuma ? yearGroups.length * 76 : 0)}px` : undefined }}>
@@ -1140,7 +1385,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                             const mes = parseInt(c.split("-")[1], 10);
                             return (
                               <th key={c}
-                                className="text-center px-1 py-1.5 text-[11px] font-semibold whitespace-nowrap"
+                                className="text-center px-1 py-1.5 text-[11px] font-semibold whitespace-nowrap cursor-pointer select-none"
                                 style={{
                                   minWidth: 68,
                                   background: clr.monthBg,
@@ -1150,8 +1395,12 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                                 }}
                                 onMouseEnter={() => setHoveredCol(c)}
                                 onMouseLeave={() => setHoveredCol(null)}
+                                onClick={() => toggleSort(c)}
                               >
-                                {MESES[mes - 1]}
+                                <span className="inline-flex items-center gap-0.5">
+                                  {MESES[mes - 1]}
+                                  <SortIcon active={sortState?.col === c} dir={sortState?.col === c ? sortState.dir : null} />
+                                </span>
                               </th>
                             );
                           })}
@@ -1181,12 +1430,16 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                     const clr = ANNUAL_COLORS[colYearIdx[c] % ANNUAL_COLORS.length];
                     return (
                       <th key={c}
-                        className="text-center px-2 py-3 text-[13px] font-bold whitespace-nowrap"
+                        className="text-center px-2 py-3 text-[13px] font-bold whitespace-nowrap cursor-pointer select-none"
                         style={{ minWidth: 72, background: clr.bg, color: clr.text, boxShadow: hoveredCol === c ? colHighlightShadow : undefined }}
                         onMouseEnter={() => setHoveredCol(c)}
                         onMouseLeave={() => setHoveredCol(null)}
+                        onClick={() => toggleSort(c)}
                       >
-                        {c}
+                        <span className="inline-flex items-center gap-0.5">
+                          {c}
+                          <SortIcon active={sortState?.col === c} dir={sortState?.col === c ? sortState.dir : null} />
+                        </span>
                       </th>
                     );
                   })}
@@ -1230,6 +1483,9 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                 const selectedBg  = "#ccfbf1";
                 const hoverBg     = "#e6f4f1";
                 const tone        = row._type === "planheader" ? PLANHEADER_TONES[(row._depth ?? 0) % PLANHEADER_TONES.length] : null;
+                // Celdas con desglose por pozo (Perforación): solo filas hoja de
+                // operador, ver onCellClick en ChartArea.
+                const celdaClickeable = !!onCellClick && (row._type === "operator" || row._type === "planoperator");
 
                 return (
                   <tr key={row._id}
@@ -1289,11 +1545,12 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                           <Fragment key={year}>
                             {cols.map((c, ci) => {
                               const val = row[c];
+                              const esClick = celdaClickeable && val > 0;
                               return (
                                 <td key={c}
                                   className={`px-2 py-[5px] text-center tabular-nums ${
                                     val === null ? "" : val === 0 ? "text-slate-300 text-[12px]" : cfg.num
-                                  }`}
+                                  } ${esClick ? "cursor-pointer underline decoration-dotted decoration-slate-300 hover:decoration-teal-500 hover:text-teal-700" : ""}`}
                                   style={{
                                     ...(clr ? {
                                       background: clr.bg + "80",
@@ -1304,6 +1561,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                                   }}
                                   onMouseEnter={() => setHoveredCol(c)}
                                   onMouseLeave={() => setHoveredCol(null)}
+                                  onClick={esClick ? (e) => { e.stopPropagation(); onCellClick(row, c, val); } : undefined}
                                 >
                                   {val === null ? "" : val === 0 ? "—" : val.toLocaleString("es-MX")}
                                 </td>
@@ -1323,11 +1581,12 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                       const val = row[c];
                       const yi  = colYearIdx[c];
                       const clr = ANNUAL_COLORS[yi % ANNUAL_COLORS.length];
+                      const esClick = celdaClickeable && val > 0;
                       return (
                         <td key={c}
                           className={`px-2 py-[5px] text-center tabular-nums ${
                             val === null ? "" : val === 0 ? "text-slate-300 text-[12px]" : cfg.num
-                          }`}
+                          } ${esClick ? "cursor-pointer underline decoration-dotted decoration-slate-300 hover:decoration-teal-500 hover:text-teal-700" : ""}`}
                           style={{
                             background: clr.bg + "80",
                             ...(tone && val !== 0 ? { color: tone.text } : {}),
@@ -1335,6 +1594,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                           }}
                           onMouseEnter={() => setHoveredCol(c)}
                           onMouseLeave={() => setHoveredCol(null)}
+                          onClick={esClick ? (e) => { e.stopPropagation(); onCellClick(row, c, val); } : undefined}
                         >
                           {val === null ? "" : val === 0 ? "—" : val.toLocaleString("es-MX")}
                         </td>

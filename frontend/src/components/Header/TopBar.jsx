@@ -85,6 +85,111 @@ function YearRangeSelector({ startYear, endYear, onChangeStart, onChangeEnd }) {
   );
 }
 
+// ── Selector de rango de fechas (calendario) ─────────────────────────────────
+const DAY_LABELS = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"];
+const MONTH_LABELS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+const pad2 = (n) => String(n).padStart(2, "0");
+const toISO = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const fromISO = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+const fmtDMY = (s) => { if (!s) return ""; const [y, m, d] = s.split("-"); return `${d}/${m}/${y}`; };
+
+function DateRangeSelector({ startDate, endDate, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [phase, setPhase] = useState("start"); // qué extremo define el próximo clic
+  const today = new Date();
+  const [viewMonth, setViewMonth] = useState(() => {
+    const base = endDate ? fromISO(endDate) : today;
+    return new Date(base.getFullYear(), base.getMonth(), 1);
+  });
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const firstOfMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1);
+  const daysInMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 0).getDate();
+  const leadingBlanks = (firstOfMonth.getDay() + 6) % 7; // lunes = 0
+  const cells = [
+    ...Array.from({ length: leadingBlanks }, () => null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ];
+
+  const pickDay = (day) => {
+    const picked = toISO(new Date(viewMonth.getFullYear(), viewMonth.getMonth(), day));
+    if (phase === "start" || !startDate) {
+      onChange({ start: picked, end: null });
+      setPhase("end");
+    } else {
+      if (picked < startDate) onChange({ start: picked, end: startDate });
+      else onChange({ start: startDate, end: picked });
+      setPhase("start");
+      setOpen(false);
+    }
+  };
+
+  const isInRange = (iso) => startDate && endDate && iso >= startDate && iso <= endDate;
+
+  return (
+    <div ref={ref} className="relative">
+      <div className="flex items-center gap-1.5">
+        <button type="button" onClick={() => { setPhase("start"); setOpen(o => !o); }}
+          className="tih-filterbar__select--light px-2.5 py-1 text-[11.5px] min-w-[76px] text-left">
+          {fmtDMY(startDate) || "–"}
+        </button>
+        <span className="text-slate-400 text-xs font-medium select-none">—</span>
+        <button type="button" onClick={() => { setPhase("end"); setOpen(o => !o); }}
+          className="tih-filterbar__select--light px-2.5 py-1 text-[11.5px] min-w-[76px] text-left">
+          {fmtDMY(endDate) || "–"}
+        </button>
+      </div>
+      {open && (
+        <div className="absolute top-[calc(100%+6px)] left-0 z-[1002] bg-white rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.18)] border border-slate-200 p-3" style={{ width: 260 }}>
+          <div className="flex items-center justify-between mb-2">
+            <button type="button" onClick={() => setViewMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
+              className="w-6 h-6 flex items-center justify-center rounded text-slate-500 hover:bg-slate-100">‹</button>
+            <span className="text-[12.5px] font-semibold text-slate-700">
+              {MONTH_LABELS[viewMonth.getMonth()]} {viewMonth.getFullYear()}
+            </span>
+            <button type="button" onClick={() => setViewMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+              className="w-6 h-6 flex items-center justify-center rounded text-slate-500 hover:bg-slate-100">›</button>
+          </div>
+          <div className="grid grid-cols-7 gap-0.5 mb-1">
+            {DAY_LABELS.map(d => (
+              <span key={d} className="text-[10px] font-semibold text-slate-400 text-center py-1">{d}</span>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-0.5">
+            {cells.map((day, i) => {
+              if (day == null) return <span key={i} />;
+              const iso = toISO(new Date(viewMonth.getFullYear(), viewMonth.getMonth(), day));
+              const isToday = iso === toISO(today);
+              const isEdge = iso === startDate || iso === endDate;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => pickDay(day)}
+                  className={`text-[11.5px] py-1.5 rounded transition-colors ${
+                    isEdge ? "bg-tih-dark text-white font-semibold"
+                      : isInRange(iso) ? "bg-teal-50 text-teal-800"
+                      : isToday ? "bg-amber-100 text-slate-800 font-semibold"
+                      : "text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  {day}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── DrawerSection: lista de checkboxes con título y búsqueda opcional ────────
 function DrawerSection({ titulo, opciones, seleccionados, onChange, conBusqueda = false, expandir = false }) {
   const [busqueda, setBusqueda] = useState("");
@@ -431,6 +536,7 @@ export default function TopBar() {
     period, setPeriod,
     start_year, end_year,
     start_month, end_month,
+    start_date, end_date,
     setFiltro,
     setResultado,
     perfFiltros, setPerfFiltros,
@@ -442,6 +548,14 @@ export default function TopBar() {
   } = useExplorer();
 
   const { consultar } = useChartData();
+
+  // true si CUBOS.PERIODICIDAD para este tema no incluye "Mensual" (p. ej.
+  // Inversiones/Licitaciones — INVERSIONES_APROBADAS solo tiene ANIO, no mes).
+  let soloAnual = false;
+  try {
+    const periodos = tema?.periodicidad ? JSON.parse(tema.periodicidad) : null;
+    soloAnual = !!periodos && !("Mensual" in periodos);
+  } catch { /* periodicidad mal formada: se asume que sí hay mensual */ }
 
   const isPerf = PERFORACION_TOPICS.has(tema?.json_arg);
   const isProd = PRODUCCION_SECCIONES.has(tema?.seccion);
@@ -492,6 +606,11 @@ export default function TopBar() {
   useEffect(() => {
     fetchTemas().then(setTemas).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (soloAnual && period !== "annually") setPeriod("annually");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [soloAnual, tema?.json_arg]);
 
   useEffect(() => {
     if (isProdHier && !prodOpciones) {
@@ -576,7 +695,18 @@ export default function TopBar() {
     }
     consultar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tema, period, start_year, end_year, start_month, end_month, perfFiltros, prodFiltros]);
+  }, [tema, period, start_year, end_year, start_month, end_month, start_date, end_date, perfFiltros, prodFiltros]);
+
+  // Al entrar a "Diario", si aún no hay rango elegido se arranca con el mes en curso.
+  useEffect(() => {
+    if (period === "daily" && !start_date && !end_date) {
+      const hoy = new Date();
+      const inicioMes = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}-01`;
+      const hoyIso = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}-${String(hoy.getDate()).padStart(2, "0")}`;
+      setFiltro({ start_date: inicioMes, end_date: hoyIso });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period]);
 
   // groupBy = nivel más externo activo (jerarquía Ambiente > Cuenca > Categoría).
   // Alimenta los chips de series y las gráficas; la tabla anida multinivel por sí sola.
@@ -643,7 +773,7 @@ export default function TopBar() {
               className={`tih-pill${seccion === s ? " tih-pill--active" : ""}`}
               onClick={() => setSeccion(seccion === s ? "" : s)}
             >
-              {s}
+              {s === "Indicadores Economicos" ? "Indicadores Económicos" : s}
             </button>
           ))}
         </div>
@@ -658,7 +788,10 @@ export default function TopBar() {
               <CustomSelect
                 value={tema?.tema ?? null}
                 placeholder="— seleccionar —"
-                options={temasFiltrados.map(t => ({ value: t.tema, label: t.tema }))}
+                // El nombre del tema viene tal cual de la BD (columna TEMA en
+                // CUBOS), sin acentos — "petroleo" es el único typo real
+                // reportado ahí, se corrige solo en pantalla sin tocar la BD.
+                options={temasFiltrados.map(t => ({ value: t.tema, label: t.tema.replace(/petroleo/gi, "petróleo") }))}
                 onChange={v => setTema(v ? temasFiltrados.find(t => t.tema === v) ?? null : null)}
                 minWidth={210}
               />
@@ -670,7 +803,18 @@ export default function TopBar() {
             <div className="tih-filterbar__group">
               <span className="tih-filterbar__label--dark">Periodicidad</span>
               <div className="tih-filterbar__radios--dark">
-                {[["annually", "Anual"], ["monthly", "Mensual"]].map(([val, lbl]) => (
+                {[
+                  ["annually", "Anual"],
+                  // CUBOS.PERIODICIDAD trae qué periodos tiene sentido pedirle
+                  // a cada tema (p. ej. Inversiones/Licitaciones solo Anual —
+                  // ANIO es lo único que hay en INVERSIONES_APROBADAS, no hay
+                  // mes) — si el tema no declara "Mensual" ahí, no se ofrece.
+                  ...(soloAnual ? [] : [["monthly", "Mensual"]]),
+                  // "Diario": solo tiene sentido en Precios (única fuente con
+                  // un registro por día) — en el resto de los temas no hay
+                  // datos a ese nivel de detalle.
+                  ...(tema?.json_arg === "Precios" ? [["daily", "Diario"]] : []),
+                ].map(([val, lbl]) => (
                   <label key={val} className="tih-filterbar__radio-label--dark">
                     <input
                       type="radio"
@@ -687,9 +831,19 @@ export default function TopBar() {
 
             <div className="tih-filterbar__sep--dark" />
 
-            {/* Período */}
+            {/* Periodo */}
+            {period === "daily" ? (
+              <div className="tih-filterbar__group">
+                <span className="tih-filterbar__label--dark">Fecha</span>
+                <DateRangeSelector
+                  startDate={start_date}
+                  endDate={end_date}
+                  onChange={({ start, end }) => setFiltro({ start_date: start, end_date: end })}
+                />
+              </div>
+            ) : (
             <div className="tih-filterbar__group">
-              <span className="tih-filterbar__label--dark">Período</span>
+              <span className="tih-filterbar__label--dark">Periodo</span>
               <div className="flex items-center gap-1">
                 <YearRangeSelector
                   startYear={start_year}
@@ -716,6 +870,7 @@ export default function TopBar() {
                 )}
               </div>
             </div>
+            )}
 
             {/* Meses (solo en modo mensual) */}
             {period === "monthly" && (

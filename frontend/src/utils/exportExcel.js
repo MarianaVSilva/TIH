@@ -43,7 +43,7 @@ function descargarBuffer(buffer, nombreArchivo) {
 export async function exportarProduccionExcel(p) {
   const {
     titulo, subtitulo, periodoNota,
-    tabla, tablaPivot, tablaSecundaria, tituloTablaSecundaria,
+    tabla, tablaPivot, tablaHistorica, tablaSecundaria, tituloTablaSecundaria,
     etiquetaFilaTabla = "Producto",
     chartImageBase64, chartTitulo,
     nombreArchivo = `TIH_${titulo}.xlsx`.replace(/[^\w.\-]+/g, "_"),
@@ -55,7 +55,7 @@ export async function exportarProduccionExcel(p) {
   const ws = wb.addWorksheet("Producción", { views: [{ showGridLines: false }] });
 
   const numColsPivot = tablaPivot ? (tablaPivot.columnasIdentidad.length + tablaPivot.columnasValor.length) : 0;
-  const numCols = Math.max((tabla?.columnas?.length ?? 0) + 1, (tablaSecundaria?.columnas?.length ?? 0), numColsPivot, 6);
+  const numCols = Math.max((tabla?.columnas?.length ?? 0) + 1, (tablaSecundaria?.columnas?.length ?? 0), numColsPivot, tablaHistorica?.columnas?.length ?? 0, 6);
   const lastColLetter = ws.getColumn(numCols).letter;
 
   // ── Banner (igual al header del sitio) ────────────────────────────────
@@ -127,8 +127,27 @@ export async function exportarProduccionExcel(p) {
   fechaCell.font = { size: 8, color: { argb: GRIS_TEXTO } };
   fila += 2;
 
-  // ── Tabla pivote (plana: 1 fila por combinación hoja, 1 columna por serie) ──
-  if (tablaPivot?.columnasValor?.length) {
+  // ── Tabla histórica ("Descargar todo"): consulta directa sin filtrar, puede
+  // traer decenas de miles de filas — se usa addRows en bloque (no celda por
+  // celda) y sin estilos por fila para que la generación no se vuelva lenta.
+  if (tablaHistorica?.columnas?.length) {
+    const headerRow = ws.getRow(fila);
+    tablaHistorica.columnas.forEach((c, i) => { headerRow.getCell(i + 1).value = c; });
+    headerRow.eachCell({ includeEmpty: false }, cell => {
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: VERDE_OSCURO } };
+      cell.font = { bold: true, color: { argb: BLANCO }, size: 11 };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.border = { bottom: { style: "thin", color: { argb: VERDE_CLARO } } };
+    });
+    fila++;
+
+    ws.addRows(tablaHistorica.filas);
+    fila += tablaHistorica.filas.length;
+
+    for (let i = 1; i <= numCols; i++) ws.getColumn(i).width = 20;
+    ws.getColumn(1).width = 14;
+    fila += 1;
+  } else if (tablaPivot?.columnasValor?.length) {
     const { columnasIdentidad, columnasValor, filas: filasPivot } = tablaPivot;
     const headerRow = ws.getRow(fila);
     [...columnasIdentidad, ...columnasValor].forEach((c, i) => { headerRow.getCell(i + 1).value = c; });

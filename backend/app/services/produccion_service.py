@@ -638,8 +638,11 @@ def get_produccion_cuenca(
 
 @cached()
 def get_resumen_nacional(engine: Engine) -> dict:
-    """Último mes disponible de producción nacional (líquidos y gas natural) vs.
-    el promedio mensual del año calendario anterior, para el Panorama general."""
+    """Último mes disponible de producción nacional total (líquidos y gas
+    natural) vs. el promedio mensual del año calendario anterior, para el
+    Panorama general. Incluye TIPO='ASIGNACION' (PEMEX) y TIPO='CONTRATO'
+    (privados) — sin filtrar por TIPO se cuenta toda la producción nacional,
+    no solo la de PEMEX."""
     # Solo se necesitan ~2 años (último mes + promedio del año calendario previo);
     # sin este filtro la query agregaba el histórico completo de la tabla.
     sql = f"""
@@ -648,7 +651,6 @@ def get_resumen_nacional(engine: Engine) -> dict:
                SUM(ISNULL(GAS_MMPCD,0)) AS GAS_MMPCD
         FROM {SCHEMA}PRODUCCION_CAMPOS
         WHERE ID <> 1
-          AND TIPO = 'ASIGNACION'
           AND FECHA >= DATEADD(year, -2, GETDATE())
         GROUP BY FECHA
     """

@@ -199,9 +199,11 @@ def get_indicadores_economicos(engine: Engine | None = None) -> dict:
 
 
 @cached()
-def get_precios(engine: Engine, start_year: int, end_year: int, start_month: int = 1, end_month: int = 12) -> dict:
-    init = f"{start_year}-{start_month:02d}-01"
-    end = f"{end_year}-{end_month:02d}-01"
+def get_precios(engine: Engine, start_year: int, end_year: int, start_month: int = 1, end_month: int = 12, period: str = "monthly",
+                 start_date: str | None = None, end_date: str | None = None) -> dict:
+    # "Diario" con calendario: rango exacto de días, sin pasar por año/mes.
+    init = start_date or f"{start_year}-{start_month:02d}-01"
+    end = end_date or f"{end_year}-{end_month:02d}-01"
     sql = f"""
         SELECT FECHA, BRENT, WTI, MME, HENRY_HUB
         FROM {SCHEMA}PRECIOS
@@ -212,18 +214,106 @@ def get_precios(engine: Engine, start_year: int, end_year: int, start_month: int
         df = pd.read_sql(sql, conn)
 
     if df.empty:
-        return {"series": [], "categories": []}
+        return {"series": [], "categories": [], "extremos": {}}
 
     df.columns = df.columns.str.lower()
     df["fecha"] = pd.to_datetime(df["fecha"])
-    df["periodo"] = df["fecha"].dt.strftime("%Y-%m")
-    df[["brent", "wti", "mme", "henry_hub"]] = df[["brent", "wti", "mme", "henry_hub"]].fillna(0)
+    cols = ["brent", "wti", "mme", "henry_hub"]
+    # PRECIOS trae un registro por día — sin agregar, "Anual"/"Mensual" no
+    # cambiaba nada y la tabla mostraba decenas de filas repetidas con la
+    # misma etiqueta de mes. 0 se trata como "sin dato" (no se suma como si
+    # el precio hubiera sido cero) antes de agrupar. "Diario" no agrega nada,
+    # una fila por día tal cual está en la BD (pedido explícito).
+    df[cols] = df[cols].replace(0, pd.NA)
+    if period == "annually":
+        df["periodo"] = df["fecha"].dt.strftime("%Y")
+    elif period == "daily":
+        df["periodo"] = df["fecha"].dt.strftime("%Y-%m-%d")
+    else:
+        df["periodo"] = df["fecha"].dt.strftime("%Y-%m")
 
-    categories = df["periodo"].tolist()
+    if period == "daily":
+        # Un solo dato por día — el promedio/mín/máx del "periodo" son el
+        # mismo valor, no hay nada que agregar.
+        agg = df[["periodo", *cols]].sort_values("periodo")
+        agg_min = agg.copy()
+        agg_max = agg.copy()
+    else:
+        agg = df.groupby("periodo", as_index=False)[cols].mean()
+        agg_min = df.groupby("periodo", as_index=False)[cols].min()
+        agg_max = df.groupby("periodo", as_index=False)[cols].max()
+    # Sin dato (0 en origen, o mes/año sin registros) se manda como null, no
+    # como 0 — antes fillna(0) rellenaba los huecos y el gráfico/tabla mostraba
+    # un precio de $0 falso. null se grafica como hueco (sin línea) y en tabla
+    # como "—".
+    def a_lista(serie):
+        return [None if pd.isna(v) else round(float(v), 2) for v in serie]
+
+    categories = agg["periodo"].tolist()
+    nombres = {
+        "brent": "Brent (USD/bbl)", "wti": "WTI (USD/bbl)",
+        "mme": "MME (USD/bbl)", "henry_hub": "Henry Hub (USD/MMBtu)",
+    }
     series = [
-        {"name": "Brent (USD/bbl)",      "data": df["brent"].round(2).tolist(),     "type": "line"},
-        {"name": "WTI (USD/bbl)",         "data": df["wti"].round(2).tolist(),       "type": "line"},
-        {"name": "MME (USD/bbl)",         "data": df["mme"].round(2).tolist(),       "type": "line"},
-        {"name": "Henry Hub (USD/MMBtu)", "data": df["henry_hub"].round(2).tolist(), "type": "line"},
+        {
+            "name": nombres[c], "type": "line",
+            "data": a_lista(agg[c]),
+            "min": a_lista(agg_min[c]),
+            "max": a_lista(agg_max[c]),
+        }
+        for c in cols
     ]
-    return {"categories": categories, "series": series}
+
+    # Extremos POR PERIODO (no del rango completo) — el día exacto dentro de
+    # CADA año/mes en que cada referencia tocó su precio más bajo/alto. Antes
+    # esto se calculaba una sola vez sobre todo el rango seleccionado, así
+    # que con varios años/meses seleccionados el "más bajo/alto" no
+    # correspondía al periodo que se estaba viendo (pedido explícito: que
+    # coincida con el año/mes seleccionado, igual que el resto de la vista).
+    extremos_por_periodo = {c: {} for c in cols}
+    for c in cols:
+        serie_valida = df[["periodo", "fecha", c]].dropna(subset=[c])
+        if serie_valida.empty:
+            continue
+        idx_min = serie_valida.groupby("periodo")[c].idxmin()
+        idx_max = serie_valida.groupby("periodo")[c].idxmax()
+        for periodo, i in idx_min.items():
+            fila = serie_valida.loc[i]
+            extremos_por_periodo[c].setdefault(periodo, {})["min"] = {
+                "valor": round(float(fila[c]), 2), "fecha": fila["fecha"].strftime("%Y-%m-%d"),
+            }
+        for periodo, i in idx_max.items():
+            fila = serie_valida.loc[i]
+            extremos_por_periodo[c].setdefault(periodo, {})["max"] = {
+                "valor": round(float(fila[c]), 2), "fecha": fila["fecha"].strftime("%Y-%m-%d"),
+            }
+
+    # El front pide el extremo del ÚLTIMO periodo mostrado (el año/mes más
+    # reciente del rango elegido) — se resuelve aquí para no duplicar la
+    # lógica de "cuál es el último periodo con dato" en el cliente.
+    # "Diario": el "periodo" ya es el día, así que "el último periodo" sería
+    # un solo día (min == max, sin utilidad) — en su lugar se usa el extremo
+    # de TODO el rango de fechas elegido en el calendario.
+    extremos = {}
+    if period == "daily":
+        for c in cols:
+            serie_valida = df[["fecha", c]].dropna(subset=[c])
+            if serie_valida.empty:
+                extremos[c] = {"min": None, "max": None}
+                continue
+            fila_min = serie_valida.loc[serie_valida[c].idxmin()]
+            fila_max = serie_valida.loc[serie_valida[c].idxmax()]
+            extremos[c] = {
+                "min": {"valor": round(float(fila_min[c]), 2), "fecha": fila_min["fecha"].strftime("%Y-%m-%d")},
+                "max": {"valor": round(float(fila_max[c]), 2), "fecha": fila_max["fecha"].strftime("%Y-%m-%d")},
+            }
+    else:
+        for c in cols:
+            for periodo in reversed(categories):
+                if periodo in extremos_por_periodo[c]:
+                    extremos[c] = extremos_por_periodo[c][periodo]
+                    break
+            else:
+                extremos[c] = {"min": None, "max": None}
+
+    return {"categories": categories, "series": series, "extremos": extremos}

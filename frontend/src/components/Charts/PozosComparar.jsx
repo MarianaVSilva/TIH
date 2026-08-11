@@ -153,7 +153,7 @@ export default function PozosComparar({ seleccionados, onQuitar, period, start_y
 
       {/* Tabla detalle: producción por período, una columna por año/mes */}
       <div className="flex items-center gap-2 mt-5 mb-2 flex-wrap">
-        <span className="text-[12.5px] font-bold text-slate-700 mr-auto">Producción por período</span>
+        <span className="text-[12.5px] font-bold text-slate-700 mr-auto">Producción por periodo</span>
         <div className="relative">
           <button
             onClick={() => setShowCols(v => !v)}

@@ -15,7 +15,7 @@ def get_temas(engine: Engine) -> list[dict]:
                    CONCAT(DOWNLOADABLE, '?_=', FORMAT(GETDATE(), 'yyyyMMddhhmmss'))
                ) AS DOWNLOADABLE
         FROM {SCHEMA}CUBOS
-        WHERE JSON_ARG NOT IN ('', 'BalanceGas', 'InvAsig', 'InteresPart')
+        WHERE JSON_ARG NOT IN ('', 'BalanceGas', 'InvAsig', 'InteresPart', 'EqPerf', 'InvTipo', 'InvEst')
           AND TEMA NOT IN ('Produccion por contrato (reportada al FMP)')
         ORDER BY SECCION, TEMA DESC
     """

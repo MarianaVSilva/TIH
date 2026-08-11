@@ -19,6 +19,10 @@ export const fetchEstado            = (p) => api.get("/estado/",            { pa
 
 export const fetchPerforacionFiltros = (topic) =>
   api.get("/perforacion/filtros", { params: { topic } }).then(r => r.data);
+export const fetchPerforacionPozosDetalle = (p) =>
+  api.get("/perforacion/pozos-detalle", { params: p }).then(r => r.data);
+export const fetchPerforacionHistorico = (topic) =>
+  api.get("/perforacion/historico", { params: { topic }, timeout: 60000 }).then(r => r.data);
 
 export const fetchProduccionFiltros = () => api.get("/produccion/filtros").then(r => r.data);
 export const fetchProduccionPozosArbol = () => api.get("/produccion/pozos/arbol").then(r => r.data);
