@@ -648,7 +648,7 @@ export default function HomeDashboard() {
   const periodoGeneral = periodoLabelDe(data.nacional?.periodo);
 
   return (
-    <div className="h-full flex flex-col" style={{ overflowY: "auto", overflowX: "hidden" }}>
+    <div className="flex flex-col">
       <div className="flex items-center justify-between mb-3 shrink-0">
         <span
           className="text-[13px] font-semibold uppercase tracking-wider"
@@ -659,12 +659,12 @@ export default function HomeDashboard() {
         </span>
       </div>
 
-      <div className="flex flex-col gap-4 lg:flex-1 lg:min-h-0">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 shrink-0">
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <CifrasNacionales nacional={data.nacional} />
           <IndicadoresEconomicos indicadores={data.indicadores_economicos} />
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 shrink-0 lg:shrink lg:flex-[1.45_1_0%] lg:min-h-0">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <CamposCarousel
             topCampos={data.top_campos} porOperador={data.por_operador}
             slide={carouselSlide} setSlide={setCarouselSlide} count={carouselCount}
