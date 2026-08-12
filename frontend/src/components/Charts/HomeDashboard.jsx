@@ -236,19 +236,19 @@ function nombreDisplay(nombre) {
 function CampoRow({ rank, nombre, valor, ratio, color }) {
   const nombreMostrado = nombreDisplay(nombre);
   return (
-    <div className="flex items-start gap-3 py-1">
-      <div className="flex items-baseline gap-1.5 shrink-0" style={{ width: 106 }}>
-        <span className="text-[13px]" style={{ color: MUTED }}>{rank}.</span>
-        <span className="text-[12px] font-medium leading-tight" style={{ color: INK }} title={nombreMostrado}>
+    <div className="flex items-start gap-1.5 py-1 min-w-0">
+      <div className="flex items-baseline gap-1 shrink-0 min-w-0" style={{ width: 68 }}>
+        <span className="text-[13px] shrink-0" style={{ color: MUTED }}>{rank}.</span>
+        <span className="text-[12px] font-medium leading-tight truncate" style={{ color: INK }} title={nombreMostrado}>
           {nombreMostrado}
         </span>
       </div>
-      <div className="flex gap-1 shrink-0 self-center">
+      <div className="flex gap-0.5 shrink-0 self-center">
         {Array.from({ length: 5 }).map((_, i) => (
-          <BarrelPartial key={i} fraction={ratio * 5 - i} color={color} size={28} />
+          <BarrelPartial key={i} fraction={ratio * 5 - i} color={color} size={16} />
         ))}
       </div>
-      <span className="text-[13.5px] font-semibold tabular-nums text-right self-center" style={{ color: INK }}>
+      <span className="text-[13.5px] font-semibold tabular-nums text-right self-center shrink-0" style={{ color: INK }}>
         {valor.toLocaleString("es-MX")}
       </span>
     </div>
@@ -259,9 +259,9 @@ function CampoRow({ rank, nombre, valor, ratio, color }) {
 // CampoRow, para que la unidad quede alineada justo arriba de las cifras.
 function UnidadHeader({ unidad }) {
   return (
-    <div className="flex items-center gap-3 pb-1">
-      <span className="shrink-0" style={{ width: 106 }} />
-      <span className="shrink-0" style={{ width: 156 }} />
+    <div className="flex items-center gap-1.5 pb-1">
+      <span className="shrink-0" style={{ width: 68 }} />
+      <span className="shrink-0" style={{ width: 88 }} />
       <span className="text-[11px] italic" style={{ color: MUTED }}>{unidad}</span>
     </div>
   );

@@ -990,7 +990,7 @@ function OperadorCustomChart({ empresas, categories, chartType, tituloTema }) {
 // "Gráfica personalizada" de "Producción por contrato": el usuario elige UN
 // contrato y ve toda su producción (todos los productos con datos) en una
 // sola gráfica, exportable a PNG — mismo patrón que OperadorCustomChart.
-function ContratoCustomChart({ contratos, categories, chartType, tituloTema }) {
+function ContratoCustomChart({ contratos, categories, chartType, tituloTema, badgeFor }) {
   const [selected, setSelected] = useState(contratos[0]?.nombre ?? "");
   const chartRef = useRef(null);
   const contrato = contratos.find(c => c.nombre === selected) ?? contratos[0];
@@ -1002,11 +1002,18 @@ function ContratoCustomChart({ contratos, categories, chartType, tituloTema }) {
   return (
     <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
       <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-        <SearchableSelect
-          options={contratos.map(c => c.nombre)}
-          value={selected || contratos[0]?.nombre}
-          onChange={setSelected}
-        />
+        <div className="flex items-center gap-2 flex-wrap">
+          <SearchableSelect
+            options={contratos.map(c => c.nombre)}
+            value={selected || contratos[0]?.nombre}
+            onChange={setSelected}
+          />
+          {badgeFor && contrato && (
+            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold" style={{ background: "#e6f4f1", color: "#0d6a5c" }}>
+              {badgeFor(contrato)}
+            </span>
+          )}
+        </div>
         <button
           onClick={() => exportChartPng(chartRef, {
             titulo: `${tituloTema} — ${contrato?.nombre ?? ""}`,
@@ -1104,6 +1111,29 @@ function SeriesChips({ items, visibleSeries, toggleSerie, setAllVisible }) {
 
 const PERIOD_LABEL = { annually: "Anual", monthly: "Mensual", daily: "Diario" };
 
+// Contratos con su Ronda/Farmouts/Migraciones y Licitación, para el selector
+// de "Gráfica personalizada" de Inversiones por contrato — recorre
+// resultado.groups (ya viene Ronda → Licitación (subtotal) → Contrato).
+function buildContratosInvCont(resultado) {
+  const contratos = [];
+  for (const g of resultado.groups ?? []) {
+    if (g.cuenca === "Total general") continue;
+    let licitacionActual = null;
+    for (const row of g.subgroups?.[0]?.rows ?? []) {
+      if (row.type === "subtotal") { licitacionActual = row.label; continue; }
+      if (row.type === "operator") {
+        contratos.push({
+          nombre: row.label,
+          series: [{ name: "Monto aprobado (USD)", data: row.data, type: "line" }],
+          grupo: g.cuenca,
+          licitacion: licitacionActual,
+        });
+      }
+    }
+  }
+  return contratos;
+}
+
 function DataTitle({ titulo, period, start_year, end_year }) {
   if (!titulo) return null;
   const periodLabel = PERIOD_LABEL[period] ?? period;
@@ -1128,6 +1158,16 @@ export default function ChartArea() {
   useEffect(() => {
     if (tema?.json_arg === "Precios") setViewMode("graficos");
   }, [tema?.json_arg]);
+  // Inversiones/Pozos comprometidos: sin línea (no aporta con pocos periodos/
+  // sin serie temporal) — arranca en barras si venía de otro tema con "line".
+  useEffect(() => {
+    const esInvOPozos = ["InvCuenca", "InvCont", "PozosLic", "EfectivoLic", "InvLic", "EmpresasG"].includes(tema?.json_arg);
+    if (esInvOPozos && chartType === "line") setChartType("bar");
+  }, [tema?.json_arg]);
+  // "Licitaciones y Contratos": siempre arranca en tabla (nunca en gráfico).
+  useEffect(() => {
+    if (tema?.seccion === "Licitaciones y Contratos") setViewMode("tablas");
+  }, [tema?.json_arg]);
   // Panel flotante de detalle al hacer clic en una fila de asignación
   // (código ASIG_CONT) en la vista de tablas — solo aplica al tema Asignaciones.
   const [asignacionSeleccionada, setAsignacionSeleccionada] = useState(null);
@@ -1137,6 +1177,9 @@ export default function ChartArea() {
   // Vista general vs. "Gráfica personalizada" (una empresa en Operadores, un
   // Ambiente en "Producción por ubicación").
   const [operadorPersonalizada, setOperadorPersonalizada] = useState(false);
+  // Inversiones por contrato: gráfica personalizada por contrato (el botón
+  // de Filtros vive en TopBar, igual que Perforación/Producción).
+  const [invPersonalizada, setInvPersonalizada] = useState(false);
   // "Generar reporte" desde la vista de gráficas (tabs/simple/gráfico
   // jerárquico) — contentRef envuelve lo que esté montado ahora mismo, para
   // ubicar las instancias de ECharts renderizadas sin necesitar un ref propio
@@ -1208,25 +1251,97 @@ export default function ChartArea() {
 
   const tituloTema = tema?.titulo || tema?.tema || "";
 
-  // ── Inversiones aprobadas por cuenca: Total (+ desglose por Ambiente) →
-  // Cuenca → Entidad Federativa → Ambiente — mismo componente y estilo que
-  // las tablas jerárquicas de Producción/Perforación (DynamicTable), backend
-  // ya entrega groups/subgroups/rows en ese formato. groupBy fijo en
-  // "cuenca": es la única jerarquía que tiene este tema, sin filtros propios
-  // que la cambien.
-  if (tema?.json_arg === "InvCuenca") {
+  // ── Inversiones aprobadas por cuenca / por contrato: Total (+ desglose) →
+  // grupo → (Licitación →) hoja — mismo componente y estilo que las tablas
+  // jerárquicas de Producción/Perforación (DynamicTable), backend ya entrega
+  // groups/subgroups/rows en ese formato. groupBy fijo en "cuenca": es la
+  // única jerarquía que tiene cada uno de estos temas, sin filtros propios
+  // que la cambien. Botón "Filtros" vive en TopBar.jsx (mismo lugar que
+  // Perforación/Producción, junto a Periodo) — aquí solo se lee
+  // visibleSeries, que ese drawer ya controla. La búsqueda de texto de la
+  // tabla cubre cualquier nivel (cuenca/entidad/ambiente o ronda/licitación/
+  // contrato) y abre la rama donde está el resultado.
+  if (["InvCuenca", "InvCont", "PozosLic", "EfectivoLic", "InvLic", "EmpresasG", "ReservasP", "ReservasG", "ReservasPCE"].includes(tema?.json_arg)) {
+    const esCuenca = tema.json_arg === "InvCuenca";
+    const esPozos = tema.json_arg === "PozosLic";
+    const esEmpresas = tema.json_arg === "EmpresasG";
+    const esReservas = ["ReservasP", "ReservasG", "ReservasPCE"].includes(tema.json_arg);
+    const esModalidad = ["PozosLic", "EfectivoLic", "InvLic"].includes(tema.json_arg);
+    const gruposChip = (resultado.groups ?? []).filter(g => g.cuenca !== "Total general");
+    const chartSeries = gruposChip
+      .filter(g => visibleSeries[g.cuenca] !== false)
+      .map(g => ({ name: g.cuenca, type: chartType === "bar" ? "bar" : "line", data: g.data ?? [] }));
+    const contratosPersonalizada = tema.json_arg === "InvCont" ? buildContratosInvCont(resultado) : [];
+    const verPersonalizada = contratosPersonalizada.length > 0 && invPersonalizada;
+    const notaUnidad = esEmpresas ? "Cifras en número de contratos por empresa."
+      : esPozos ? "Cifras en número de pozos comprometidos."
+      : esReservas ? "1P = Probadas, 2P = Probadas + Probables, 3P = Probadas + Probables + Posibles."
+      : tema.json_arg === "InvLic" ? "Montos en millones de USD (dólares estadounidenses). PMT: Programa Mínimo de Trabajo."
+      : "Montos en USD (dólares estadounidenses).";
+    const rowHeaderLabel = esCuenca ? "Cuenca / Entidad Federativa / Ambiente"
+      : esEmpresas ? "País de origen / Empresa"
+      : esReservas ? "Cuenca / Ambiente / Campo"
+      : esModalidad ? "Modalidad / Ronda-Licitación / Contrato"
+      : "Ronda / Licitación / Contrato";
+    const searchPlaceholder = esCuenca ? "Buscar cuenca, entidad o ambiente"
+      : esEmpresas ? "Buscar empresa"
+      : esReservas ? "Buscar cuenca, ambiente o campo"
+      : esModalidad ? "Buscar modalidad, ronda, licitación o contrato"
+      : "Buscar ronda, licitación o contrato";
+
     return (
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <DynamicTable
-          resultado={resultado}
-          visibleSeries={visibleSeries}
-          groupBy="cuenca"
-          titulo={tituloTema}
-          period={period} start_year={start_year} end_year={end_year}
-          entityLabel="ambientes"
-          rowHeaderLabel="Cuenca / Entidad Federativa / Ambiente"
-          searchPlaceholder="Buscar cuenca, entidad o ambiente"
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        <ViewBar
+          viewMode={viewMode} setViewMode={setViewMode} chartType={chartType} setChartType={setChartType}
+          hideChartTypes
+          extra={contratosPersonalizada.length > 0 ? (
+            <button
+              onClick={() => setInvPersonalizada(v => !v)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                invPersonalizada ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
+              }`}>
+              Gráfica personalizada
+            </button>
+          ) : null}
         />
+        {viewMode === "graficos" && !verPersonalizada && (
+          <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm w-fit mb-4">
+            {CHART_TYPES.filter(t => t.id === "bar" || t.id === "pie").map(({ id, label, icon }, idx, arr) => (
+              <button key={id} title={label} onClick={() => setChartType(id)}
+                className={`px-3 py-2.5 min-h-[40px] min-w-[40px] flex items-center justify-center transition-colors ${
+                  chartType === id ? "bg-tih-dark text-white" : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+                } ${idx < arr.length - 1 ? "border-r border-slate-200" : ""}`}>
+                {icon}
+              </button>
+            ))}
+          </div>
+        )}
+        {viewMode === "graficos" ? (
+          <div style={{ flex: 1, minHeight: 0 }}>
+            {verPersonalizada
+              ? <ContratoCustomChart contratos={contratosPersonalizada} categories={resultado.categories ?? []} chartType={chartType === "heatmap" ? "line" : chartType} tituloTema={tituloTema}
+                  badgeFor={c => `${c.grupo}${c.licitacion ? " · " + c.licitacion : ""}`} />
+              : <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={chartSeries} chartType={chartType === "heatmap" ? "line" : chartType} />}
+            <p className="text-[10.5px] text-slate-400 mt-1">{notaUnidad} Fuente: Secretaría de Energía.</p>
+          </div>
+        ) : (
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <div style={{ flex: 1, minHeight: 0 }}>
+              <DynamicTable
+                resultado={resultado}
+                visibleSeries={visibleSeries}
+                groupBy="cuenca"
+                titulo={tituloTema}
+                period={esModalidad || esEmpresas ? null : period} start_year={start_year} end_year={end_year}
+                entityLabel={esEmpresas ? "empresas" : esReservas ? "campos" : esModalidad || !esCuenca ? "contratos" : "ambientes"}
+                rowHeaderLabel={rowHeaderLabel}
+                searchPlaceholder={searchPlaceholder}
+                preserveColumnOrder={esModalidad || esEmpresas}
+              />
+            </div>
+            <p className="text-[10.5px] text-slate-400 mt-1 shrink-0">{notaUnidad}</p>
+          </div>
+        )}
       </div>
     );
   }

@@ -85,6 +85,12 @@ export function useChartData() {
       });
     } else if (RESERVAS_SECCIONES.has(seccion)) {
       promise = api.get("/reservas/", { params: { start_year, end_year, tipo: json_arg } });
+    } else if (["PozosLic", "EfectivoLic", "InvLic", "EmpresasG"].includes(json_arg)) {
+      // Corte vigente (sin serie temporal) — sin params de periodo/año.
+      const endpoint = json_arg === "PozosLic" ? "pozos-comprometidos"
+        : json_arg === "EfectivoLic" ? "ofertas-efectivo"
+        : json_arg === "InvLic" ? "inversion-comprometida" : "contratos-adjudicados";
+      promise = api.get(`/contratos/${endpoint}`);
     } else if (CONTRATOS_SECCIONES.has(seccion)) {
       promise = api.get("/contratos/", { params: base });
     } else if (PRECIOS_TOPICS.has(json_arg)) {

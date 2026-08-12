@@ -47,7 +47,7 @@ const PLANHEADER_TONES = [
 const COLLAPSIBLE = new Set(["ubicacion", "planheader", "subtotalcol"]);
 
 // ── Inicializar grupos abiertos según el modo ─────────────────────────────────
-function initOpenGroups(resultado, groupBy) {
+function initOpenGroups(resultado, groupBy, expandirConSubtotal) {
   const init = new Set();
   if (!resultado?.groups) return init;
 
@@ -66,7 +66,7 @@ function initOpenGroups(resultado, groupBy) {
       // que abrir — sin este guard contaban como "sin subtotal" y se forzaban
       // a "abiertas", inflando hasOpenGroups aunque todo estuviera colapsado.
       const tieneSubtotal = filasGrupo.length === 0 || filasGrupo.some(r => r.type === "subtotal");
-      if (!tieneSubtotal) init.add(`cuenca|${g.cuenca}`);
+      if (!tieneSubtotal || expandirConSubtotal) init.add(`cuenca|${g.cuenca}`);
     }
   }
   if (groupBy === "ubicacion") {
@@ -142,7 +142,12 @@ function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisio
       if (skipGroup) continue;
       let visible = groupBy === "operador" ? ops.filter(o => vis[o.label] !== false) : ops;
       visible = visible.filter(o => hasData(o.data));
-      if (q) visible = visible.filter(o => o.label.toLowerCase().includes(q));
+      // Si lo que coincidió con la búsqueda es el propio subtotal (p. ej. una
+      // Entidad Federativa o Licitación), se muestran TODOS sus hijos —
+      // filtrar además por texto en las hojas dejaría la rama vacía aunque el
+      // usuario sí encontró lo que buscaba.
+      const parentCoincide = !!q && row.label.toLowerCase().includes(q);
+      if (q && !parentCoincide) visible = visible.filter(o => o.label.toLowerCase().includes(q));
       // Con forceDivisions cada subtotal (producto) es colapsable — el estado
       // "abierto" es la convención "cerrado si está en openGroups" (igual que
       // planheader/ubicacion), así por defecto arrancan expandidos.
@@ -625,8 +630,12 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
       // unidades (Mbd/MMpcd) en un solo total, por eso aquí se respeta la
       // jerarquía con pushOperatorRows en vez del merge plano de abajo.
       if (sgRows.some(r => r.type === "subtotal")) {
-        const contratoCoincide = q ? sgRows.some(r => r.type === "operator" && r.label.toLowerCase().includes(q)) : true;
-        if (q && !nombreCoincide && !contratoCoincide) continue; // ni la empresa ni ningún contrato coincide con la búsqueda
+        // También cuenta como match un subtotal intermedio (Entidad Federativa,
+        // Licitación…) — antes solo miraba las hojas ("operator") y una
+        // búsqueda por el nombre de ese nivel intermedio (p. ej. "Campeche")
+        // no encontraba nada aunque sí existiera.
+        const contratoCoincide = q ? sgRows.some(r => (r.type === "operator" || r.type === "subtotal") && r.label.toLowerCase().includes(q)) : true;
+        if (q && !nombreCoincide && !contratoCoincide) continue; // ni la empresa ni ningún contrato/subtotal coincide con la búsqueda
         // Si coincide el nombre de la empresa, se muestran todos sus contratos
         // (la búsqueda ya cumplió su propósito a ese nivel).
         const qEfectiva = nombreCoincide ? "" : q;
@@ -646,8 +655,13 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
         continue;
       }
 
-      const isOpen = openGroups.has(gk);
       const { total, ops } = mergeSubgroups(g.subgroups, cats);
+      // Si la búsqueda solo coincide con una hoja de este grupo (p. ej. una
+      // empresa), se abre aunque el usuario lo haya colapsado a mano —
+      // si no, quedaría "encontrado" pero invisible.
+      const nombreCoincideCuenca = q ? g.cuenca.toLowerCase().includes(q) : false;
+      const hijoCoincide = q && !nombreCoincideCuenca ? ops.some(o => o.label.toLowerCase().includes(q)) : false;
+      const isOpen = openGroups.has(gk) || hijoCoincide;
 
       rows.push({
         _id: `ph|${gk}`, _type: "planheader",
@@ -835,9 +849,11 @@ function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, tit
             {titulo}
           </span>
           <div className="flex items-center gap-2 flex-wrap">
-            <span style={{ fontFamily: "'Noto Sans', sans-serif", fontSize: 10, color: "#94a3b8", fontWeight: 500, letterSpacing: "0.03em", whiteSpace: "nowrap" }}>
-              {PERIOD_LABEL[period] ?? period} · {start_year} – {end_year}
-            </span>
+            {period && (
+              <span style={{ fontFamily: "'Noto Sans', sans-serif", fontSize: 10, color: "#94a3b8", fontWeight: 500, letterSpacing: "0.03em", whiteSpace: "nowrap" }}>
+                {PERIOD_LABEL[period] ?? period} · {start_year} – {end_year}
+              </span>
+            )}
             {filtroLabel && (
               <span className="inline-flex items-center gap-1 rounded-full whitespace-nowrap"
                 style={{ background: "#e6f4f1", color: "#0d6a5c", fontSize: 11, fontWeight: 600, padding: "2px 9px 2px 7px", fontFamily: "'Noto Sans', sans-serif" }}>
@@ -958,7 +974,7 @@ function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, tit
 }
 
 // ── Componente principal ──────────────────────────────────────────────────────
-export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick, onCellClick, flatExportEntidad, historicoTopic }) {
+export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick, onCellClick, flatExportEntidad, historicoTopic, preserveColumnOrder }) {
   const { pendingBusqueda, setPendingBusqueda } = useExplorer();
   const [search,     setSearch]     = useState("");
 
@@ -970,7 +986,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
     setPendingBusqueda(null);
   }, [pendingBusqueda, setPendingBusqueda]);
   const [hiddenCols, setHiddenCols] = useState(new Set());
-  const [openGroups, setOpenGroups] = useState(() => initOpenGroups(resultado, groupBy));
+  const [openGroups, setOpenGroups] = useState(() => initOpenGroups(resultado, groupBy, preserveColumnOrder));
   const [hoveredRow,  setHoveredRow]  = useState(null);
   const [selectedRow, setSelectedRow] = useState(null);
   const [hoveredCol,  setHoveredCol]  = useState(null);
@@ -988,7 +1004,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
 
   // Resetear grupos abiertos al cambiar de modo o al cambiar los datos (filtros)
   useEffect(() => {
-    setOpenGroups(initOpenGroups(resultado, groupBy));
+    setOpenGroups(initOpenGroups(resultado, groupBy, preserveColumnOrder));
   }, [groupBy, resultado]);
 
   function toggleGroup(key) {
@@ -1162,8 +1178,10 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   const extraSumaCols = isMonthly ? (showSuma ? yearGroups.length : 0) : (showSuma ? 1 : 0);
 
   // En modo anual el año más reciente va primero; en modo comparación se
-  // respeta el orden cronológico (antes → después).
-  const displayCats = isMonthly || isCompare ? visCats : [...visCats].reverse();
+  // respeta el orden cronológico (antes → después). Columnas que no son años
+  // (p. ej. Ambiente en Pozos/Inversión comprometida) usan el orden tal cual
+  // viene del backend — invertirlas no tiene sentido cronológico.
+  const displayCats = isMonthly || isCompare || preserveColumnOrder ? visCats : [...visCats].reverse();
 
   // Resalte de columna al hacer hover (overlay translúcido, no pisa el color de fondo existente)
   const colHighlightShadow = "inset 0 0 0 9999px rgba(13,148,136,0.12)";

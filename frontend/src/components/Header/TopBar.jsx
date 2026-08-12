@@ -71,6 +71,14 @@ const PRODUCCION_HIER_TOPICS = new Set(["Cuenca", "API", "Operadores", "Gcompo",
 const PRODUCTO_FLAT_TOPICS = new Set(["Contratos"]);
 const PRODUCCION_SECCIONES = new Set(["Producción", "Produccion"]);
 
+// Nombres vienen tal cual de la BD, sin acentos en varios casos — se corrigen solo en pantalla.
+function acentuarTema(s) {
+  return s
+    .replace(/petroleo/gi, "petróleo")
+    .replace(/produccion/gi, "producción")
+    .replace(/ubicacion/gi, "ubicación");
+}
+
 // ── Selector de rango de años ─────────────────────────────────────────────────
 function YearRangeSelector({ startYear, endYear, onChangeStart, onChangeEnd }) {
   const startOptions = YEARS.filter(y => endYear == null || y <= endYear).map(y => ({ value: y, label: String(y) }));
@@ -527,6 +535,57 @@ function ProdDrawer({ open, onClose, prodOpciones, prodFiltros, setProdFiltros, 
   );
 }
 
+// ── InvDrawer: filtro por cuenca (InvCuenca) o por Ronda/Farmouts/Migraciones
+// (InvCont) — checklist de los grupos de primer nivel, wireado a
+// visibleSeries/setAllVisible (mismo mecanismo que ya usan los chips de
+// series en ChartArea, así que colapsar un grupo aquí lo colapsa ahí también).
+function InvDrawer({ open, onClose, items, titulo }) {
+  const { visibleSeries, setAllVisible } = useExplorer();
+  if (!items?.length) return null;
+  const seleccionados = items.filter(n => visibleSeries[n] !== false);
+
+  return (
+    <>
+      {open && (
+        <div role="presentation" onClick={onClose} className="fixed inset-0 bg-black/25 z-[1000]" />
+      )}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Filtros"
+        className={`fixed top-0 right-0 bottom-0 w-80 bg-white shadow-[-4px_0_24px_rgba(0,0,0,0.12)] z-[1001] flex flex-col overflow-y-auto transition-transform duration-300 ease-in-out ${open ? "translate-x-0" : "translate-x-full"}`}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+          <span className="font-bold text-sm text-slate-900">Filtros</span>
+          <button
+            onClick={onClose}
+            aria-label="Cerrar filtros"
+            className="text-slate-400 hover:text-slate-600 bg-transparent border-none cursor-pointer text-lg leading-none px-1"
+          >
+            ×
+          </button>
+        </div>
+        <div className="p-5 flex flex-col gap-6">
+          <DrawerSection
+            titulo={titulo}
+            opciones={items}
+            seleccionados={seleccionados}
+            onChange={(vals) => { setAllVisible(items, false); setAllVisible(vals, true); }}
+          />
+        </div>
+        <div className="mt-auto px-5 py-4 border-t border-slate-200">
+          <button
+            onClick={onClose}
+            className="w-full py-2.5 rounded-lg bg-tih-dark text-white text-sm font-semibold hover:bg-tih-mid transition-colors cursor-pointer border-none"
+          >
+            Aplicar y cerrar
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ── TopBar principal ──────────────────────────────────────────────────────────
 export default function TopBar() {
   const {
@@ -545,6 +604,7 @@ export default function TopBar() {
     prodOpciones, setProdOpciones,
     setGroupBy,
     compareMode, setCompareMode, compareYearA, compareYearB, setCompareYears,
+    resultado, visibleSeries,
   } = useExplorer();
 
   const { consultar } = useChartData();
@@ -560,6 +620,18 @@ export default function TopBar() {
   const isPerf = PERFORACION_TOPICS.has(tema?.json_arg);
   const isProd = PRODUCCION_SECCIONES.has(tema?.seccion);
   const isProdHier = PRODUCCION_HIER_TOPICS.has(tema?.json_arg);
+  const isInv = ["InvCuenca", "InvCont", "PozosLic", "EfectivoLic", "InvLic", "EmpresasG", "ReservasP", "ReservasG", "ReservasPCE"].includes(tema?.json_arg);
+  // Corte vigente, sin dimensión de año — a diferencia de InvCuenca/InvCont
+  // (esos sí son series por año), el filtro de Periodo no les aplica.
+  const esSnapshot = ["PozosLic", "EfectivoLic", "InvLic", "EmpresasG"].includes(tema?.json_arg);
+  const [invDrawerOpen, setInvDrawerOpen] = useState(false);
+  // Nombres de los grupos de primer nivel (cuenca, o Ronda/Farmouts/
+  // Migraciones) — vienen ya resueltos en resultado.groups, sin pedirle al
+  // backend un catálogo aparte.
+  const nombresGrupoInv = isInv
+    ? (resultado?.groups ?? []).filter(g => g.cuenca !== "Total general").map(g => g.cuenca)
+    : [];
+  const contadorFiltrosInv = nombresGrupoInv.filter(n => visibleSeries[n] === false).length;
   const [prodDrawerOpen, setProdDrawerOpen] = useState(false);
   const pendingTopicSync = useRef(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -773,7 +845,7 @@ export default function TopBar() {
               className={`tih-pill${seccion === s ? " tih-pill--active" : ""}`}
               onClick={() => setSeccion(seccion === s ? "" : s)}
             >
-              {s === "Indicadores Economicos" ? "Indicadores Económicos" : s}
+              {s === "Indicadores Economicos" ? "Indicadores Económicos" : acentuarTema(s)}
             </button>
           ))}
         </div>
@@ -791,7 +863,7 @@ export default function TopBar() {
                 // El nombre del tema viene tal cual de la BD (columna TEMA en
                 // CUBOS), sin acentos — "petroleo" es el único typo real
                 // reportado ahí, se corrige solo en pantalla sin tocar la BD.
-                options={temasFiltrados.map(t => ({ value: t.tema, label: t.tema.replace(/petroleo/gi, "petróleo") }))}
+                options={temasFiltrados.map(t => ({ value: t.tema, label: acentuarTema(t.tema) }))}
                 onChange={v => setTema(v ? temasFiltrados.find(t => t.tema === v) ?? null : null)}
                 minWidth={210}
               />
@@ -799,77 +871,89 @@ export default function TopBar() {
 
             <div className="tih-filterbar__sep--dark" />
 
-            {/* Periodicidad */}
-            <div className="tih-filterbar__group">
-              <span className="tih-filterbar__label--dark">Periodicidad</span>
-              <div className="tih-filterbar__radios--dark">
-                {[
-                  ["annually", "Anual"],
-                  // CUBOS.PERIODICIDAD trae qué periodos tiene sentido pedirle
-                  // a cada tema (p. ej. Inversiones/Licitaciones solo Anual —
-                  // ANIO es lo único que hay en INVERSIONES_APROBADAS, no hay
-                  // mes) — si el tema no declara "Mensual" ahí, no se ofrece.
-                  ...(soloAnual ? [] : [["monthly", "Mensual"]]),
-                  // "Diario": solo tiene sentido en Precios (única fuente con
-                  // un registro por día) — en el resto de los temas no hay
-                  // datos a ese nivel de detalle.
-                  ...(tema?.json_arg === "Precios" ? [["daily", "Diario"]] : []),
-                ].map(([val, lbl]) => (
-                  <label key={val} className="tih-filterbar__radio-label--dark">
-                    <input
-                      type="radio"
-                      name="period"
-                      value={val}
-                      checked={period === val}
-                      onChange={() => setPeriod(val)}
-                    />
-                    {lbl}
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="tih-filterbar__sep--dark" />
-
-            {/* Periodo */}
-            {period === "daily" ? (
+            {/* Periodicidad / Periodo: no aplican a los temas de corte vigente
+                 (Pozos/Ofertas/Inversión comprometida — sin dimensión de año,
+                 el filtro no cambiaba nada y confundía). */}
+            {esSnapshot ? (
               <div className="tih-filterbar__group">
-                <span className="tih-filterbar__label--dark">Fecha</span>
-                <DateRangeSelector
-                  startDate={start_date}
-                  endDate={end_date}
-                  onChange={({ start, end }) => setFiltro({ start_date: start, end_date: end })}
-                />
+                <span className="tih-filterbar__label--dark">Periodo</span>
+                <span className="text-xs text-white/70 font-medium">Corte vigente</span>
               </div>
             ) : (
-            <div className="tih-filterbar__group">
-              <span className="tih-filterbar__label--dark">Periodo</span>
-              <div className="flex items-center gap-1">
-                <YearRangeSelector
-                  startYear={start_year}
-                  endYear={end_year}
-                  onChangeStart={v => setFiltro(end_year == null ? { start_year: v, end_year: v } : { start_year: v })}
-                  onChangeEnd={v => setFiltro(start_year == null ? { start_year: v, end_year: v } : { end_year: v })}
-                />
-                {start_year !== end_year && (
-                  <button
-                    type="button"
-                    onClick={() => setFiltro({ start_year: null, end_year: null })}
-                    title="Limpiar años"
-                    aria-label="Limpiar rango de años"
-                    style={{ background: "none", border: "none", cursor: "pointer", padding: 2, display: "flex", color: "rgba(255,255,255,0.4)" }}
-                    onMouseEnter={e => e.currentTarget.style.color = "#fff"}
-                    onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.4)"}
-                  >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/>
-                      <line x1="10" y1="11" x2="10" y2="17"/>
-                      <line x1="14" y1="11" x2="14" y2="17"/>
-                    </svg>
-                  </button>
+              <>
+                {/* Periodicidad */}
+                <div className="tih-filterbar__group">
+                  <span className="tih-filterbar__label--dark">Periodicidad</span>
+                  <div className="tih-filterbar__radios--dark">
+                    {[
+                      ["annually", "Anual"],
+                      // CUBOS.PERIODICIDAD trae qué periodos tiene sentido pedirle
+                      // a cada tema (p. ej. Inversiones/Licitaciones solo Anual —
+                      // ANIO es lo único que hay en INVERSIONES_APROBADAS, no hay
+                      // mes) — si el tema no declara "Mensual" ahí, no se ofrece.
+                      ...(soloAnual ? [] : [["monthly", "Mensual"]]),
+                      // "Diario": solo tiene sentido en Precios (única fuente con
+                      // un registro por día) — en el resto de los temas no hay
+                      // datos a ese nivel de detalle.
+                      ...(tema?.json_arg === "Precios" ? [["daily", "Diario"]] : []),
+                    ].map(([val, lbl]) => (
+                      <label key={val} className="tih-filterbar__radio-label--dark">
+                        <input
+                          type="radio"
+                          name="period"
+                          value={val}
+                          checked={period === val}
+                          onChange={() => setPeriod(val)}
+                        />
+                        {lbl}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="tih-filterbar__sep--dark" />
+
+                {/* Periodo */}
+                {period === "daily" ? (
+                  <div className="tih-filterbar__group">
+                    <span className="tih-filterbar__label--dark">Fecha</span>
+                    <DateRangeSelector
+                      startDate={start_date}
+                      endDate={end_date}
+                      onChange={({ start, end }) => setFiltro({ start_date: start, end_date: end })}
+                    />
+                  </div>
+                ) : (
+                <div className="tih-filterbar__group">
+                  <span className="tih-filterbar__label--dark">Periodo</span>
+                  <div className="flex items-center gap-1">
+                    <YearRangeSelector
+                      startYear={start_year}
+                      endYear={end_year}
+                      onChangeStart={v => setFiltro(end_year == null ? { start_year: v, end_year: v } : { start_year: v })}
+                      onChangeEnd={v => setFiltro(start_year == null ? { start_year: v, end_year: v } : { end_year: v })}
+                    />
+                    {start_year !== end_year && (
+                      <button
+                        type="button"
+                        onClick={() => setFiltro({ start_year: null, end_year: null })}
+                        title="Limpiar años"
+                        aria-label="Limpiar rango de años"
+                        style={{ background: "none", border: "none", cursor: "pointer", padding: 2, display: "flex", color: "rgba(255,255,255,0.4)" }}
+                        onMouseEnter={e => e.currentTarget.style.color = "#fff"}
+                        onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.4)"}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/>
+                          <line x1="10" y1="11" x2="10" y2="17"/>
+                          <line x1="14" y1="11" x2="14" y2="17"/>
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                </div>
                 )}
-              </div>
-            </div>
+              </>
             )}
 
             {/* Meses (solo en modo mensual) */}
@@ -949,6 +1033,28 @@ export default function TopBar() {
               </div>
             )}
 
+            {/* ── Filtros para Inversiones por cuenca / por contrato ── */}
+            {isInv && (
+              <div className="tih-filterbar__group">
+                <button
+                  className={`tih-filterbar__select--light flex items-center justify-center gap-1.5 cursor-pointer px-3 ${
+                    contadorFiltrosInv ? "!bg-tih-teal !text-white !border-tih-teal" : ""
+                  }`}
+                  onClick={() => setInvDrawerOpen(true)}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+                  </svg>
+                  Filtros
+                  {contadorFiltrosInv > 0 && (
+                    <span className="bg-white text-tih-teal rounded-full text-[10px] font-bold px-1.5 min-w-[16px] text-center">
+                      {contadorFiltrosInv}
+                    </span>
+                  )}
+                </button>
+              </div>
+            )}
+
           </div>
         )}
       </div>
@@ -967,6 +1073,14 @@ export default function TopBar() {
         prodFiltros={prodFiltros}
         setProdFiltros={setProdFiltros}
         esOperadores={tema?.json_arg === "Operadores"}
+      />
+      <InvDrawer
+        open={invDrawerOpen}
+        onClose={() => setInvDrawerOpen(false)}
+        items={nombresGrupoInv}
+        titulo={tema?.json_arg === "InvCuenca" ? "Cuenca"
+          : tema?.json_arg === "EmpresasG" ? "País de origen"
+          : ["PozosLic", "EfectivoLic", "InvLic"].includes(tema?.json_arg) ? "Modalidad" : "Ronda / Farmouts / Migraciones"}
       />
     </header>
   );

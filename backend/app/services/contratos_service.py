@@ -153,3 +153,241 @@ def get_operadores(engine: Engine, start_year, end_year, start_month, end_month,
         "categories": categories,
         "series": _series_agrupadas(grouped, "operador", "liquidos_mbd", categories),
     }
+
+
+# ---------------------------------------------------------------------------
+# Pozos comprometidos (Licitaciones y Contratos)
+# ---------------------------------------------------------------------------
+AMBIENTES_ORDEN = ["Aguas profundas", "Aguas someras", "Terrestre"]
+
+
+def _label_grupo_pozos(ronda: str, licitacion: str) -> str:
+    if ronda == "Asociaciones":
+        return "Asociaciones Pemex"
+    if ronda == "Migraciones":
+        return "Migraciones Pemex"
+    # "R01"/"L03" -> "Ronda 1 Licitación 3"
+    return f"Ronda {ronda[1:].lstrip('0') or '0'} Licitación {licitacion[1:].lstrip('0') or '0'}"
+
+
+@cached()
+def get_pozos_comprometidos(engine: Engine) -> dict:
+    # T_21_PozosComprometidos (schema rdmx) es un corte vigente, no una serie
+    # temporal, con un renglón por contrato — sin MODALIDAD/UBICACION propias,
+    # se toman de INVERSIONES_APROBADAS (mismo CONTRATO) para poder armar la
+    # jerarquía Modalidad → Ronda/Licitación → Contrato con desglose por
+    # Ambiente que pide el tema.
+    sql = f"""
+        SELECT p.contrato, p.ronda, p.licitacion, p.pozosPlanes,
+               i.MODALIDAD, i.UBICACION
+        FROM rdmx.T_21_PozosComprometidos p
+        LEFT JOIN (SELECT DISTINCT CONTRATO, MODALIDAD, UBICACION FROM {SCHEMA}INVERSIONES_APROBADAS) i
+          ON i.CONTRATO = p.contrato
+    """
+    with engine.connect() as conn:
+        df = pd.read_sql(sql, conn)
+
+    if df.empty:
+        return {"type": "hierarchical", "categories": [], "groups": []}
+
+    df.columns = df.columns.str.lower()
+    df["pozosplanes"] = pd.to_numeric(df["pozosplanes"], errors="coerce").fillna(0)
+    df["modalidad"] = df["modalidad"].fillna("Sin clasificar")
+    df["ubicacion"] = df["ubicacion"].fillna("Sin clasificar")
+    df["grupo"] = df.apply(lambda r: _label_grupo_pozos(r["ronda"], r["licitacion"]), axis=1)
+
+    categories = AMBIENTES_ORDEN + sorted(set(df["ubicacion"]) - set(AMBIENTES_ORDEN))
+
+    def serie_por_ambiente(sub: pd.DataFrame) -> list:
+        por_amb = sub.groupby("ubicacion")["pozosplanes"].sum()
+        return [round(float(por_amb.get(a, 0)), 2) for a in categories]
+
+    total_general_rows = [
+        {"type": "operator", "label": "Todos los operadores", "data": serie_por_ambiente(df)},
+        *[{"type": "operator", "label": amb, "data": serie_por_ambiente(sub)} for amb, sub in df.groupby("ubicacion")],
+    ]
+    groups = [
+        {"cuenca": "Total general", "data": serie_por_ambiente(df), "subgroups": [{"ubicacion": "Nacional", "rows": total_general_rows}]},
+    ]
+
+    for modalidad, sub_mod in df.groupby("modalidad"):
+        rows = []
+        for grupo, sub_grupo in sub_mod.groupby("grupo"):
+            rows.append({"type": "subtotal", "label": f"{grupo} (Pozos)", "data": serie_por_ambiente(sub_grupo)})
+            for _, fila in sub_grupo.sort_values("contrato").iterrows():
+                rows.append({"type": "operator", "label": fila["contrato"], "data": serie_por_ambiente(sub_grupo[sub_grupo["contrato"] == fila["contrato"]])})
+        groups.append({"cuenca": modalidad, "data": serie_por_ambiente(sub_mod), "subgroups": [{"ubicacion": "Nacional", "rows": rows}]})
+
+    return {"type": "hierarchical", "categories": categories, "groups": groups}
+
+
+# ---------------------------------------------------------------------------
+# Ofertas de pago en efectivo (Licitaciones y Contratos)
+# ---------------------------------------------------------------------------
+def _label_grupo_oferta(ronda: str, licitacion: str) -> str:
+    if ronda == "PEMEX":
+        return "Asociaciones Pemex"
+    return f"Ronda {ronda} Licitación {licitacion}"
+
+
+@cached()
+def get_ofertas_efectivo(engine: Engine) -> dict:
+    # licitaciones_bloques_ofertas trae una fila por CADA oferta presentada
+    # (ganadoras y no ganadoras) — id_licitante = id_licitante_adj filtra a
+    # las ganadoras; un contrato con consorcio gana varias filas (una por
+    # socio, cada una con su parte del bono), se suman. "contrato" es en
+    # realidad la Modalidad (Licencia/Producción compartida) y
+    # "contrato_nombre" el identificador real del contrato — mismo patrón que
+    # Pozos comprometidos.
+    sql = """
+        SELECT ronda, licitacion, contrato AS modalidad, contrato_nombre AS contrato,
+               ubicacion, bono
+        FROM licitaciones_bloques_ofertas
+        WHERE bono IS NOT NULL AND contrato_nombre IS NOT NULL AND id_licitante = id_licitante_adj
+    """
+    with engine.connect() as conn:
+        df = pd.read_sql(sql, conn)
+
+    if df.empty:
+        return {"type": "hierarchical", "categories": [], "groups": []}
+
+    df.columns = df.columns.str.lower()
+    df["bono"] = pd.to_numeric(df["bono"], errors="coerce").fillna(0)
+    df["modalidad"] = df["modalidad"].fillna("Sin clasificar")
+    df["ubicacion"] = df["ubicacion"].str.capitalize().fillna("Sin clasificar")
+    df["grupo"] = df.apply(lambda r: _label_grupo_oferta(r["ronda"], r["licitacion"]), axis=1)
+
+    categories = AMBIENTES_ORDEN + sorted(set(df["ubicacion"]) - set(AMBIENTES_ORDEN))
+
+    def serie_por_ambiente(sub: pd.DataFrame) -> list:
+        por_amb = sub.groupby("ubicacion")["bono"].sum()
+        return [round(float(por_amb.get(a, 0)), 2) for a in categories]
+
+    total_general_rows = [
+        {"type": "operator", "label": "Todos los operadores", "data": serie_por_ambiente(df)},
+        *[{"type": "operator", "label": amb, "data": serie_por_ambiente(sub)} for amb, sub in df.groupby("ubicacion")],
+    ]
+    groups = [
+        {"cuenca": "Total general", "data": serie_por_ambiente(df), "subgroups": [{"ubicacion": "Nacional", "rows": total_general_rows}]},
+    ]
+
+    for modalidad, sub_mod in df.groupby("modalidad"):
+        rows = []
+        for grupo, sub_grupo in sub_mod.groupby("grupo"):
+            rows.append({"type": "subtotal", "label": f"{grupo} (Bono)", "data": serie_por_ambiente(sub_grupo)})
+            for contrato, sub_contrato in sub_grupo.groupby("contrato"):
+                rows.append({"type": "operator", "label": contrato, "data": serie_por_ambiente(sub_contrato)})
+        groups.append({"cuenca": modalidad, "data": serie_por_ambiente(sub_mod), "subgroups": [{"ubicacion": "Nacional", "rows": rows}]})
+
+    return {"type": "hierarchical", "categories": categories, "groups": groups}
+
+
+# ---------------------------------------------------------------------------
+# Inversión comprometida (Licitaciones y Contratos)
+# ---------------------------------------------------------------------------
+def _label_ronda_simple(ronda: str) -> str:
+    return "Asociaciones Pemex" if ronda == "PEMEX" else f"Ronda {ronda}"
+
+
+@cached()
+def get_inversion_comprometida(engine: Engine) -> dict:
+    # inv_usd (PMT comprometido) viene REPETIDO en licitaciones_bloques_ofertas
+    # — un valor por contrato, no por socio del consorcio (a diferencia de
+    # "bono", que sí se reparte) — de ahí el groupby...first() en vez de sum().
+    # Cifras en millones de USD (mismo criterio que el sitio de origen).
+    sql = """
+        SELECT ronda, licitacion, contrato AS modalidad, contrato_nombre AS contrato,
+               ubicacion, inv_usd
+        FROM licitaciones_bloques_ofertas
+        WHERE inv_usd IS NOT NULL AND contrato_nombre IS NOT NULL AND id_licitante = id_licitante_adj
+    """
+    with engine.connect() as conn:
+        df = pd.read_sql(sql, conn)
+
+    if df.empty:
+        return {"type": "hierarchical", "categories": [], "groups": []}
+
+    df.columns = df.columns.str.lower()
+    df = df.groupby(["ronda", "licitacion", "modalidad", "contrato", "ubicacion"], as_index=False)["inv_usd"].first()
+    df["inv_mm"] = pd.to_numeric(df["inv_usd"], errors="coerce").fillna(0) / 1_000_000
+    df["modalidad"] = df["modalidad"].fillna("Sin clasificar")
+    df["ubicacion"] = df["ubicacion"].str.capitalize().fillna("Sin clasificar")
+    df["grupo"] = df.apply(lambda r: _label_grupo_oferta(r["ronda"], r["licitacion"]), axis=1)
+    df["grupo_simple"] = df["ronda"].map(_label_ronda_simple)
+
+    categories = AMBIENTES_ORDEN + sorted(set(df["ubicacion"]) - set(AMBIENTES_ORDEN))
+
+    def serie_por_ambiente(sub: pd.DataFrame) -> list:
+        por_amb = sub.groupby("ubicacion")["inv_mm"].sum()
+        return [round(float(por_amb.get(a, 0)), 2) for a in categories]
+
+    # Total general: desglose simple por Asociaciones Pemex / Ronda 1 / 2 / 3
+    # (sin combinar licitación) — el detalle por Ronda-Licitación va dentro de
+    # cada Modalidad.
+    total_general_rows = [
+        {"type": "operator", "label": "Todos los operadores", "data": serie_por_ambiente(df)},
+        *[
+            {"type": "operator", "label": grupo, "data": serie_por_ambiente(sub)}
+            for grupo, sub in df.groupby("grupo_simple")
+        ],
+    ]
+    groups = [
+        {"cuenca": "Total general", "data": serie_por_ambiente(df), "subgroups": [{"ubicacion": "Nacional", "rows": total_general_rows}]},
+    ]
+
+    for modalidad, sub_mod in df.groupby("modalidad"):
+        rows = []
+        for grupo, sub_grupo in sub_mod.groupby("grupo"):
+            rows.append({"type": "subtotal", "label": f"{grupo} (PMT)", "data": serie_por_ambiente(sub_grupo)})
+            for contrato, sub_contrato in sub_grupo.groupby("contrato"):
+                rows.append({"type": "operator", "label": contrato, "data": serie_por_ambiente(sub_contrato)})
+        groups.append({"cuenca": modalidad, "data": serie_por_ambiente(sub_mod), "subgroups": [{"ubicacion": "Nacional", "rows": rows}]})
+
+    return {"type": "hierarchical", "categories": categories, "groups": groups}
+
+
+# ---------------------------------------------------------------------------
+# Contratos adjudicados (Licitaciones y Contratos) — País de origen → Empresa,
+# columnas = bloque/licitación (conteo de contratos).
+# ---------------------------------------------------------------------------
+def _col_contrato(ronda: str, licitacion: str, contrato: str) -> str:
+    if ronda == "PEMEX":
+        if "TRION" in contrato: return "Trion"
+        if "OGARRIO" in contrato: return "Ogarrio"
+        if "MORA" in contrato: return "C. Mora"
+        return contrato
+    return f"R0{ronda}-L0{licitacion}"
+
+
+@cached()
+def get_contratos_adjudicados(engine: Engine) -> dict:
+    sql = """
+        SELECT ronda, licitacion, contrato_nombre, pais, empresa
+        FROM licitaciones_bloques_ofertas
+        WHERE contrato_nombre IS NOT NULL AND id_licitante = id_licitante_adj
+    """
+    with engine.connect() as conn:
+        df = pd.read_sql(sql, conn)
+    if df.empty:
+        return {"type": "hierarchical", "categories": [], "groups": []}
+
+    df.columns = df.columns.str.lower()
+    df["pais"] = df["pais"].fillna("Sin clasificar")
+    df["empresa"] = df["empresa"].fillna("Sin clasificar")
+    df["columna"] = df.apply(lambda r: _col_contrato(r["ronda"], r["licitacion"], r["contrato_nombre"]), axis=1)
+
+    categories = sorted(df["columna"].unique())
+
+    def serie(sub: pd.DataFrame) -> list:
+        conteo = sub.groupby("columna")["contrato_nombre"].nunique()
+        return [int(conteo.get(c, 0)) for c in categories]
+
+    groups = []
+    for pais, sub_pais in sorted(df.groupby("pais")):
+        rows = [
+            {"type": "operator", "label": empresa, "data": serie(sub_emp)}
+            for empresa, sub_emp in sorted(sub_pais.groupby("empresa"))
+        ]
+        groups.append({"cuenca": f"{pais} (Contratos)", "data": serie(sub_pais), "subgroups": [{"ubicacion": "Nacional", "rows": rows}]})
+
+    return {"type": "hierarchical", "categories": categories, "groups": groups}

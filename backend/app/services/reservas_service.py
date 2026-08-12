@@ -16,36 +16,83 @@ TIPO_COLUMNA = {
 }
 
 
+UNIDAD_RESERVAS = {"ReservasP": "MMb", "ReservasG": "MMMpc", "ReservasPCE": "MMbpce"}
+AMBIENTES_ORDEN_RESERVAS = ["Aguas profundas", "Aguas someras", "Terrestre"]
+
+
 @cached()
 def get_reservas_por_campo(engine: Engine, start_year: int, end_year: int, tipo: str = "ReservasP") -> dict:
+    # Jerarquía Nacional (Total general) → Cuenca → Ambiente → Campo → 1P/2P/3P,
+    # mismo formato "hierarchical" (groups→subgroups→rows) que usa DynamicTable
+    # para Inversiones por cuenca. 1P/2P/3P son acumulados de PROBADAS/
+    # PROBABLES/POSIBLES, no columnas propias de la tabla origen.
     columna = TIPO_COLUMNA.get(tipo)
     if not columna:
-        # Temas aún no soportados (asignación-contrato, recursos prospectivos, etc.):
-        # vacío honesto en vez de caer por defecto en datos de "por campo de petróleo".
-        return {"categories": [], "series": []}
+        return {"type": "hierarchical", "categories": [], "groups": []}
+    unidad = UNIDAD_RESERVAS.get(tipo, "MMb")
+
     sql = text(f"""
-        SELECT YEAR(fecha) AS anio, cuenca, SUM({columna}) AS valor
+        SELECT YEAR(fecha) AS anio, cuenca, ubicacion, campo_nombre, categoria, SUM({columna}) AS valor
         FROM {SCHEMA}RESERVAS_CAMPOS
-        WHERE YEAR(fecha) BETWEEN :start_year AND :end_year AND categoria = 'PROBADAS'
-        GROUP BY YEAR(fecha), cuenca
-        ORDER BY YEAR(fecha), cuenca
+        WHERE YEAR(fecha) BETWEEN :start_year AND :end_year AND campo_nombre IS NOT NULL
+        GROUP BY YEAR(fecha), cuenca, ubicacion, campo_nombre, categoria
     """)
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn, params={"start_year": start_year, "end_year": end_year})
 
     if df.empty:
-        return {"categories": [], "series": []}
+        return {"type": "hierarchical", "categories": [], "groups": []}
 
     df.columns = df.columns.str.lower()
+    df["anio"] = df["anio"].astype(int)
+    df["cuenca"] = df["cuenca"].fillna("Sin clasificar")
+    df["ubicacion"] = df["ubicacion"].fillna("Sin clasificar")
     anios = sorted(df["anio"].unique().tolist())
-    cuencas = sorted(df["cuenca"].unique().tolist())
+    categories = [str(a) for a in anios]
 
-    pivot = df.groupby(["cuenca", "anio"])["valor"].sum().unstack(fill_value=0).reindex(columns=anios, fill_value=0)
-    series = [
-        {"name": cuenca, "data": [round(float(v), 2) for v in pivot.loc[cuenca]], "type": "bar"}
-        for cuenca in cuencas
+    pivot = df.pivot_table(
+        index=["cuenca", "ubicacion", "campo_nombre", "anio"], columns="categoria", values="valor",
+        aggfunc="sum", fill_value=0,
+    )
+    for cat in ["PROBADAS", "PROBABLES", "POSIBLES"]:
+        if cat not in pivot.columns:
+            pivot[cat] = 0
+    pivot["1P"] = pivot["PROBADAS"]
+    pivot["2P"] = pivot["PROBADAS"] + pivot["PROBABLES"]
+    pivot["3P"] = pivot["PROBADAS"] + pivot["PROBABLES"] + pivot["POSIBLES"]
+    pivot = pivot.reset_index()
+
+    def serie(sub: pd.DataFrame, col: str) -> list:
+        por_anio = sub.groupby("anio")[col].sum()
+        return [round(float(por_anio.get(a, 0)), 2) for a in anios]
+
+    def filas_campo(sub_amb: pd.DataFrame) -> list:
+        rows = []
+        for campo, sub_campo in sorted(sub_amb.groupby("campo_nombre"), key=lambda item: item[0]):
+            rows.append({"type": "subtotal", "label": campo, "data": serie(sub_campo, "3P")})
+            rows.append({"type": "operator", "label": f"1P = PROBADAS ({unidad})", "data": serie(sub_campo, "1P")})
+            rows.append({"type": "operator", "label": f"2P = PROBADAS + PROBABLES ({unidad})", "data": serie(sub_campo, "2P")})
+            rows.append({"type": "operator", "label": f"3P = PROBADAS + PROBABLES + POSIBLES ({unidad})", "data": serie(sub_campo, "3P")})
+        return rows
+
+    total_general_rows = [
+        {"type": "operator", "label": "Todos los ambientes", "data": serie(pivot, "3P")},
+        *[{"type": "operator", "label": amb, "data": serie(sub, "3P")} for amb, sub in pivot.groupby("ubicacion")],
     ]
-    return {"categories": [str(a) for a in anios], "series": series}
+    groups = [
+        {"cuenca": "Total general", "data": serie(pivot, "3P"), "subgroups": [{"ubicacion": "Nacional", "rows": total_general_rows}]},
+    ]
+
+    cuencas_ordenadas = sorted(pivot.groupby("cuenca"), key=lambda item: item[1]["3P"].sum(), reverse=True)
+    for cuenca, sub_cuenca in cuencas_ordenadas:
+        ambientes = AMBIENTES_ORDEN_RESERVAS + sorted(set(sub_cuenca["ubicacion"]) - set(AMBIENTES_ORDEN_RESERVAS))
+        subgroups = [
+            {"ubicacion": amb, "rows": filas_campo(sub_cuenca[sub_cuenca["ubicacion"] == amb])}
+            for amb in ambientes if not sub_cuenca[sub_cuenca["ubicacion"] == amb].empty
+        ]
+        groups.append({"cuenca": cuenca, "data": serie(sub_cuenca, "3P"), "subgroups": subgroups})
+
+    return {"type": "hierarchical", "categories": categories, "groups": groups}
 
 
 @cached()
