@@ -136,13 +136,13 @@ export default function AsignacionesRanking({ period, start_year, end_year, star
   const unidadValor = metrica === "gas" ? "MMpcd" : "Mbd";
   const colorValor = metrica === "gas" ? "#1d6fa5" : "#059669";
 
-  const q = busqueda.trim().toLowerCase();
+  const q = busqueda.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const filas = data.asignaciones
     .filter(a => {
       if (soloVigentes && a.vigente === false) return false;
       if (!q) return true;
       return [a.asignacion, a.cuenca, a.ubicacion, a.plan, a.activity, a.basin]
-        .some(v => v && String(v).toLowerCase().includes(q));
+        .some(v => v && String(v).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q));
     })
     .filter(a => a[campoValor] != null)
     .sort((a, b) => (b[campoValor] ?? 0) - (a[campoValor] ?? 0))

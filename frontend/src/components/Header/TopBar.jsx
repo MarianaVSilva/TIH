@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useExplorer } from "../../store/useExplorer";
 import { useChartData } from "../../hooks/useChartData";
 import { fetchTemas, fetchPerforacionFiltros, fetchProduccionFiltros } from "../../api/client";
+import { acentuarTema } from "../../utils/acentuarTema";
 import "../../styles/header.css";
 
 // ── Custom Select ─────────────────────────────────────────────────────────────
@@ -71,14 +72,8 @@ const PRODUCCION_HIER_TOPICS = new Set(["Cuenca", "API", "Operadores", "Gcompo",
 const PRODUCTO_FLAT_TOPICS = new Set(["Contratos"]);
 const PRODUCCION_SECCIONES = new Set(["Producción", "Produccion"]);
 
-// Nombres vienen tal cual de la BD, sin acentos en varios casos — se corrigen solo en pantalla.
-function acentuarTema(s) {
-  return s
-    .replace(/petroleo/gi, "petróleo")
-    .replace(/produccion/gi, "producción")
-    .replace(/ubicacion/gi, "ubicación");
-}
-
+// Nombres vienen tal cual de la BD, sin acentos (y a veces en minúsculas) —
+// se corrigen solo en pantalla, sin tocar la BD.
 // ── Selector de rango de años ─────────────────────────────────────────────────
 function YearRangeSelector({ startYear, endYear, onChangeStart, onChangeEnd }) {
   const startOptions = YEARS.filter(y => endYear == null || y <= endYear).map(y => ({ value: y, label: String(y) }));
@@ -100,6 +95,47 @@ const pad2 = (n) => String(n).padStart(2, "0");
 const toISO = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 const fromISO = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
 const fmtDMY = (s) => { if (!s) return ""; const [y, m, d] = s.split("-"); return `${d}/${m}/${y}`; };
+
+// dd/mm/aaaa escrito a mano -> ISO, o null si no es una fecha válida (se
+// valida contra el calendario real, no solo el formato, para no aceptar
+// "31/02/2026").
+function parseDMY(text) {
+  const m = text.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  const [, d, mo, y] = m.map(Number);
+  const date = new Date(y, mo - 1, d);
+  if (date.getFullYear() !== y || date.getMonth() !== mo - 1 || date.getDate() !== d) return null;
+  return toISO(date);
+}
+
+// Campo de fecha "dd/mm/aaaa" editable a mano (además del calendario) — con
+// rangos largos, navegar mes a mes con el picker para llegar a una fecha
+// lejana es lento; escribirla directo es más rápido. Solo confirma el
+// cambio si el texto es una fecha válida; si no, vuelve al valor anterior.
+function DateTextInput({ iso, onCommit, onFocus, placeholder }) {
+  const [text, setText] = useState(fmtDMY(iso));
+  useEffect(() => { setText(fmtDMY(iso)); }, [iso]);
+
+  const commit = () => {
+    if (!text.trim()) return;
+    const parsed = parseDMY(text);
+    if (parsed) onCommit(parsed);
+    else setText(fmtDMY(iso)); // inválido: revierte
+  };
+
+  return (
+    <input
+      type="text"
+      value={text}
+      placeholder={placeholder}
+      onFocus={onFocus}
+      onChange={e => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+      className="tih-filterbar__select--light px-2.5 py-1 text-[11.5px] min-w-[76px] text-left"
+    />
+  );
+}
 
 function DateRangeSelector({ startDate, endDate, onChange }) {
   const [open, setOpen] = useState(false);
@@ -143,14 +179,20 @@ function DateRangeSelector({ startDate, endDate, onChange }) {
   return (
     <div ref={ref} className="relative">
       <div className="flex items-center gap-1.5">
-        <button type="button" onClick={() => { setPhase("start"); setOpen(o => !o); }}
-          className="tih-filterbar__select--light px-2.5 py-1 text-[11.5px] min-w-[76px] text-left">
-          {fmtDMY(startDate) || "–"}
-        </button>
+        <DateTextInput iso={startDate} placeholder="dd/mm/aaaa"
+          onFocus={() => { setPhase("start"); setOpen(true); }}
+          onCommit={(iso) => onChange(endDate && iso > endDate ? { start: iso, end: iso } : { start: iso, end: endDate })} />
         <span className="text-slate-400 text-xs font-medium select-none">—</span>
-        <button type="button" onClick={() => { setPhase("end"); setOpen(o => !o); }}
-          className="tih-filterbar__select--light px-2.5 py-1 text-[11.5px] min-w-[76px] text-left">
-          {fmtDMY(endDate) || "–"}
+        <DateTextInput iso={endDate} placeholder="dd/mm/aaaa"
+          onFocus={() => { setPhase("end"); setOpen(true); }}
+          onCommit={(iso) => onChange(startDate && iso < startDate ? { start: iso, end: iso } : { start: startDate, end: iso })} />
+        <button type="button" onClick={() => setOpen(o => !o)}
+          title="Elegir en calendario"
+          className="w-6 h-6 flex items-center justify-center rounded text-slate-500 hover:bg-slate-100 shrink-0">
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <rect x="3" y="4" width="14" height="13" rx="1.5" />
+            <path d="M3 8h14M7 2v4M13 2v4" />
+          </svg>
         </button>
       </div>
       {open && (
@@ -211,7 +253,7 @@ function DrawerSection({ titulo, opciones, seleccionados, onChange, conBusqueda 
   };
 
   const visibles = conBusqueda && busqueda
-    ? opciones.filter(o => o.toLowerCase().includes(busqueda.toLowerCase()))
+    ? opciones.filter(o => o.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(busqueda.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()))
     : opciones;
 
   const allSelected  = opciones.length > 0 && opciones.every(o => seleccionados.includes(o));
@@ -605,6 +647,7 @@ export default function TopBar() {
     setGroupBy,
     compareMode, setCompareMode, compareYearA, compareYearB, setCompareYears,
     resultado, visibleSeries,
+    reservasTipo, setReservasTipo,
   } = useExplorer();
 
   const { consultar } = useChartData();
@@ -620,7 +663,7 @@ export default function TopBar() {
   const isPerf = PERFORACION_TOPICS.has(tema?.json_arg);
   const isProd = PRODUCCION_SECCIONES.has(tema?.seccion);
   const isProdHier = PRODUCCION_HIER_TOPICS.has(tema?.json_arg);
-  const isInv = ["InvCuenca", "InvCont", "PozosLic", "EfectivoLic", "InvLic", "EmpresasG", "ReservasP", "ReservasG", "ReservasPCE"].includes(tema?.json_arg);
+  const isInv = ["InvCuenca", "InvCont", "PozosLic", "EfectivoLic", "InvLic", "EmpresasG", "ReservasP", "ReservasG", "ReservasPCE", "ReservasAsigP", "ReservasAsigG", "ReservasAsigPCE"].includes(tema?.json_arg);
   // Corte vigente, sin dimensión de año — a diferencia de InvCuenca/InvCont
   // (esos sí son series por año), el filtro de Periodo no les aplica.
   const esSnapshot = ["PozosLic", "EfectivoLic", "InvLic", "EmpresasG"].includes(tema?.json_arg);
@@ -683,6 +726,58 @@ export default function TopBar() {
     if (soloAnual && period !== "annually") setPeriod("annually");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soloAnual, tema?.json_arg]);
+
+  // "Precios de petróleo y gas": al entrar al tema arranca en "Diario" con
+  // los últimos 7 días (la semana), en vez de heredar Mensual/Anual de otro
+  // tema — es el filtro que de verdad se usa para ver el precio del día.
+  useEffect(() => {
+    if (tema?.json_arg !== "Precios") return;
+    const hoy = new Date();
+    const hace7 = new Date(hoy);
+    hace7.setDate(hoy.getDate() - 6);
+    const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    setPeriod("daily");
+    setFiltro({ start_date: iso(hace7), end_date: iso(hoy) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tema?.json_arg]);
+
+  // Reservas por campo y Reservas por asignación-contrato comparten las
+  // pestañas Aceite/Gas/PCE (mismo estado global reservasTipo) — al entrar a
+  // cualquiera de las dos arranca en Aceite, para no heredar la pestaña de
+  // la otra familia si el usuario venía de ahí.
+  useEffect(() => {
+    if (["ReservasP", "ReservasG", "ReservasPCE"].includes(tema?.json_arg)) setReservasTipo("ReservasP");
+    else if (["ReservasAsigP", "ReservasAsigG", "ReservasAsigPCE"].includes(tema?.json_arg)) setReservasTipo("ReservasAsigP");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tema?.json_arg]);
+
+  // El rango de años arranca en el año en curso, que casi nunca tiene dato
+  // todavía (CUBOS.END_YEAR viene NULL en varios temas, entre ellos Reservas
+  // por campo, así que no sirve para fijar el default de antemano). Al elegir
+  // un tema se amplía el rango a todo su histórico (init_year del tema hasta
+  // hoy) para asegurar una respuesta con datos, y en cuanto llega se fija el
+  // filtro en el último año real que trajo esa respuesta — una sola vez por
+  // tema, para no pelearse con un rango que el usuario elija después a mano.
+  const anioAjustadoRef = useRef(null);
+  useEffect(() => {
+    anioAjustadoRef.current = null;
+    if (!tema) return;
+    const initYear = tema.init_year ? Number(tema.init_year) : 2000;
+    setFiltro({ start_year: initYear, end_year: new Date().getFullYear() });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tema?.json_arg]);
+
+  useEffect(() => {
+    if (period !== "annually" || !tema || anioAjustadoRef.current === tema.json_arg) return;
+    const cats = resultado?.categories;
+    if (!cats?.length) return;
+    const maxCat = Number(cats[cats.length - 1]);
+    if (!Number.isNaN(maxCat)) {
+      anioAjustadoRef.current = tema.json_arg;
+      setFiltro({ start_year: maxCat, end_year: maxCat });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resultado, period, tema?.json_arg]);
 
   useEffect(() => {
     if (isProdHier && !prodOpciones) {
@@ -767,7 +862,7 @@ export default function TopBar() {
     }
     consultar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tema, period, start_year, end_year, start_month, end_month, start_date, end_date, perfFiltros, prodFiltros]);
+  }, [tema, period, start_year, end_year, start_month, end_month, start_date, end_date, perfFiltros, prodFiltros, reservasTipo]);
 
   // Al entrar a "Diario", si aún no hay rango elegido se arranca con el mes en curso.
   useEffect(() => {
@@ -804,7 +899,10 @@ export default function TopBar() {
   }, [perfOpciones, isPerf]); // sin "tema": debe esperar a que perfOpciones sea el de este topic
 
   const secciones = [...new Set(temas.map(t => t.seccion))].sort();
-  const temasFiltrados = temas.filter(t => t.seccion === seccion);
+  // "Reservas por campo de gas/pce" quedan fuera del menú: son el mismo dato
+  // que "Reservas por campo" (json_arg ReservasP), solo que con las pestañas
+  // Aceite/Gas/PCE ahora se elige la columna sin necesitar 3 temas separados.
+  const temasFiltrados = temas.filter(t => t.seccion === seccion && !["ReservasG", "ReservasPCE", "ReservasAsigG", "ReservasAsigPCE"].includes(t.json_arg));
 
   return (
     <header className="tih-header">

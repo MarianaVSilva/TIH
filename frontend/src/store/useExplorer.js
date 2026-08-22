@@ -54,6 +54,24 @@ export const useExplorer = create((set, get) => ({
   setSeccion: (seccion) => set({ seccion, tema: null, resultado: null }),
   setTema: (tema) => set({ tema, resultado: null }),
 
+  // "Reservas por campo" es un solo tema en el menú (json_arg ReservasP) pero
+  // trae 3 pestañas internas (Aceite/Gas/PCE) que pisan qué columna consulta
+  // el backend — independiente del tema elegido, así que vive aparte.
+  reservasTipo: "ReservasP",
+  setReservasTipo: (reservasTipo) => set({ reservasTipo }),
+  // Búsqueda de la tabla de Reservas, fuera de DynamicTable (que la maneja
+  // como estado local): al cambiar de pestaña Aceite/Gas/PCE, ChartArea
+  // pasa brevemente por loading y DynamicTable se desmonta — un estado local
+  // se perdería, este sobrevive para que la búsqueda (y la rama abierta que
+  // dispara) siga igual en la pestaña nueva.
+  reservasSearch: "",
+  setReservasSearch: (reservasSearch) => set({ reservasSearch }),
+  // Campo/asignación elegido en "Gráfica personalizada por campo" — mismo
+  // motivo que reservasSearch: sobrevive el remount al cambiar de pestaña
+  // Aceite/Gas/PCE (el nombre no cambia entre pestañas, solo sus valores).
+  reservasCampoSel: "",
+  setReservasCampoSel: (reservasCampoSel) => set({ reservasCampoSel }),
+
   period: "annually",
   start_year: year,
   end_year: year,
@@ -144,7 +162,11 @@ export const useExplorer = create((set, get) => ({
 
   visibleSeries: {},
   toggleSerie: (name) => set(state => ({
-    visibleSeries: { ...state.visibleSeries, [name]: !state.visibleSeries[name] },
+    // visibleSeries[name] === undefined cuenta como visible (todo visible por
+    // defecto, ver "!== false" en SeriesChips/filterSeries) — invertir el
+    // valor crudo dejaba undefined -> true, que sigue leyéndose como visible,
+    // así que el primer clic no ocultaba nada (hacía falta un segundo clic).
+    visibleSeries: { ...state.visibleSeries, [name]: state.visibleSeries[name] === false },
   })),
   setAllVisible: (names, val) => set(state => {
     const next = { ...state.visibleSeries };

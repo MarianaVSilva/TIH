@@ -229,7 +229,7 @@ export default function PozosComparar({ seleccionados, onQuitar, period, start_y
                         className="text-center px-3 py-2 text-[12.5px] font-medium tabular-nums whitespace-nowrap"
                         style={{ background: v ? `${color}${Math.round(intensidad * 255).toString(16).padStart(2, "0")}` : "transparent", color: v ? "#1e293b" : "#cbd5e1" }}
                       >
-                        {v === 0 ? "—" : v.toLocaleString("es-MX")}
+                        {v === 0 ? "—" : v.toLocaleString("es-MX", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
                       </td>
                     );
                   })}

@@ -2,15 +2,144 @@ import { useState, useMemo, useEffect, Fragment } from "react";
 import { useExplorer } from "../../store/useExplorer";
 import ReportBuilderModal from "./ReportBuilderModal";
 
+// ── Banderas de país (SVG propio, no emoji) ──────────────────────────────────
+// "Contratos adjudicados" antepone la bandera del país de origen al nombre de
+// cada empresa (ver DynamicTable → flatAlfabetico). Los emoji de bandera
+// (regional indicators) no se ven en Windows salvo excepciones — la fuente de
+// sistema (Segoe UI Emoji) no trae la mayoría de las banderas, se ven como
+// las dos letras del código de país sueltas o un cuadro vacío. Un SVG propio
+// se ve igual en cualquier sistema operativo/navegador.
+const FLAG_STRIPES = {
+  ALEMANIA:  ["#000000", "#DD0000", "#FFCE00"],
+  ARGENTINA: ["#74ACDF", "#FFFFFF", "#74ACDF"],
+  COLOMBIA:  ["#FCD116", "#003893", "#CE1126"],
+  ESPAÑA:    ["#AA151B", "#F1BF00", "#AA151B"],
+  HOLANDA:   ["#AE1C28", "#FFFFFF", "#21468B"],
+  RUSIA:     ["#FFFFFF", "#0039A6", "#D52B1E"],
+};
+const FLAG_STRIPES_V = {
+  FRANCIA: ["#0055A4", "#FFFFFF", "#EF4135"],
+  ITALIA:  ["#009246", "#FFFFFF", "#CE2B37"],
+  MÉXICO:  ["#006847", "#FFFFFF", "#CE1126"],
+};
+function FlagIcon({ pais }) {
+  const w = 20, h = 14;
+  const base = (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="inline-block rounded-[2px] shrink-0 align-middle" style={{ boxShadow: "0 0 0 1px rgba(0,0,0,0.12)" }}>
+      <FlagBody pais={pais} w={w} h={h} />
+    </svg>
+  );
+  return base;
+}
+function FlagBody({ pais, w, h }) {
+  if (FLAG_STRIPES[pais]) {
+    const [a, b, c] = FLAG_STRIPES[pais];
+    return <>
+      <rect width={w} height={h / 3} y={0} fill={a} />
+      <rect width={w} height={h / 3} y={h / 3} fill={b} />
+      <rect width={w} height={h / 3} y={(2 * h) / 3} fill={c} />
+    </>;
+  }
+  if (FLAG_STRIPES_V[pais]) {
+    const [a, b, c] = FLAG_STRIPES_V[pais];
+    return <>
+      <rect width={w / 3} height={h} x={0} fill={a} />
+      <rect width={w / 3} height={h} x={w / 3} fill={b} />
+      <rect width={w / 3} height={h} x={(2 * w) / 3} fill={c} />
+    </>;
+  }
+  switch (pais) {
+    case "ESTADOS UNIDOS":
+      return <>
+        <rect width={w} height={h} fill="#B22234" />
+        {[0, 2, 4, 6, 8, 10, 12].map(y => <rect key={y} width={w} height={h / 13} y={y * (h / 13)} fill="#FFFFFF" />)}
+        <rect width={w * 0.4} height={h * 0.55} fill="#3C3B6E" />
+      </>;
+    case "REINO UNIDO":
+      return <>
+        <rect width={w} height={h} fill="#012169" />
+        <rect width={w} height={h * 0.22} y={h * 0.39} fill="#FFFFFF" />
+        <rect width={w * 0.22} height={h} x={w * 0.39} fill="#FFFFFF" />
+        <rect width={w} height={h * 0.12} y={h * 0.44} fill="#C8102E" />
+        <rect width={w * 0.12} height={h} x={w * 0.44} fill="#C8102E" />
+      </>;
+    case "CANADÁ":
+      return <>
+        <rect width={w} height={h} fill="#FFFFFF" />
+        <rect width={w * 0.28} height={h} x={0} fill="#FF0000" />
+        <rect width={w * 0.28} height={h} x={w * 0.72} fill="#FF0000" />
+        <rect x={w / 2 - 1.5} y={h / 2 - 1.5} width={3} height={3} fill="#FF0000" transform={`rotate(45 ${w / 2} ${h / 2})`} />
+      </>;
+    case "JAPÓN":
+      return <>
+        <rect width={w} height={h} fill="#FFFFFF" />
+        <circle cx={w / 2} cy={h / 2} r={h * 0.3} fill="#BC002D" />
+      </>;
+    case "CHINA":
+      return <>
+        <rect width={w} height={h} fill="#DE2910" />
+        <circle cx={w * 0.2} cy={h * 0.3} r={h * 0.16} fill="#FFDE00" />
+      </>;
+    case "NORUEGA":
+      return <>
+        <rect width={w} height={h} fill="#BA0C2F" />
+        <rect width={w} height={h * 0.22} y={h * 0.39} fill="#FFFFFF" />
+        <rect width={w * 0.22} height={h} x={w * 0.28} fill="#FFFFFF" />
+        <rect width={w} height={h * 0.12} y={h * 0.44} fill="#00205B" />
+        <rect width={w * 0.12} height={h} x={w * 0.34} fill="#00205B" />
+      </>;
+    case "AUSTRALIA":
+      return <>
+        <rect width={w} height={h} fill="#00008B" />
+        <rect width={w * 0.5} height={h * 0.5} fill="#012169" />
+        <rect width={w * 0.5} height={h * 0.14} y={h * 0.18} fill="#FFFFFF" />
+        <rect width={w * 0.14} height={h * 0.5} x={w * 0.18} fill="#FFFFFF" />
+        {[[0.75, 0.25], [0.85, 0.6], [0.6, 0.85]].map(([x, y], i) => (
+          <circle key={i} cx={w * x} cy={h * y} r={0.8} fill="#FFFFFF" />
+        ))}
+      </>;
+    case "EGIPTO":
+      return <>
+        <rect width={w} height={h / 3} y={0} fill="#CE1126" />
+        <rect width={w} height={h / 3} y={h / 3} fill="#FFFFFF" />
+        <rect width={w} height={h / 3} y={(2 * h) / 3} fill="#000000" />
+        <circle cx={w / 2} cy={h / 2} r={1.5} fill="#C09300" />
+      </>;
+    case "MALASIA":
+      return <>
+        <rect width={w} height={h} fill="#CC0000" />
+        {[1, 3, 5, 7, 9, 11, 13].map(y => <rect key={y} width={w} height={h / 14} y={y * (h / 14)} fill="#FFFFFF" />)}
+        <rect width={w * 0.45} height={h * 0.55} fill="#010066" />
+        <circle cx={w * 0.18} cy={h * 0.28} r={h * 0.16} fill="#FFCC00" />
+      </>;
+    case "CATAR":
+      return <>
+        <rect width={w} height={h} fill="#8D1B3D" />
+        <rect width={w * 0.3} height={h} fill="#FFFFFF" />
+      </>;
+    case "TAILANDIA":
+      return <>
+        {["#A51931", "#F4F5F8", "#2D2A4A", "#F4F5F8", "#A51931"].map((c, i) => (
+          <rect key={i} width={w} height={h / 5} y={i * (h / 5)} fill={c} />
+        ))}
+      </>;
+    default:
+      return <rect width={w} height={h} fill="#94a3b8" />;
+  }
+}
+
 // ── Estilos por tipo ──────────────────────────────────────────────────────────
 const TYPE_STYLE = {
   banner:      { label: "text-[13px] font-bold text-white uppercase tracking-widest",   num: "text-white font-bold text-[13px]" },
   cuenca:      { label: "text-[13px] font-bold text-white uppercase tracking-widest",   num: "text-white font-bold text-[13px]" },
   ubicacion:   { label: "text-[13px] font-bold text-white uppercase tracking-widest",   num: "text-white font-bold text-[13px]" },
+  ambienteheader:{ label: "text-[11.5px] font-semibold text-slate-500 uppercase tracking-wide", num: "text-slate-500 font-semibold text-[11.5px]" },
   planheader:  { label: "text-[13.5px] font-bold pl-2",                                  num: "font-bold text-[13.5px]" },
   total:       { label: "text-[13.5px] font-bold text-teal-700 pl-4",                   num: "text-teal-700 font-bold text-[13.5px]" },
   subtotal:    { label: "text-[13px] font-semibold text-teal-600 pl-6",                 num: "text-teal-600 font-semibold text-[13px]" },
   subtotalcol: { label: "text-[13px] font-semibold text-teal-600 pl-6",                 num: "text-teal-600 font-semibold text-[13px]" },
+  subtotalcuenca:{ label: "text-[13px] font-bold text-teal-700 pl-2",                   num: "text-teal-700 font-bold text-[13px]" },
+  cuencaasig:  { label: "text-[13px] font-bold text-teal-700 pl-2",                     num: "text-teal-700 font-bold text-[13px]" },
   operator:    { label: "text-[12.5px] text-slate-600 pl-8",                            num: "text-slate-600 text-[12.5px]" },
   planoperator:{ label: "text-[12.5px] text-slate-600 pl-4",                            num: "text-slate-600 text-[12.5px]" },
   totaloperator:{ label: "text-[12.5px] font-bold text-teal-700 pl-8",                  num: "text-teal-700 font-bold text-[12.5px]" },
@@ -22,10 +151,13 @@ const ROW_BG = {
   banner:      null,
   cuenca:      null,
   ubicacion:   "border-b border-slate-300",
+  ambienteheader:"bg-slate-100/70 border-b border-slate-200 cursor-pointer hover:bg-slate-100",
   planheader:  "border-b border-teal-200",
   total:       "bg-teal-50/70 border-b border-teal-100",
   subtotal:    "bg-white border-b border-slate-100",
   subtotalcol: "bg-white border-b border-slate-100 cursor-pointer hover:bg-slate-50/60",
+  subtotalcuenca:"bg-teal-50/70 border-b border-teal-100 cursor-pointer hover:bg-teal-50",
+  cuencaasig:  "bg-teal-50/70 border-b border-teal-100 cursor-pointer hover:bg-teal-50",
   operator:    "bg-white border-b border-slate-50 hover:bg-slate-50/80 transition-colors",
   planoperator:"bg-white border-b border-slate-50 hover:bg-slate-50/80 transition-colors",
   totaloperator:"bg-teal-50/40 border-b border-slate-100 hover:bg-teal-50/70 transition-colors",
@@ -43,8 +175,17 @@ const PLANHEADER_TONES = [
   { bg: "#fae8ff", border: "#e879f9", text: "#a21caf" },
 ];
 
+// Filas "1P = PROBADAS", "2P = ..." (Reservas por campo) — colorea la celda de
+// etiqueta según la categoría, la parte numérica queda sin tocar.
+const RESERVA_TONES = {
+  "1": { bg: "#dcfce7", border: "#22c55e", text: "#15803d" }, // verde
+  "2": { bg: "#dbeafe", border: "#3b82f6", text: "#1d4ed8" }, // azul
+  "3": { bg: "#ffedd5", border: "#f97316", text: "#c2410c" }, // naranja
+};
+const RESERVA_LABEL_RE = /^([123])P\s*=/;
+
 // ── Tipos que tienen chevron y son colapsables ────────────────────────────────
-const COLLAPSIBLE = new Set(["ubicacion", "planheader", "subtotalcol"]);
+const COLLAPSIBLE = new Set(["ubicacion", "planheader", "subtotalcol", "subtotalcuenca", "cuencaasig", "ambienteheader"]);
 
 // ── Inicializar grupos abiertos según el modo ─────────────────────────────────
 function initOpenGroups(resultado, groupBy, expandirConSubtotal) {
@@ -93,7 +234,7 @@ function hasData(dataArr) {
 // Filas de operadores de un subgrupo. Sin divisiones: junta los operadores
 // repetidos entre categorías (Desarrollo/Exploración/etc.) sumando sus
 // valores en vez de mostrar al mismo operador varias veces.
-function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisions, groupBy, vis, q, forceDivisions, openGroups) {
+function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisions, groupBy, vis, q, forceDivisions, openGroups, sinResumen, ocultarDetalleInicial = false, indentarInicial = false) {
   if (hideDivisions) {
     let totalRow = null;
     const merged = new Map();
@@ -117,7 +258,7 @@ function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisio
     let visible = [...merged.values()];
     visible = groupBy === "operador" ? visible.filter(o => vis[o.label] !== false) : visible;
     visible = visible.filter(o => hasData(o.data));
-    if (q) visible = visible.filter(o => o.label.toLowerCase().includes(q));
+    if (q) visible = visible.filter(o => o.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q));
     for (const op of visible) {
       rows.push({
         _id: `r|${gk}|${op.label}`, _type: "operator",
@@ -128,11 +269,12 @@ function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisio
     return;
   }
 
-  let i = 0; let parentLabel = "";
+  let i = 0; let parentLabel = ""; let saltandoCuenca = false; let dentroDeCuenca = indentarInicial; let ocultarDetalleItems = ocultarDetalleInicial;
   while (i < sgRows.length) {
     const row = sgRows[i];
     if (row.type !== "operator") {
       parentLabel = row.label;
+      const i0 = i; // misma Cuenca puede repetirse en más de un Ambiente (Reservas por asignación-contrato) — desambigua las _id
       // Con forceDivisions el subtotal ES el producto que controlan los chips
       // de series: se oculta el bloque entero si está apagado.
       const skipGroup = forceDivisions && vis[row.label] === false;
@@ -140,14 +282,46 @@ function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisio
       const ops = [];
       while (i < sgRows.length && sgRows[i].type === "operator") { ops.push(sgRows[i]); i++; }
       if (skipGroup) continue;
-      let visible = groupBy === "operador" ? ops.filter(o => vis[o.label] !== false) : ops;
+      // Reservas por asignación-contrato intercala un subtotal de Cuenca sin
+      // filas "operator" propias justo debajo (sus hijos son otros subtotales
+      // de item, no operadores) — es la única cabecera "vacía" que aparece
+      // aquí, así que sirve de marca para colapsar/expandir todo lo suyo de
+      // un clic, hasta la siguiente Cuenca.
+      if (forceDivisions && ops.length === 0) {
+        const subgkCuenca = `sub|${gk}|${row.label}`;
+        const itemsgkCuenca = `items|${gk}|${row.label}`;
+        // 3 estados por clic (ver cycleCuenca en el render): cerrada → abierta
+        // con el detalle 1P/2P/3P de cada asignación → abierta solo con los
+        // nombres de asignación (detalle colapsado) → cerrada otra vez.
+        const isOpenCuenca = openGroups?.has(subgkCuenca);
+        const detalleOculto = openGroups?.has(itemsgkCuenca);
+        rows.push({
+          _id: `r|${gk}|${row.label}|${i0}`, _type: "subtotalcuenca",
+          _cuenca: cuenca, _ub: ubicacion, label: row.label,
+          _groupKey: subgkCuenca, _open: isOpenCuenca,
+          _groupKeyItems: itemsgkCuenca, _detalleOculto: detalleOculto,
+          ...Object.fromEntries(cats.map((c, ci) => [c, sinResumen ? null : (row.data[ci] ?? 0)])),
+        });
+        saltandoCuenca = !isOpenCuenca;
+        dentroDeCuenca = true;
+        ocultarDetalleItems = detalleOculto;
+        continue;
+      }
+      if (saltandoCuenca) continue;
+      // Con forceDivisions (Producción por cuenca y ubicación, por operador…)
+      // el nombre del "operator" hoja también puede ser el producto (Gas,
+      // Gas asociado…) cuando Cuenca queda como padre — antes solo se
+      // aplicaba `vis` aquí si groupBy === "operador", así que apagar un
+      // chip de serie no ocultaba nada en esta rama (Ambiente → Cuenca →
+      // Producto), aunque sí desaparecía de la gráfica.
+      let visible = (groupBy === "operador" || forceDivisions) ? ops.filter(o => vis[o.label] !== false) : ops;
       visible = visible.filter(o => hasData(o.data));
       // Si lo que coincidió con la búsqueda es el propio subtotal (p. ej. una
       // Entidad Federativa o Licitación), se muestran TODOS sus hijos —
       // filtrar además por texto en las hojas dejaría la rama vacía aunque el
       // usuario sí encontró lo que buscaba.
-      const parentCoincide = !!q && row.label.toLowerCase().includes(q);
-      if (q && !parentCoincide) visible = visible.filter(o => o.label.toLowerCase().includes(q));
+      const parentCoincide = !!q && row.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q);
+      if (q && !parentCoincide) visible = visible.filter(o => o.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q));
       // Con forceDivisions cada subtotal (producto) es colapsable — el estado
       // "abierto" es la convención "cerrado si está en openGroups" (igual que
       // planheader/ubicacion), así por defecto arrancan expandidos.
@@ -157,13 +331,20 @@ function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisio
       // (expandido); si está colapsado, es la única cifra en pantalla, así
       // que se muestra ahí y se oculta justo al expandir.
       const subgk = `sub|${gk}|${row.label}`;
-      const isOpenSub = !forceDivisions || !openGroups?.has(subgk);
+      // Dentro de una Cuenca con el detalle colapsado (segundo clic), los
+      // items arrancan cerrados por defecto en vez de abiertos — pero un
+      // clic en uno en particular sigue pudiendo abrirlo (openGroups pasa a
+      // significar "abierto" en vez de "cerrado" mientras dura ese estado).
+      const isOpenSub = ocultarDetalleItems
+        ? !!openGroups?.has(subgk)
+        : (!forceDivisions || !openGroups?.has(subgk));
       const soloUnHijo = visible.length === 1 && isOpenSub;
       if (row.type !== "total" && !skipGroup) {
         rows.push({
-          _id: `r|${gk}|${row.label}`, _type: forceDivisions ? "subtotalcol" : row.type,
+          _id: `r|${gk}|${row.label}|${i0}`, _type: forceDivisions ? "subtotalcol" : row.type,
           _cuenca: cuenca, _ub: ubicacion, label: row.label,
           ...(forceDivisions ? { _groupKey: subgk, _open: isOpenSub } : {}),
+          ...(dentroDeCuenca ? { _indent: 44 } : {}),
           ...Object.fromEntries(cats.map((c, ci) => [c, soloUnHijo ? null : (row.data[ci] ?? 0)])),
         });
       }
@@ -171,14 +352,65 @@ function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisio
       for (const op of visible) {
         const isTotalRow = op.label === "Todos los operadores";
         rows.push({
-          _id: `r|${gk}|${parentLabel}|${op.label}`, _type: isTotalRow ? "totaloperator" : "operator",
+          _id: `r|${gk}|${parentLabel}|${i0}|${op.label}`, _type: isTotalRow ? "totaloperator" : "operator",
           _cuenca: cuenca, _ub: ubicacion, label: isTotalRow ? "Total" : op.label,
           _code: isTotalRow ? undefined : op.code,
+          ...(dentroDeCuenca ? { _indent: 52 } : {}),
           ...Object.fromEntries(cats.map((c, ci) => [c, op.data[ci] ?? 0])),
         });
       }
     } else { i++; }
   }
+}
+
+// Reservas por asignación-contrato: cada subgrupo (Ambiente) trae sus filas
+// como [marcador de Cuenca (subtotal sin operator siguientes), item (subtotal
+// + 3 operator 1P/2P/3P), item, ..., marcador de Cuenca, item, ...]. Para
+// mostrar la jerarquía Cuenca → Ambiente → item (en vez de Ambiente → Cuenca →
+// item, que trae el backend) hay que despojar el marcador y reagrupar todo
+// por Cuenca primero, con el Ambiente como subnivel dentro.
+function agruparPorCuencaAmbiente(subgrupos) {
+  const porCuenca = new Map(); // cuenca -> Map(ambiente -> rows[] planas, subtotal item + operators)
+  for (const sg of subgrupos) {
+    const rows = sg.rows ?? [];
+    let i = 0, cuencaActual = null;
+    while (i < rows.length) {
+      const row = rows[i];
+      const esMarcadorCuenca = row.type === "subtotal" && rows[i + 1]?.type !== "operator";
+      if (esMarcadorCuenca) { cuencaActual = row.label; i++; continue; }
+      if (row.type !== "subtotal") { i++; continue; }
+      const item = [row];
+      i++;
+      while (i < rows.length && rows[i].type === "operator") { item.push(rows[i]); i++; }
+      if (!porCuenca.has(cuencaActual)) porCuenca.set(cuencaActual, new Map());
+      const porAmbiente = porCuenca.get(cuencaActual);
+      if (!porAmbiente.has(sg.ubicacion)) porAmbiente.set(sg.ubicacion, []);
+      porAmbiente.get(sg.ubicacion).push(...item);
+    }
+  }
+  return porCuenca;
+}
+
+// Header de Ambiente dentro de una Cuenca — gris tenue y con sangría (a
+// diferencia de Cuenca, que es la cabecera fuerte). Mismos 3 estados por clic
+// que la Cuenca de Asignaciones (ver cycleCuenca): cerrado → abierto con el
+// detalle 1P/2P/3P de cada item → abierto solo con nombres (detalle
+// colapsado) → cerrado.
+function pushAmbienteHeader(rows, gkParent, ambiente, cuenca, cats, openGroups, itemRowsParaTotal, sinResumen, forzarAbierto = false) {
+  const key = `ambcol|${gkParent}|${ambiente}`;
+  const keyItems = `ambcolitems|${gkParent}|${ambiente}`;
+  const isOpen = forzarAbierto || openGroups.has(key);
+  const detalleOculto = openGroups.has(keyItems);
+  const total = cats.map((c, ci) =>
+    itemRowsParaTotal.filter(r => r.type === "operator" && r.label.startsWith("3P")).reduce((acc, r) => acc + (r.data[ci] ?? 0), 0)
+  );
+  rows.push({
+    _id: `amb|${gkParent}|${ambiente}`, _type: "ambienteheader",
+    _cuenca: cuenca, _ub: ambiente, label: ambiente,
+    _groupKey: key, _open: isOpen, _groupKeyItems: keyItems, _detalleOculto: detalleOculto,
+    ...Object.fromEntries(cats.map((c, ci) => [c, (sinResumen || isOpen) ? null : total[ci]])),
+  });
+  return { isOpen, detalleOculto };
 }
 
 // Fusiona uno o más subgrupos en un total + lista de operadores únicos
@@ -193,7 +425,7 @@ function mergeSubgroups(subgroups, cats) {
         row.data.forEach((v, ci) => { total[ci] += v ?? 0; });
         continue;
       }
-      if (!merged.has(row.label)) merged.set(row.label, { label: row.label, data: cats.map(() => 0) });
+      if (!merged.has(row.label)) merged.set(row.label, { label: row.label, pais: row.pais, data: cats.map(() => 0) });
       const acc = merged.get(row.label);
       row.data.forEach((v, ci) => { acc.data[ci] += v ?? 0; });
     }
@@ -206,12 +438,20 @@ function mergeSubgroups(subgroups, cats) {
 // backend ("Hidrocarburos líquidos (Mbd)" y "Gas (MMpcd)"), que ya suman sus
 // componentes (Petróleo+Condensado / Gas asociado+no asociado) sin duplicar.
 function totalesPorUnidad(sgRows, cats) {
-  const buscar = (label) => sgRows.find(r => r.type === "subtotal" && r.label === label);
-  const liquidos = buscar("Hidrocarburos líquidos (Mbd)");
-  const gas = buscar("Gas (MMpcd)");
+  const buscarSubtotal = (label) => sgRows.find(r => r.type === "subtotal" && r.label === label);
+  // "Producción por operador" no trae un subtotal aparte para esto (sería
+  // un duplicado del banner) — el producto vive como operator repetido bajo
+  // cada Contrato/Asignación, así que se suman todas esas apariciones.
+  const sumarOperator = (label) => {
+    const filas = sgRows.filter(r => r.type === "operator" && r.label === label);
+    if (!filas.length) return null;
+    return cats.map((c, ci) => filas.reduce((acc, r) => acc + (r.data[ci] ?? 0), 0));
+  };
+  const liquidosSub = buscarSubtotal("Hidrocarburos líquidos (Mbd)");
+  const gasSub = buscarSubtotal("Gas (MMpcd)");
   return {
-    mbd: liquidos ? cats.map((c, ci) => liquidos.data[ci] ?? 0) : null,
-    mmpcd: gas ? cats.map((c, ci) => gas.data[ci] ?? 0) : null,
+    mbd: liquidosSub ? cats.map((c, ci) => liquidosSub.data[ci] ?? 0) : sumarOperator("Hidrocarburos líquidos (Mbd)"),
+    mmpcd: gasSub ? cats.map((c, ci) => gasSub.data[ci] ?? 0) : sumarOperator("Gas (MMpcd)"),
   };
 }
 
@@ -257,13 +497,26 @@ function activeHierLevels(perfFiltros) {
   return HIER_LEVELS.filter(lv => (perfFiltros?.[lv.filter]?.length ?? 0) > 0);
 }
 
-// ── Exportar: tabla PLANA/pivote (1 fila por combinación hoja, 1 columna por
-// producto/serie) en vez del árbol indentado que se ve en pantalla — pedido
-// explícito del usuario, con TIH_Producción por cuenca y ubicación_ejemplo.xlsx
-// como referencia exacta de formato. `categoria` (producto) se pivotea a
-// columnas cuando distingue valores reales (drill-down a nivel Producto);
-// si no, se pivotea `operator` (que en temas sin dimensión de operador propia
-// —Cuenca, Gcompo— es directamente el nombre del producto).
+const MESES_EXPORT = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+// Las categorías vienen del backend como "YYYY-MM" (mensual) o "YYYY" (anual/
+// resto) — en el Excel la fecha se quiere completa ("Enero 2025"), no el
+// código crudo.
+function formatFechaExport(periodo) {
+  const m = /^(\d{4})-(\d{2})$/.exec(periodo);
+  if (m) return `${MESES_EXPORT[parseInt(m[2], 10) - 1]} ${m[1]}`;
+  return periodo;
+}
+
+// ── Exportar: tabla PLANA/pivote (1 fila por Fecha + combinación hoja, 1
+// columna por producto/serie) en vez del árbol indentado que se ve en
+// pantalla — pedido explícito del usuario, con
+// TIH_Producción por cuenca y ubicación_ejemplo.xlsx como referencia exacta
+// de formato: Fecha va como columna/fila (no aplanada dentro del nombre de
+// columna como "Producto — Año"), para que cada fila sea una fecha real.
+// `categoria` (producto) se pivotea a columnas cuando distingue valores
+// reales (drill-down a nivel Producto); si no, se pivotea `operator` (que en
+// temas sin dimensión de operador propia —Cuenca, Gcompo— es directamente el
+// nombre del producto).
 export function buildPivotExport(resultado, filtrosActivos, visibleSeries, search, displayCats, entityLabel) {
   let leaves = extractLeaves(resultado);
   // Sin filtros de Cuenca/Ambiente activos, el backend solo trae el grupo
@@ -284,7 +537,7 @@ export function buildPivotExport(resultado, filtrosActivos, visibleSeries, searc
     }
   }
   const levels = activeHierLevels(filtrosActivos);
-  const q = search.trim().toLowerCase();
+  const q = search.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const vis = visibleSeries ?? {};
 
   const catValues = new Set(leaves.map(l => l.categoria));
@@ -292,7 +545,7 @@ export function buildPivotExport(resultado, filtrosActivos, visibleSeries, searc
   const categoriaEsNivel = levels.some(l => l.key === "categoria") && catValues.size > 1;
   const pivotField = categoriaEsNivel ? "categoria" : "operator";
 
-  const identityFields = [];
+  const identityFields = [{ key: "__fecha", header: "Fecha" }];
   if (levels.some(l => l.key === "ubicacion") || !levels.length) identityFields.push({ key: "ubicacion", header: "Ambiente" });
   if (levels.some(l => l.key === "cuenca") || !levels.length) identityFields.push({ key: "cuenca", header: "Cuenca" });
   if (pivotField !== "operator" && opValues.size > 1) {
@@ -307,7 +560,7 @@ export function buildPivotExport(resultado, filtrosActivos, visibleSeries, searc
   const filtered = leaves.filter(lf => {
     if (nivelConVis && vis[lf[nivelConVis]] === false) return false;
     if (q) {
-      const texto = `${lf.ubicacion} ${lf.cuenca} ${lf.categoria ?? ""} ${lf.operator}`.toLowerCase();
+      const texto = `${lf.ubicacion} ${lf.cuenca} ${lf.categoria ?? ""} ${lf.operator}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
       if (!texto.includes(q)) return false;
     }
     return true;
@@ -317,32 +570,93 @@ export function buildPivotExport(resultado, filtrosActivos, visibleSeries, searc
   const colOrder = [];
   for (const lf of filtered) if (!colOrder.includes(lf[pivotField])) colOrder.push(lf[pivotField]);
 
+  // Una fila por (Fecha, combinación de identidad) — antes el período se
+  // aplanaba como sufijo de columna ("Producto — Año"), lo que producía
+  // tablas anchas y difíciles de leer; ahora Fecha es una columna más, cada
+  // fila es una fecha real (mes y año completos si es mensual).
   const groupMap = new Map();
   for (const lf of filtered) {
-    const idKey = identityFields.map(f => lf[f.key]).join("||");
-    if (!groupMap.has(idKey)) {
-      groupMap.set(idKey, { identidad: identityFields.map(f => lf[f.key]), valores: new Map() });
-    }
-    const grupo = groupMap.get(idKey);
-    const colKey = lf[pivotField];
-    if (!grupo.valores.has(colKey)) grupo.valores.set(colKey, displayCats.map(() => 0));
-    const acc = grupo.valores.get(colKey);
-    idxPorCat.forEach((idx, i) => { acc[i] += lf.data[idx] ?? 0; });
+    idxPorCat.forEach((idx, ci) => {
+      const periodo = displayCats[ci];
+      const idKey = [periodo, ...identityFields.slice(1).map(f => lf[f.key])].join("||");
+      if (!groupMap.has(idKey)) {
+        groupMap.set(idKey, {
+          periodo,
+          identidad: [formatFechaExport(periodo), ...identityFields.slice(1).map(f => lf[f.key])],
+          valores: new Map(),
+        });
+      }
+      const grupo = groupMap.get(idKey);
+      const colKey = lf[pivotField];
+      const v = lf.data[idx] ?? 0;
+      grupo.valores.set(colKey, (grupo.valores.get(colKey) ?? 0) + v);
+    });
   }
 
-  const multiPeriodo = displayCats.length > 1;
-  const columnasValor = multiPeriodo
-    ? colOrder.flatMap(col => displayCats.map(c => `${col} — ${c}`))
-    : colOrder;
+  const filas = [...groupMap.values()]
+    .sort((a, b) => a.periodo.localeCompare(b.periodo))
+    .map(g => ({
+      identidad: g.identidad,
+      valores: colOrder.map(col => g.valores.get(col) ?? null),
+    }));
 
-  const filas = [...groupMap.values()].map(g => ({
+  return { columnasIdentidad: identityFields.map(f => f.header), columnasValor: colOrder, filas };
+}
+
+// ── Exportar "Producción por operador": Fecha, Operador, Contrato/Asignación
+// + una columna por producto — la jerarquía en pantalla es Empresa → Contrato
+// (subtotal) → Producto (hoja), invertida respecto al resto de temas de
+// Producción (que van Cuenca → Producto → Ambiente), así que buildPivotExport
+// genérico no la interpreta bien (asume que el "subtotal" siempre es un
+// producto). Se recorre resultado.groups directamente en vez de reusar
+// extractLeaves.
+export function buildOperadorTabla(resultado, search, displayCats) {
+  const q = search.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const idxPorCat = displayCats.map(c => resultado.categories.indexOf(c));
+  const colOrder = [];
+  // periodo||operador||contrato -> Map(producto -> valor)
+  const grupos = new Map();
+
+  for (const g of resultado.groups ?? []) {
+    if (g.cuenca === "Nacional") continue;
+    const operador = g.cuenca;
+    for (const sg of g.subgroups ?? []) {
+      let contrato = null;
+      let esResumenUnidad = false;
+      for (const row of sg.rows ?? []) {
+        if (row.type === "subtotal") {
+          // Los 2 subtotales "Hidrocarburos líquidos (Mbd)"/"Gas (MMpcd)" al
+          // frente son el resumen para el banner Total Mbd/Total MMpcd, no
+          // contratos reales — se saltan junto con su hijo sintético "Total".
+          esResumenUnidad = row.label === "Hidrocarburos líquidos (Mbd)" || row.label === "Gas (MMpcd)";
+          contrato = row.label;
+          continue;
+        }
+        if (row.type !== "operator" || esResumenUnidad) continue;
+        const producto = row.label;
+        if (!colOrder.includes(producto)) colOrder.push(producto);
+        if (q) {
+          const texto = `${operador} ${contrato} ${producto}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+          if (!texto.includes(q)) continue;
+        }
+        idxPorCat.forEach((idx, ci) => {
+          const periodo = displayCats[ci];
+          const key = [periodo, operador, contrato].join("||");
+          if (!grupos.has(key)) {
+            grupos.set(key, { identidad: [formatFechaExport(periodo), operador, contrato], valores: new Map() });
+          }
+          grupos.get(key).valores.set(producto, row.data[idx] ?? 0);
+        });
+      }
+    }
+  }
+
+  const filas = [...grupos.values()].map(g => ({
     identidad: g.identidad,
-    valores: multiPeriodo
-      ? colOrder.flatMap(col => (g.valores.get(col) ?? displayCats.map(() => null)))
-      : colOrder.map(col => (g.valores.get(col)?.[0] ?? null)),
+    valores: colOrder.map(p => g.valores.get(p) ?? null),
   }));
 
-  return { columnasIdentidad: identityFields.map(f => f.header), columnasValor, filas };
+  return { columnasIdentidad: ["Fecha", "Operador", "Contrato/Asignación"], columnasValor: colOrder, filas };
 }
 
 // ── Exportar plano para "Actividad Petrolera" (Perforación): una fila por
@@ -368,7 +682,7 @@ export function buildFlatExport(resultado, filtrosActivos, visibleSeries, search
       }
     }
   }
-  const q = search.trim().toLowerCase();
+  const q = search.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const vis = visibleSeries ?? {};
   const levels = activeHierLevels(filtrosActivos);
   const nivelConVis = levels[0]?.key;
@@ -376,7 +690,7 @@ export function buildFlatExport(resultado, filtrosActivos, visibleSeries, search
   const filtered = leaves.filter(lf => {
     if (nivelConVis && vis[lf[nivelConVis]] === false) return false;
     if (q) {
-      const texto = `${lf.ubicacion} ${lf.cuenca} ${lf.categoria ?? ""} ${lf.operator}`.toLowerCase();
+      const texto = `${lf.ubicacion} ${lf.cuenca} ${lf.categoria ?? ""} ${lf.operator}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
       if (!texto.includes(q)) return false;
     }
     return true;
@@ -403,7 +717,7 @@ export function buildFlatExport(resultado, filtrosActivos, visibleSeries, search
 
 function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forceDivisions, ocultarTotalesUnidad) {
   const cats = resultado.categories;
-  const q = search.trim().toLowerCase();
+  const q = search.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const levels = activeHierLevels(perfFiltros);
   const leaves = extractLeaves(resultado);
   const rows = [];
@@ -413,7 +727,7 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
   // rama en walk() (ver bucketMostrado), para no mostrar el total de TODOS
   // los operadores cuando el usuario ya filtró por uno.
   const leavesMostradas = q
-    ? leaves.filter(lf => [lf.cuenca, lf.ubicacion, lf.categoria, lf.operator].some(v => v && v.toLowerCase().includes(q)))
+    ? leaves.filter(lf => [lf.cuenca, lf.ubicacion, lf.categoria, lf.operator].some(v => v && v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q)))
     : leaves;
 
   rows.push({ _id: "banner|Nacional", _type: "banner", label: "Nacional", ...dataObj(cats, cats.map(() => null)) });
@@ -436,7 +750,12 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
       lf.data.forEach((v, i) => { acc.data[i] += v ?? 0; });
     }
     let ops = [...merged].map(([label, v]) => ({ label, data: v.data, code: v.code }));
-    ops = ops.filter(o => hasData(o.data) && (!qLocal || o.label.toLowerCase().includes(qLocal)));
+    // El nombre de operador aquí ES el producto (Gas, Gas asociado…) cuando
+    // "categoria" no quedó como nivel explícito del árbol (Producción por
+    // cuenca y ubicación sin drill-down forzado) — antes los chips de serie
+    // no se aplicaban en este nivel hoja, así que apagar uno solo lo
+    // ocultaba de la gráfica, no de la tabla.
+    ops = ops.filter(o => hasData(o.data) && (!qLocal || o.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(qLocal)) && vis[o.label] !== false);
     ops.sort((a, b) => a.label.localeCompare(b.label));
     for (const op of ops) {
       rows.push({
@@ -483,13 +802,13 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
       if (!hasData(bucketTotal)) continue;
       const nextDims = { ...dims, [lv.key]: name };
 
-      const nombreCoincide = !!qLocal && name.toLowerCase().includes(qLocal);
+      const nombreCoincide = !!qLocal && name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(qLocal);
       // No basta con mirar el nombre de este nivel o el operador de la hoja:
       // el término buscado puede vivir en un nivel intermedio más abajo (p.
       // ej. buscar una cuenca estando parado en el nivel Ambiente) — hay que
       // revisar todos los campos de cada leaf del bucket antes de podar la rama.
       const tieneCoincidencia = !qLocal || nombreCoincide || bucket.some(lf =>
-        [lf.cuenca, lf.ubicacion, lf.categoria, lf.operator].some(v => v && v.toLowerCase().includes(qLocal))
+        [lf.cuenca, lf.ubicacion, lf.categoria, lf.operator].some(v => v && v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(qLocal))
       );
       if (!tieneCoincidencia) continue;
       const qEfectiva = nombreCoincide ? "" : qLocal;
@@ -502,7 +821,7 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
       // nada. Si el nombre de la propia rama coincidió (el usuario buscó esa
       // cuenca/ambiente), se sigue mostrando el total real sin filtrar.
       const bucketMostrado = (qLocal && !nombreCoincide)
-        ? bucket.filter(lf => [lf.cuenca, lf.ubicacion, lf.categoria, lf.operator].some(v => v && v.toLowerCase().includes(qLocal)))
+        ? bucket.filter(lf => [lf.cuenca, lf.ubicacion, lf.categoria, lf.operator].some(v => v && v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(qLocal)))
         : bucket;
       const bucketTotalMostrado = bucketMostrado === bucket ? bucketTotal : sumLeaves(bucketMostrado, cats);
 
@@ -552,11 +871,11 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
 }
 
 // ── Aplanar según el modo activo ──────────────────────────────────────────────
-function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, ocultarTotalesUnidad) {
+function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, ocultarTotalesUnidad, sinResumen, flatAlfabetico) {
   const rows = [];
   if (!resultado?.groups) return rows;
   const cats = resultado.categories;
-  const q    = search.trim().toLowerCase();
+  const q    = search.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const vis  = visibleSeries ?? {};
 
   const nacGroup = resultado.groups.find(g => g.cuenca === "Nacional");
@@ -618,13 +937,49 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
       }
     }
 
+    // "Contratos adjudicados" (empresas por país): sin encabezado de país —
+    // todas las empresas sueltas en una sola lista alfabética, con bandera
+    // de país al frente del nombre (ver get_contratos_adjudicados). El país
+    // sigue siendo el grupo real en `resultado.groups` (así el filtro de
+    // país en TopBar/InvDrawer sigue funcionando, oculta el grupo entero vía
+    // `vis[g.cuenca]`) y sigue siendo buscable por texto (`o.pais`), solo
+    // que no se muestra como fila propia.
+    if (flatAlfabetico) {
+      let todas = [];
+      for (const g of resultado.groups) {
+        if (g.cuenca === "Nacional" || g.cuenca === "Total general") continue;
+        if (vis[g.cuenca] === false) continue;
+        const { ops } = mergeSubgroups(g.subgroups, cats);
+        todas.push(...ops);
+      }
+      if (q) {
+        todas = todas.filter(o =>
+          o.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q) || (o.pais ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q)
+        );
+      }
+      todas = todas.filter(o => hasData(o.data));
+      todas.sort((a, b) => a.label.localeCompare(b.label, "es"));
+      for (const op of todas) {
+        rows.push({
+          _id: `emp|${op.label}`, _type: "planoperator",
+          _cuenca: "", _ub: "", label: op.label, _pais: op.pais,
+          ...Object.fromEntries(cats.map((c, ci) => [c, op.data[ci] ?? 0])),
+        });
+      }
+      return rows;
+    }
+
     for (const g of resultado.groups) {
       if (g.cuenca === "Nacional") continue;
       if (vis[g.cuenca] === false) continue;
 
       const gk     = `cuenca|${g.cuenca}`;
-      const sgRows = g.subgroups?.[0]?.rows ?? [];
-      const nombreCoincide = q ? g.cuenca.toLowerCase().includes(q) : false;
+      // Antes tomaba solo subgroups[0]: si el grupo tenía más de un
+      // subgrupo real (Reservas por campo/asignación-contrato traen uno por
+      // Ambiente, no el "Nacional" único de Inversiones/Contratos), todo lo
+      // que no fuera el primer Ambiente se perdía en silencio.
+      const sgRows = (g.subgroups ?? []).flatMap(sg => sg.rows ?? []);
+      const nombreCoincide = q ? g.cuenca.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q) : false;
       // "Producción por operador": cada empresa trae Producto (subtotal) →
       // Contrato (hoja) — mergeSubgroups aplanaría el subtotal y mezclaría
       // unidades (Mbd/MMpcd) en un solo total, por eso aquí se respeta la
@@ -634,16 +989,19 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
         // Licitación…) — antes solo miraba las hojas ("operator") y una
         // búsqueda por el nombre de ese nivel intermedio (p. ej. "Campeche")
         // no encontraba nada aunque sí existiera.
-        const contratoCoincide = q ? sgRows.some(r => (r.type === "operator" || r.type === "subtotal") && r.label.toLowerCase().includes(q)) : true;
+        const contratoCoincide = q ? sgRows.some(r => (r.type === "operator" || r.type === "subtotal") && r.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q)) : true;
         if (q && !nombreCoincide && !contratoCoincide) continue; // ni la empresa ni ningún contrato/subtotal coincide con la búsqueda
         // Si coincide el nombre de la empresa, se muestran todos sus contratos
         // (la búsqueda ya cumplió su propósito a ese nivel).
         const qEfectiva = nombreCoincide ? "" : q;
         const isOpen = q ? true : openGroups.has(gk); // autoexpandir resultados de búsqueda
+        // Cerrado: muestra el total del grupo (g.data, mismo agregado que usa
+        // la gráfica de líneas por cuenca) — abierto, se oculta porque las
+        // filas hijas ya muestran el desglose.
         rows.push({
           _id: `ph|${gk}`, _type: "planheader",
           _cuenca: g.cuenca, _ub: "", _groupKey: gk, _open: isOpen, label: g.cuenca,
-          ...Object.fromEntries(cats.map(c => [c, null])),
+          ...Object.fromEntries(cats.map((c, ci) => [c, (sinResumen || isOpen) ? null : (g.data?.[ci] ?? null)])),
         });
         if (!isOpen) continue;
         if (mostrarTotalesUnidad && !ocultarTotalesUnidad) {
@@ -651,7 +1009,55 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
           if (mbd) rows.push({ _id: `${gk}|totalmbd`, _type: "totalmbd", _cuenca: g.cuenca, _ub: "", label: "Total Mbd", ...dataObj(cats, mbd) });
           if (mmpcd) rows.push({ _id: `${gk}|totalmmpcd`, _type: "totalmmpcd", _cuenca: g.cuenca, _ub: "", label: "Total MMpcd", ...dataObj(cats, mmpcd) });
         }
-        pushOperatorRows(rows, sgRows, gk, g.cuenca, "Nacional", cats, false, groupBy, vis, qEfectiva, true, openGroups);
+        // Reservas por asignación-contrato: "Asignaciones" trae Cuenca anidada
+        // dentro de cada Ambiente (el backend agrupa Ambiente → Cuenca →
+        // item) — se reordena aquí a Cuenca → Ambiente → item, que es como
+        // se quiere leer la tabla. "Contratos" no trae Cuenca (van directo
+        // Ambiente → item), así que ese caso sigue el camino simple de abajo.
+        const subgruposConDatos = (g.subgroups ?? []).filter(sg => (sg.rows ?? []).some(r => r.type === "subtotal"));
+        const tieneCuencaAnidada = subgruposConDatos.some(sg =>
+          (sg.rows ?? []).some((r, ri, arr) => r.type === "subtotal" && arr[ri + 1]?.type !== "operator")
+        );
+        if (tieneCuencaAnidada) {
+          const porCuenca = agruparPorCuencaAmbiente(subgruposConDatos);
+          for (const [cuencaLabel, porAmbiente] of [...porCuenca.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+            const todasFilas = [...porAmbiente.values()].flat();
+            const nombreCuencaCoincide = qEfectiva ? cuencaLabel.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(qEfectiva) : false;
+            const itemCoincide = qEfectiva ? todasFilas.some(r => r.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(qEfectiva)) : true;
+            if (qEfectiva && !nombreCuencaCoincide && !itemCoincide) continue;
+            const qCuenca = nombreCuencaCoincide ? "" : qEfectiva;
+            const cuencaGk = `casig|${gk}|${cuencaLabel}`;
+            const isOpenCuenca = qEfectiva ? true : openGroups.has(cuencaGk);
+            const totalCuenca = cats.map((c, ci) =>
+              todasFilas.filter(r => r.type === "operator" && r.label.startsWith("3P")).reduce((acc, r) => acc + (r.data[ci] ?? 0), 0)
+            );
+            rows.push({
+              _id: `casig|${gk}|${cuencaLabel}`, _type: "cuencaasig",
+              _cuenca: g.cuenca, _ub: "", _groupKey: cuencaGk, _open: isOpenCuenca, label: cuencaLabel,
+              ...Object.fromEntries(cats.map((c, ci) => [c, (sinResumen || isOpenCuenca) ? null : totalCuenca[ci]])),
+            });
+            if (!isOpenCuenca) continue;
+            for (const [ambiente, itemRows] of porAmbiente) {
+              const itemsCoincide = qCuenca ? itemRows.some(r => r.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(qCuenca)) : true;
+              if (qCuenca && !itemsCoincide) continue;
+              const { isOpen: ambAbierto, detalleOculto: ambDetalleOculto } =
+                pushAmbienteHeader(rows, cuencaGk, ambiente, g.cuenca, cats, openGroups, itemRows, sinResumen, !!qCuenca);
+              if (!ambAbierto) continue;
+              pushOperatorRows(rows, itemRows, `${cuencaGk}|${ambiente}`, g.cuenca, ambiente, cats, false, groupBy, vis, qCuenca, true, openGroups, sinResumen, ambDetalleOculto, true);
+            }
+          }
+        } else {
+          const subgruposConAmbiente = subgruposConDatos.length > 1;
+          for (const sg of (subgruposConAmbiente ? subgruposConDatos : [{ ubicacion: "Nacional", rows: sgRows }])) {
+            let ambAbierto = true, ambDetalleOculto = false;
+            if (subgruposConAmbiente) {
+              ({ isOpen: ambAbierto, detalleOculto: ambDetalleOculto } =
+                pushAmbienteHeader(rows, gk, sg.ubicacion, g.cuenca, cats, openGroups, sg.rows ?? [], sinResumen, !!qEfectiva));
+            }
+            if (!ambAbierto) continue;
+            pushOperatorRows(rows, sg.rows ?? [], `${gk}|${sg.ubicacion}`, g.cuenca, sg.ubicacion, cats, false, groupBy, vis, qEfectiva, true, openGroups, sinResumen, ambDetalleOculto, subgruposConAmbiente);
+          }
+        }
         continue;
       }
 
@@ -659,8 +1065,8 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
       // Si la búsqueda solo coincide con una hoja de este grupo (p. ej. una
       // empresa), se abre aunque el usuario lo haya colapsado a mano —
       // si no, quedaría "encontrado" pero invisible.
-      const nombreCoincideCuenca = q ? g.cuenca.toLowerCase().includes(q) : false;
-      const hijoCoincide = q && !nombreCoincideCuenca ? ops.some(o => o.label.toLowerCase().includes(q)) : false;
+      const nombreCoincideCuenca = q ? g.cuenca.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q) : false;
+      const hijoCoincide = q && !nombreCoincideCuenca ? ops.some(o => o.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q)) : false;
       const isOpen = openGroups.has(gk) || hijoCoincide;
 
       rows.push({
@@ -670,7 +1076,7 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
       });
       if (!isOpen) continue;
 
-      const visible = ops.filter(o => hasData(o.data) && (!q || o.label.toLowerCase().includes(q)));
+      const visible = ops.filter(o => hasData(o.data) && (!q || o.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q)));
       for (const op of visible) {
         rows.push({
           _id: `po|${gk}|${op.label}`, _type: "planoperator",
@@ -714,7 +1120,11 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
       });
       if (!isOpen) continue;
 
-      const visible = ops.filter(o => hasData(o.data) && (!q || o.label.toLowerCase().includes(q)));
+      // Los chips de serie (Gas (MMpcd), Gas asociado (MMpcd)...) apagan
+      // productos — antes solo se ocultaban en la gráfica (filterSeries),
+      // aquí (vista "Por ambiente") se listaban igual porque mergeSubgroups
+      // no aplicaba `vis`.
+      const visible = ops.filter(o => hasData(o.data) && (!q || o.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q)) && vis[o.label] !== false);
       for (const op of visible) {
         rows.push({
           _id: `po|${gk}|${op.label}`, _type: "planoperator",
@@ -762,7 +1172,7 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
         const ops = [];
         while (i < nacSg.rows.length && nacSg.rows[i].type === "operator") { ops.push(nacSg.rows[i]); i++; }
         if (!isOpen) continue;
-        const visible = ops.filter(o => hasData(o.data) && (!q || o.label.toLowerCase().includes(q)));
+        const visible = ops.filter(o => hasData(o.data) && (!q || o.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q)));
         for (const op of visible) {
           rows.push({
             _id: `po|${row.label}|${op.label}`, _type: "planoperator",
@@ -974,9 +1384,13 @@ function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, tit
 }
 
 // ── Componente principal ──────────────────────────────────────────────────────
-export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick, onCellClick, flatExportEntidad, historicoTopic, preserveColumnOrder }) {
+export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick, onCellClick, flatExportEntidad, historicoTopic, historicoFetch, preserveColumnOrder, search: searchControlada, onSearchChange, sinResumen, exportOperadorTabla, flatAlfabetico }) {
   const { pendingBusqueda, setPendingBusqueda } = useExplorer();
-  const [search,     setSearch]     = useState("");
+  const [searchLocal, setSearchLocal] = useState("");
+  // Búsqueda controlada desde afuera (Reservas, ver ChartArea): sobrevive al
+  // desmontar/remontar de este componente al cambiar de pestaña Aceite/Gas/PCE.
+  const search    = searchControlada ?? searchLocal;
+  const setSearch = onSearchChange ?? setSearchLocal;
 
   // Búsqueda pendiente al saltar desde otro tema (p. ej. Asignaciones →
   // Producción por campo con el campo ya elegido) — se aplica una sola vez.
@@ -1011,6 +1425,26 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
     setOpenGroups(prev => {
       const next = new Set(prev);
       next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
+
+  // Cuenca de Reservas por asignación-contrato: 3 estados por clic — cerrada →
+  // abierta con el 1P/2P/3P de cada asignación → abierta solo con los nombres
+  // (detalle colapsado) → cerrada. `key`=abre/cierra la Cuenca, `keyItems`=
+  // colapsa el detalle de sus items sin cerrarla.
+  function cycleCuenca(key, keyItems) {
+    setOpenGroups(prev => {
+      const next = new Set(prev);
+      if (!prev.has(key)) {
+        next.add(key);
+        next.delete(keyItems);
+      } else if (!prev.has(keyItems)) {
+        next.add(keyItems);
+      } else {
+        next.delete(key);
+        next.delete(keyItems);
+      }
       return next;
     });
   }
@@ -1095,8 +1529,8 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   const rowsSinOrdenar = useMemo(
     () => hierLevels.length > 0
       ? flattenMultiLevel(resultado, filtrosActivos, openGroups, search, visibleSeries ?? {}, forceDivisions, totalesUnidadOcultos)
-      : flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, totalesUnidadOcultos),
-    [resultado, visibleSeries, search, openGroups, filtrosActivos, hierLevels.length, hideDivisions, forceDivisions, groupBy, mostrarTotalesUnidad, totalesUnidadOcultos]
+      : flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, totalesUnidadOcultos, sinResumen, flatAlfabetico),
+    [resultado, visibleSeries, search, openGroups, filtrosActivos, hierLevels.length, hideDivisions, forceDivisions, groupBy, mostrarTotalesUnidad, totalesUnidadOcultos, sinResumen, flatAlfabetico]
   );
   const rows = useMemo(() => sortLeafRuns(rowsSinOrdenar, sortState), [rowsSinOrdenar, sortState]);
   const cuencaCount = useMemo(() => rows.filter(r => r._type === "cuenca").length, [rows]);
@@ -1255,7 +1689,9 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
 
   async function exportExcel() {
     const { exportarProduccionExcel } = await import("../../utils/exportExcel");
-    const tablaPivot = flatExportEntidad
+    const tablaPivot = exportOperadorTabla
+      ? buildOperadorTabla(resultado, search, displayCats)
+      : flatExportEntidad
       ? buildFlatExport(resultado, filtrosActivos, visibleSeries, search, displayCats, flatExportEntidad, "Cant. pozos")
       : buildPivotExport(resultado, filtrosActivos, visibleSeries, search, displayCats, entityLabel);
     const subtitulo = `Filtros — ${buildFiltrosPartes().join("\n")}`;
@@ -1319,11 +1755,12 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   // periodo — histórico completo (pedido explícito, distinto de "Exportar
   // Excel" que respeta lo que está viendo el usuario en pantalla).
   async function exportHistorico() {
-    const [{ exportarProduccionExcel }, { fetchPerforacionHistorico }] = await Promise.all([
+    const [{ exportarProduccionExcel }, cliente] = await Promise.all([
       import("../../utils/exportExcel"),
       import("../../api/client"),
     ]);
-    const { columnas, filas, periodo_nota } = await fetchPerforacionHistorico(historicoTopic);
+    const fetchHistorico = cliente[historicoFetch ?? "fetchPerforacionHistorico"];
+    const { columnas, filas, periodo_nota } = await fetchHistorico(historicoTopic);
     await exportarProduccionExcel({
       titulo: titulo ? `${titulo} — Histórico completo` : "Histórico completo",
       periodoNota: periodo_nota,
@@ -1484,12 +1921,13 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                 // directo (encogería todo el desglose de abajo sin avisar).
                 const esWrapperNacional = row._type === "ubicacion" && row.label === "Nacional";
                 const isCollapse  = COLLAPSIBLE.has(row._type) && !esWrapperNacional;
-                const useColSpan  = row._type === "ubicacion" || row._type === "cuenca" || row._type === "banner";
+                const useColSpan  = row._type === "ubicacion" || row._type === "cuenca" || row._type === "banner" || row._type === "ambienteheader";
                 const isCuencaRow = row._type === "cuenca";
 
                 if (isCuencaRow && cuencaCount === 1) return null;
 
                 const isDark      = isCuencaRow || row._type === "ubicacion" || row._type === "banner";
+                const isAmbienteHeader = row._type === "ambienteheader";
                 // El botón "Contraer/Expandir todo" va junto al banner
                 // "Nacional" si existe, o si no (y no hay rowHeaderLabel para
                 // mostrarlo en el encabezado) junto a la primera fila VISIBLE,
@@ -1501,6 +1939,11 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                 const selectedBg  = "#ccfbf1";
                 const hoverBg     = "#e6f4f1";
                 const tone        = row._type === "planheader" ? PLANHEADER_TONES[(row._depth ?? 0) % PLANHEADER_TONES.length] : null;
+                // Solo la celda de etiqueta (no las columnas numéricas): distinto
+                // de "tone" arriba, que también tiñe el fondo de la fila y los
+                // valores numéricos (planheader sí lo quiere, esto no).
+                const reservaMatch = row._type === "operator" ? row.label?.match(RESERVA_LABEL_RE) : null;
+                const reservaTone = reservaMatch ? RESERVA_TONES[reservaMatch[1]] : null;
                 // Celdas con desglose por pozo (Perforación): solo filas hoja de
                 // operador, ver onCellClick en ChartArea.
                 const celdaClickeable = !!onCellClick && (row._type === "operator" || row._type === "planoperator");
@@ -1517,22 +1960,31 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                     }}
                     onMouseEnter={() => setHoveredRow(row._id)}
                     onMouseLeave={() => setHoveredRow(null)}
-                    onClick={() => {
-                      if (isCollapse) toggleGroup(row._groupKey);
+                    onClick={(e) => {
+                      // El segundo clic de un doble clic (e.detail === 2) cae en la
+                      // fila que quedó justo debajo tras colapsar la primera — sin
+                      // esto, un doble clic sobre una Cuenca terminaba colapsando
+                      // también la siguiente. Se ignora, un doble clic no hace nada.
+                      if (e.detail > 1) return;
+                      if (row._type === "subtotalcuenca" || row._type === "ambienteheader") cycleCuenca(row._groupKey, row._groupKeyItems);
+                      else if (isCollapse) toggleGroup(row._groupKey);
                       if (!isDark) setSelectedRow(selectedRow === row._id ? null : row._id);
                       if (row._code && onRowClick) onRowClick(row._code, row.label);
                     }}
                   >
-                    <td className={`px-4 py-[5px] whitespace-nowrap overflow-hidden text-ellipsis static sm:sticky sm:left-0 ${cfg.label}`}
+                    <td title={row.label} className={`px-4 py-[5px] whitespace-normal break-words static sm:sticky sm:left-0 ${cfg.label}`}
                       style={{
                         zIndex: isDark ? 25 : 10,
-                        ...(row._indent != null ? { paddingLeft: row._indent } : {}),
+                        paddingLeft: row._indent != null ? row._indent : (isAmbienteHeader ? 28 : undefined),
                         ...(tone ? { color: tone.text, borderLeft: `3px solid ${tone.border}` } : {}),
-                        background: isDark      ? "linear-gradient(90deg,#10312B,#1a4a3a)"
-                          : isSelected            ? selectedBg
-                          : isHovered             ? hoverBg
-                          : tone                  ? tone.bg
-                          : row._type === "total" ? "#f0fdfa"
+                        ...(reservaTone ? { color: reservaTone.text, borderLeft: `3px solid ${reservaTone.border}` } : {}),
+                        background: isDark        ? "linear-gradient(90deg,#10312B,#1a4a3a)"
+                          : isAmbienteHeader        ? "#f1f5f9"
+                          : isSelected              ? selectedBg
+                          : isHovered               ? hoverBg
+                          : tone                    ? tone.bg
+                          : reservaTone             ? reservaTone.bg
+                          : row._type === "total"   ? "#f0fdfa"
                           : "#ffffff"
                       }}
                     >
@@ -1543,6 +1995,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                         </svg>
                       )}
                       <span className="inline-flex items-center gap-2">
+                        {row._pais && <FlagIcon pais={row._pais} />}
                         {row.label}
                         {((row._type === "banner" && hasCollapsible) || (showToggleEnPrimeraFila && esPrimeraVisible)) && (
                           <ToggleTodoBtn dark={isDark || !!tone} />
@@ -1551,7 +2004,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                     </td>
                     {useColSpan && (
                       <td colSpan={visCats.length + (isCompare ? 1 : 0) + extraSumaCols}
-                        style={{ background: "linear-gradient(90deg,#1a4a3a,#1a4a3a)" }} />
+                        style={{ background: isAmbienteHeader ? "#f1f5f9" : "linear-gradient(90deg,#1a4a3a,#1a4a3a)" }} />
                     )}
                     {!useColSpan && isMonthly && (() => {
                       const isCuenca = row._type === "cuenca";

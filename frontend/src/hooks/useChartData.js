@@ -17,6 +17,12 @@ const CONTRATOS_SECCIONES  = new Set(["Licitaciones y Contratos", "Contratos"]);
 const PRECIOS_TOPICS       = new Set(["Precios"]);
 const INVERSIONES_SECCIONES= new Set(["Inversión", "Inversion", "Inversiones", "Indicadores Económicos", "Indicadores Economicos"]);
 const ESTADO_SECCIONES     = new Set(["Estado de Pozos", "Estado"]);
+// "Reservas por campo" y "Reservas por asignación-contrato": un solo tema
+// cada uno en el menú (json_arg ReservasP / ReservasAsigP), con 3 pestañas
+// internas (Aceite/Gas/PCE, ver TopBar/ChartArea) que eligen qué columna trae
+// el backend — los demás temas de Reservas (relación reservas-producción…)
+// no tienen esas pestañas, van con su propio json_arg.
+const RESERVAS_CAMPO_TIPOS = new Set(["ReservasP", "ReservasG", "ReservasPCE", "ReservasAsigP", "ReservasAsigG", "ReservasAsigPCE"]);
 
 export function useChartData() {
   const {
@@ -33,7 +39,7 @@ export function useChartData() {
     const {
       tema, period,
       start_year, end_year, start_month, end_month, start_date, end_date,
-      perfFiltros, prodFiltros,
+      perfFiltros, prodFiltros, reservasTipo,
       compareMode, compareYearA, compareYearB,
       setResultado, setLoading, setError,
     } = state;
@@ -84,7 +90,8 @@ export function useChartData() {
         },
       });
     } else if (RESERVAS_SECCIONES.has(seccion)) {
-      promise = api.get("/reservas/", { params: { start_year, end_year, tipo: json_arg } });
+      const tipo = RESERVAS_CAMPO_TIPOS.has(json_arg) ? reservasTipo : json_arg;
+      promise = api.get("/reservas/", { params: { start_year, end_year, tipo } });
     } else if (["PozosLic", "EfectivoLic", "InvLic", "EmpresasG"].includes(json_arg)) {
       // Corte vigente (sin serie temporal) — sin params de periodo/año.
       const endpoint = json_arg === "PozosLic" ? "pozos-comprometidos"

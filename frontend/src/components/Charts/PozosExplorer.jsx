@@ -6,8 +6,10 @@ import {
 } from "../../api/client";
 import { useExplorer } from "../../store/useExplorer";
 import LoadingSpinner from "../UI/LoadingSpinner";
+import LoadingBar from "../UI/LoadingBar";
 import PozoTrendChart from "./PozoTrendChart";
 import PozoRankingCard from "./PozoRankingCard";
+import TendenciaDesgloseModal from "./TendenciaDesgloseModal";
 import PozoProyeccion from "./PozoProyeccion";
 import PozosFiltrosPanel from "./PozosFiltrosPanel";
 import PozosComparar from "./PozosComparar";
@@ -137,7 +139,7 @@ function KpiRow({ title, subtitle, kpis, numPozos, periodoNota, onExport, export
                 </span>
               </div>
               <p className="text-slate-800 text-lg font-bold leading-tight truncate">
-                {k.valor.toLocaleString("es-MX")}
+                {k.valor.toLocaleString("es-MX", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
               </p>
             </div>
           );
@@ -167,6 +169,7 @@ export default function PozosExplorer() {
   const [selectedCuenca, setSelectedCuenca] = useState(null);
   const [selectedCampo, setSelectedCampo] = useState(null);
   const [selected, setSelected] = useState(null); // { campo, pozo }
+  const [verDesgloseTendencia, setVerDesgloseTendencia] = useState(false);
   const [detalle, setDetalle] = useState(null);
   const [loadingDetalle, setLoadingDetalle] = useState(false);
   const [resumen, setResumen] = useState(null);
@@ -280,7 +283,7 @@ export default function PozosExplorer() {
     setSeleccionadosComparar(prev => prev.filter(s => s.pozo !== pozo));
   }
 
-  const q = search.trim().toLowerCase();
+  const q = search.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const filteredTree = useMemo(() => {
     if (!arbol) return [];
     if (!q) return arbol;
@@ -288,10 +291,10 @@ export default function PozosExplorer() {
       .map(c => ({
         ...c,
         campos: c.campos
-          .map(cm => ({ ...cm, pozos: cm.pozos.filter(p => p.toLowerCase().includes(q)) }))
-          .filter(cm => cm.pozos.length > 0 || cm.campo.toLowerCase().includes(q)),
+          .map(cm => ({ ...cm, pozos: cm.pozos.filter(p => p.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q)) }))
+          .filter(cm => cm.pozos.length > 0 || cm.campo.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q)),
       }))
-      .filter(c => c.campos.length > 0 || c.cuenca.toLowerCase().includes(q));
+      .filter(c => c.campos.length > 0 || c.cuenca.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q));
   }, [arbol, q]);
 
   if (!arbol) {
@@ -357,7 +360,7 @@ export default function PozosExplorer() {
           },
           chartImageBase64,
           chartTitulo: tendenciaRow
-            ? `Tendencia de producción (${tendenciaEsGas ? "gas" : "líquidos"}, ${tendenciaEsGas ? "MMpcd" : "Mbd"})`
+            ? `Producción observada (${tendenciaEsGas ? "gas" : "líquidos"}, ${tendenciaEsGas ? "MMpcd" : "Mbd"})`
             : null,
         });
       } else {
@@ -504,9 +507,15 @@ export default function PozosExplorer() {
             <PozosComparar seleccionados={seleccionadosComparar} onQuitar={quitarDeComparar} period={period} start_year={start_year} end_year={end_year} start_month={start_month} end_month={end_month} />
           ) : !selected ? (
             (selectedCampo || selectedCuenca) ? (
-              <div className="p-3">
-                <PozoRankingCard ranking={ranking} onSelectPozo={(pozo) => elegirPozo(selectedCampo ?? ranking?.pozos?.[0]?.campo ?? "", pozo)} onClose={volverACuenca} />
-              </div>
+              loadingResumen && !ranking?.pozos?.length ? (
+                <div className="flex items-center justify-center h-64">
+                  <LoadingBar message="Calculando ranking de pozos…" />
+                </div>
+              ) : (
+                <div className="p-3">
+                  <PozoRankingCard ranking={ranking} campo={selectedCampo} onSelectPozo={(pozo, campoPozo) => elegirPozo(selectedCampo || campoPozo || "", pozo)} onClose={volverACuenca} />
+                </div>
+              )
             ) : (
               <p className="text-sm text-slate-400 text-center py-16">Selecciona un pozo del árbol para ver su producción.</p>
             )
@@ -529,7 +538,12 @@ export default function PozosExplorer() {
               <div style={{ background: "linear-gradient(90deg,#10312B,#1a4a3a)" }} className="px-4 py-3 text-white flex items-center justify-between flex-wrap gap-2">
                 <div>
                   <p className="text-[13px] font-bold uppercase tracking-wide">{selected.pozo}</p>
-                  <p className="text-[11px] text-teal-200">{selected.campo}</p>
+                  <p className="text-[11px] text-teal-200">
+                    {selected.campo}
+                    {analisis?.fecha_perforacion && (
+                      <> · Perforado el {new Date(analisis.fecha_perforacion).toLocaleDateString("es-MX", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" })}</>
+                    )}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
                   {analisis?.disponible && (
@@ -540,9 +554,22 @@ export default function PozosExplorer() {
                         </span>
                       )}
                       {analisis.tendencia && analisis.tendencia !== "SIN_DATOS" && !ESTADOS_SIN_TENDENCIA.includes(analisis.estado_operativo) && (
-                        <span className="px-2 py-0.5 rounded-full text-[10.5px] font-semibold text-white" style={{ background: TENDENCIA_COLOR[analisis.tendencia] ?? "#94a3b8" }}>
-                          {analisis.tendencia}
+                        <span className="inline-flex items-center gap-1">
+                          <span className="px-2 py-0.5 rounded-full text-[10.5px] font-semibold text-white" style={{ background: TENDENCIA_COLOR[analisis.tendencia] ?? "#94a3b8" }}>
+                            {analisis.tendencia}
+                          </span>
+                          <button
+                            type="button"
+                            title="Ver cómo se calculó"
+                            onClick={() => setVerDesgloseTendencia(true)}
+                            className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold text-white/70 border border-white/40 hover:text-white hover:border-white hover:bg-white/15 shrink-0"
+                          >
+                            i
+                          </button>
                         </span>
+                      )}
+                      {verDesgloseTendencia && (
+                        <TendenciaDesgloseModal campo={selected.campo} pozo={selected.pozo} onClose={() => setVerDesgloseTendencia(false)} />
                       )}
                     </>
                   )}
@@ -610,7 +637,7 @@ export default function PozosExplorer() {
                                     className="text-center px-3 py-2 text-[12.5px] font-medium tabular-nums whitespace-nowrap"
                                     style={{ background: v ? `${color}${Math.round(intensidad * 255).toString(16).padStart(2, "0")}` : "transparent", color: v ? "#1e293b" : "#cbd5e1" }}
                                   >
-                                    {v === 0 ? "—" : v.toLocaleString("es-MX")}
+                                    {v === 0 ? "—" : v.toLocaleString("es-MX", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
                                   </td>
                                 );
                               })}

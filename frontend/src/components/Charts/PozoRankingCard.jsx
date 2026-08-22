@@ -1,17 +1,34 @@
+import { useState } from "react";
+import TendenciaDesgloseModal from "./TendenciaDesgloseModal";
+
 const TENDENCIA_ICON  = { CRECIENDO: "↑", ESTABLE: "→", DECLINANDO: "↓", CRITICO: "⚠" };
 const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626" };
 const TENDENCIA_BG    = { CRECIENDO: "#ecfdf5", ESTABLE: "#f1f5f9", DECLINANDO: "#fffbeb", CRITICO: "#fef2f2" };
 // Pozo sin producción actual: la tendencia no tiene sentido, se omite.
 const ESTADOS_SIN_TENDENCIA = ["Cerrado", "Inactivo", "Abandono permanente", "Abandono temporal"];
 
-function TendenciaBadge({ tendencia, estado }) {
+export function TendenciaBadge({ tendencia, estado, campo, pozo }) {
+  const [verDesglose, setVerDesglose] = useState(false);
   if (!tendencia || tendencia === "SIN_DATOS" || ESTADOS_SIN_TENDENCIA.includes(estado)) return <span className="text-slate-300">—</span>;
   return (
-    <span
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-semibold whitespace-nowrap"
-      style={{ color: TENDENCIA_COLOR[tendencia] ?? "#64748b", background: TENDENCIA_BG[tendencia] ?? "#f1f5f9" }}
-    >
-      {TENDENCIA_ICON[tendencia] ?? "–"} {tendencia}
+    <span className="inline-flex items-center gap-1">
+      <span
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-semibold whitespace-nowrap"
+        style={{ color: TENDENCIA_COLOR[tendencia] ?? "#64748b", background: TENDENCIA_BG[tendencia] ?? "#f1f5f9" }}
+      >
+        {TENDENCIA_ICON[tendencia] ?? "–"} {tendencia}
+      </span>
+      {campo && pozo && (
+        <button
+          type="button"
+          title="Ver cómo se calculó"
+          onClick={(e) => { e.stopPropagation(); setVerDesglose(true); }}
+          className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold text-slate-400 border border-slate-300 hover:text-teal-700 hover:border-teal-400 hover:bg-teal-50 shrink-0"
+        >
+          i
+        </button>
+      )}
+      {verDesglose && <TendenciaDesgloseModal campo={campo} pozo={pozo} onClose={() => setVerDesglose(false)} />}
     </span>
   );
 }
@@ -46,7 +63,7 @@ function MiniBarList({ title, accent, accentBg, items }) {
               <div className="h-full rounded-full transition-all" style={{ width: `${(p.produccion_mbd / max) * 100}%`, background: accent }} />
             </div>
             <span className="text-[11px] font-semibold text-slate-500 text-right tabular-nums shrink-0" style={{ width: 46 }}>
-              {p.produccion_mbd.toLocaleString("es-MX")}
+              {p.produccion_mbd.toLocaleString("es-MX", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
             </span>
           </div>
         ))}
@@ -55,7 +72,7 @@ function MiniBarList({ title, accent, accentBg, items }) {
   );
 }
 
-export default function PozoRankingCard({ ranking, onSelectPozo, onClose }) {
+export default function PozoRankingCard({ ranking, onSelectPozo, onClose, campo }) {
   if (!ranking || !ranking.pozos?.length) return null;
   const pozos = ranking.pozos;
   const unidad = ranking.unidad ?? "Mbd";
@@ -68,7 +85,7 @@ export default function PozoRankingCard({ ranking, onSelectPozo, onClose }) {
         <span className="text-white text-[13px] font-bold tracking-wide">Ranking en el campo</span>
         <div className="flex items-center gap-2">
           <span className="text-teal-200/90 text-[11px]">
-            {ranking.num_pozos} pozos · promedio {ranking.promedio_mbd?.toLocaleString("es-MX", { maximumFractionDigits: 2 })} {unidad}
+            {ranking.num_pozos} pozos · promedio {ranking.promedio_mbd?.toLocaleString("es-MX", { minimumFractionDigits: 3, maximumFractionDigits: 3 })} {unidad}
           </span>
           {onClose && (
             <button
@@ -104,13 +121,13 @@ export default function PozoRankingCard({ ranking, onSelectPozo, onClose }) {
             {pozos.slice(0, 15).map((p, i) => (
               <tr
                 key={p.well_id}
-                onClick={() => onSelectPozo?.(p.pozo)}
+                onClick={() => onSelectPozo?.(p.pozo, p.campo)}
                 className={`group cursor-pointer border-l-[3px] border-transparent hover:border-teal-500 hover:bg-teal-100/80 transition-colors ${i % 2 ? "bg-slate-50/50" : "bg-white"}`}
               >
                 <td className="py-2 px-3 text-slate-400">{p.ranking}</td>
                 <td className="py-2 px-3 font-semibold text-slate-700 group-hover:text-teal-800">{p.pozo}</td>
-                <td className="py-2 px-3 text-right tabular-nums text-slate-600">{p.produccion_mbd.toLocaleString("es-MX")}</td>
-                <td className="py-2 px-3"><div className="flex justify-center"><TendenciaBadge tendencia={p.tendencia} estado={p.estado_operativo} /></div></td>
+                <td className="py-2 px-3 text-right tabular-nums text-slate-600">{p.produccion_mbd.toLocaleString("es-MX", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</td>
+                <td className="py-2 px-3"><div className="flex justify-center"><TendenciaBadge tendencia={p.tendencia} estado={p.estado_operativo} campo={campo || p.campo} pozo={p.pozo} /></div></td>
                 <td className="py-2 px-3"><EstadoBadge estado={p.estado_operativo} /></td>
               </tr>
             ))}

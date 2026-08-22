@@ -25,11 +25,14 @@ export const fetchPerforacionHistorico = (topic) =>
   api.get("/perforacion/historico", { params: { topic }, timeout: 60000 }).then(r => r.data);
 
 export const fetchProduccionFiltros = () => api.get("/produccion/filtros").then(r => r.data);
+export const fetchProduccionHistorico = (topic) =>
+  api.get("/produccion/historico", { params: { topic }, timeout: 60000 }).then(r => r.data);
 export const fetchProduccionPozosArbol = () => api.get("/produccion/pozos/arbol").then(r => r.data);
 export const fetchProduccionPozoDetalle = (p) => api.get("/produccion/pozos/detalle", { params: p }).then(r => r.data);
 export const fetchProduccionPozosResumen = (p) => api.get("/produccion/pozos/resumen", { params: p }).then(r => r.data);
 
 export const fetchPozoAnalisis      = (p) => api.get("/produccion/pozos/analisis", { params: p }).then(r => r.data);
+export const fetchPozoTendenciaDesglose = (p) => api.get("/produccion/pozos/tendencia-desglose", { params: p }).then(r => r.data);
 export const fetchPozosRanking      = (p) => api.get("/produccion/pozos/ranking",  { params: p }).then(r => r.data);
 export const fetchPozosComparar     = (p) => api.get("/produccion/pozos/comparar", { params: p }).then(r => r.data);
 // Consulta nacional (todos los pozos del rango, sin acotar a cuenca/campo) —

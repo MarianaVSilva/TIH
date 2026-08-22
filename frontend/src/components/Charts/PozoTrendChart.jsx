@@ -63,7 +63,7 @@ const PozoTrendChart = forwardRef(function PozoTrendChart({ categories, data, un
     <div className="rounded-xl border border-slate-200 shadow-sm bg-white p-3 mb-3">
       <div className="flex items-center justify-between mb-2 px-1">
         <span className="text-[12px] font-bold text-slate-700">
-          Tendencia de producción ({unidad === "MMpcd" ? "gas" : "líquidos"}, {unidad})
+          Producción observada ({unidad === "MMpcd" ? "gas" : "líquidos"}, {unidad})
         </span>
         {metricSwitch && (
           <div className="flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5">

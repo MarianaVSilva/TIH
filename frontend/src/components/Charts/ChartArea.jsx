@@ -3,7 +3,8 @@ import ReactECharts from "echarts-for-react";
 import * as echarts from "echarts";
 import { useExplorer } from "../../store/useExplorer";
 import LoadingSpinner from "../UI/LoadingSpinner";
-import DynamicTable, { buildPivotExport, buildFlatExport } from "./DynamicTable";
+import DynamicTable, { buildPivotExport, buildFlatExport, buildOperadorTabla } from "./DynamicTable";
+import { acentuarTema } from "../../utils/acentuarTema";
 import HeatmapChart from "./HeatmapChart";
 import HomeDashboard from "./HomeDashboard";
 import PozosExplorer from "./PozosExplorer";
@@ -128,9 +129,10 @@ const CHART_TYPE_LABEL = Object.fromEntries(CHART_TYPES.map(t => [t.id, t.label]
 
 // Extraído de SingleChart para poder reusarlo con un ref propio (necesario
 // para exportar a PNG en "Gráfica personalizada").
-function buildChartOption(categories, series, chartType) {
+function buildChartOption(categories, series, chartType, { zoomable = false } = {}) {
   const isPie = chartType === "pie";
   const isBar = chartType === "bar";
+  const showZoom = zoomable && !isPie && categories.length > 12;
 
   const pieData = isPie
     ? series.map(s => ({
@@ -169,8 +171,8 @@ function buildChartOption(categories, series, chartType) {
           borderColor: "#e7e5e0",
           textStyle: { color: "#1f2430", fontSize: 11 },
         },
-        legend: { type: "plain", bottom: 0, left: "center", width: "92%", itemGap: 14, textStyle: { color: "#767b87", fontSize: 10 } },
-        grid: { top: 30, right: 24, bottom: series.length > 6 ? 90 : 50, left: 20, containLabel: true },
+        legend: { type: "plain", bottom: showZoom ? 26 : 0, left: "center", width: "92%", itemGap: 14, textStyle: { color: "#767b87", fontSize: 10 } },
+        grid: { top: 30, right: 24, bottom: (series.length > 6 ? 90 : 50) + (showZoom ? 26 : 0), left: 20, containLabel: true },
         xAxis: {
           type: "category",
           data: categories,
@@ -183,6 +185,14 @@ function buildChartOption(categories, series, chartType) {
           axisLabel: { color: "#767b87", fontSize: 10, formatter: v => v.toLocaleString("es-MX") },
           splitLine: { show: false },
         },
+        ...(showZoom ? {
+          dataZoom: [
+            { type: "inside", start: 100 - Math.min(100, (12 / categories.length) * 100 * 3), end: 100 },
+            { type: "slider", bottom: 0, height: 16, start: 100 - Math.min(100, (12 / categories.length) * 100 * 3), end: 100,
+              borderColor: "#e7e5e0", fillerColor: "rgba(13,180,190,0.15)", handleStyle: { color: "#0db4be" },
+              textStyle: { color: "#767b87", fontSize: 9 } },
+          ],
+        } : {}),
         series: series.map((s, idx) => ({
           name: s.name,
           type: isBar ? "bar" : "line",
@@ -197,10 +207,10 @@ function buildChartOption(categories, series, chartType) {
       };
 }
 
-function SingleChart({ title, categories, series, chartType, subtitle }) {
+function SingleChart({ title, categories, series, chartType, subtitle, zoomable = false }) {
   const isPie = chartType === "pie";
   const isBar = chartType === "bar";
-  const option = buildChartOption(categories, series, chartType);
+  const option = buildChartOption(categories, series, chartType, { zoomable });
 
   // Con pocas categorías y series, limitar y centrar el ancho del gráfico
   // (si no, las barras se ven sueltas). Con muchas series se desactiva para
@@ -254,6 +264,7 @@ function PrecioStatCard({ nombre, valor, unidad, cambio, color, min, max }) {
         ${valor.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         <span className="text-[12px] font-normal text-slate-400"> {unidad}</span>
       </p>
+      <p className="text-[10px] text-slate-400 -mt-0.5">Último dato</p>
       {cambio != null && (
         <p className="text-[12px] font-semibold mt-0.5" style={{ color: subiendo ? "#059669" : bajando ? "#dc2626" : "#94a3b8" }}>
           {subiendo ? "↑" : bajando ? "↓" : "—"} {Math.abs(cambio).toFixed(1)}% <span className="font-normal text-slate-400">vs periodo anterior</span>
@@ -263,8 +274,46 @@ function PrecioStatCard({ nombre, valor, unidad, cambio, color, min, max }) {
         <p className="text-[11px] text-slate-400 mt-1">
           Mín ${min.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           {" · "}Máx ${max.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          <span className="block text-[9.5px] text-slate-300">del periodo mostrado</span>
         </p>
       )}
+    </div>
+  );
+}
+
+// Fila de tarjetas de precio (Brent/WTI/MME/Henry Hub) — compartida por la
+// vista de tabla y la de gráficos de "Precios de petróleo y gas". El
+// mín/máx viene de `extremos` (calculado en el backend sobre el dato diario
+// crudo de TODO el periodo mostrado, con la fecha exacta) — antes cada
+// tarjeta usaba s.min/s.max, que son el mín/máx solo del ÚLTIMO bucket
+// (mes/año), no del periodo completo seleccionado.
+function PreciosStatCards({ series, extremos }) {
+  const EXTREMOS_KEY = { "Brent (USD/bbl)": "brent", "WTI (USD/bbl)": "wti", "MME (USD/bbl)": "mme", "Henry Hub (USD/MMBtu)": "henry_hub" };
+
+  function ultimoYCambio(s) {
+    const vals = s.data.map((v, i) => ({ v, i })).filter(d => d.v != null && d.v !== 0);
+    if (!vals.length) return { valor: null, cambio: null };
+    const ultimo = vals[vals.length - 1];
+    const anterior = vals.length > 1 ? vals[vals.length - 2].v : null;
+    return {
+      valor: ultimo.v,
+      cambio: anterior ? ((ultimo.v - anterior) / anterior) * 100 : null,
+    };
+  }
+
+  if (!series.length) return null;
+  return (
+    <div className="flex gap-3 flex-wrap mb-5">
+      {series.map(s => {
+        const { valor, cambio } = ultimoYCambio(s);
+        const ext = extremos?.[EXTREMOS_KEY[s.name]];
+        return (
+          <PrecioStatCard key={s.name} nombre={s.name.replace(/\s*\(.*\)/, "")}
+            valor={valor} unidad={s.name.match(/\((.*)\)/)?.[1] ?? ""} cambio={cambio}
+            min={ext?.min?.valor ?? null} max={ext?.max?.valor ?? null}
+            color={PRECIOS_COLORS[s.name] ?? "#64748b"} />
+        );
+      })}
     </div>
   );
 }
@@ -275,13 +324,22 @@ function PreciosGroupChart({ titulo, unidad, categories, series, height = 300 })
     color: series.map(s => PRECIOS_COLORS[s.name] ?? "#64748b"),
     tooltip: { trigger: "axis" },
     legend: { top: 0, textStyle: { fontSize: 11 } },
-    grid: { left: 48, right: 16, top: 36, bottom: 28 },
+    grid: { left: 48, right: 34, top: 36, bottom: 28 },
     xAxis: { type: "category", data: categories, axisLabel: { fontSize: 10 } },
     yAxis: { type: "value", name: unidad, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
     series: series.map(s => ({
       name: s.name, type: "line", data: s.data, smooth: true, showSymbol: false,
       areaStyle: { opacity: 0.12 },
       lineStyle: { width: 2.5 },
+      // Líneas punteadas horizontales en el máximo y mínimo de la serie
+      // mostrada — mismo color que la línea, sin afectar al eje ni al
+      // tooltip de las demás series.
+      markLine: {
+        symbol: "none",
+        lineStyle: { type: "dashed", width: 1, opacity: 0.35 },
+        label: { formatter: p => p.name, fontSize: 9, opacity: 0.6 },
+        data: [{ type: "max", name: "Máx" }, { type: "min", name: "Mín" }],
+      },
     })),
   };
   return (
@@ -292,39 +350,463 @@ function PreciosGroupChart({ titulo, unidad, categories, series, height = 300 })
   );
 }
 
+// Centro aproximado de cada país (lng, lat) — suficiente para ubicar el
+// clúster de sus empresas sobre el mapa, no se necesita precisión de límites.
+const PAIS_CENTRO = {
+  ALEMANIA: [10.45, 51.16], ARGENTINA: [-63.62, -38.42], AUSTRALIA: [133.78, -25.27],
+  CANADÁ: [-106.35, 56.13], CATAR: [51.18, 25.35], CHINA: [104.2, 35.86],
+  COLOMBIA: [-74.3, 4.57], EGIPTO: [30.8, 26.82], ESPAÑA: [-3.75, 40.46],
+  "ESTADOS UNIDOS": [-98.58, 39.83], FRANCIA: [2.21, 46.23], HOLANDA: [5.29, 52.13],
+  ITALIA: [12.57, 41.87], JAPÓN: [138.25, 36.2], MALASIA: [101.98, 4.21],
+  MÉXICO: [-102.55, 23.63], NORUEGA: [8.47, 60.47], "REINO UNIDO": [-3.44, 55.38],
+  RUSIA: [49, 56], TAILANDIA: [100.99, 15.87],
+};
+// Nombre en el mapa (world.json, en inglés) para cada país de nuestros datos.
+const PAIS_MAPA_EN = {
+  ALEMANIA: "Germany", ARGENTINA: "Argentina", AUSTRALIA: "Australia",
+  CANADÁ: "Canada", CATAR: "Qatar", CHINA: "China", COLOMBIA: "Colombia",
+  EGIPTO: "Egypt", ESPAÑA: "Spain", "ESTADOS UNIDOS": "United States",
+  FRANCIA: "France", HOLANDA: "Netherlands", ITALIA: "Italy", JAPÓN: "Japan",
+  MALASIA: "Malaysia", MÉXICO: "Mexico", NORUEGA: "Norway",
+  "REINO UNIDO": "United Kingdom", RUSIA: "Russia", TAILANDIA: "Thailand",
+};
+
+let worldMapPromise = null;
+function useWorldMap() {
+  const [ready, setReady] = useState(() => echarts.getMap("world") != null);
+  useEffect(() => {
+    if (ready) return;
+    worldMapPromise ??= fetch("/world.json").then(r => r.json());
+    worldMapPromise.then(geo => { echarts.registerMap("world", geo); setReady(true); });
+  }, [ready]);
+  return ready;
+}
+
+// Punto alrededor de un centro en un patrón espiral (índice i-ésimo del
+// clúster) — mismo espíritu visual que el "cluster" de fuerza anterior, pero
+// con coordenadas geográficas reales en vez de un layout abstracto. La
+// distancia en longitud se corrige por la latitud (1° de longitud encoge
+// hacia los polos) para que el clúster se vea igual de compacto/redondo sin
+// importar el país.
+function puntoEnEspiral(i, [lng, lat]) {
+  const paso = 0.62, angulo = i * 2.4;
+  const r = paso * Math.sqrt(i + 1);
+  const corrLng = 1 / Math.max(0.25, Math.cos((lat * Math.PI) / 180));
+  return [lng + r * Math.cos(angulo) * corrLng, lat + r * Math.sin(angulo)];
+}
+
+// "Contratos adjudicados" — vista de gráficos: con ~20 países como series
+// (uno por línea/barra) el gráfico genérico quedaba ilegible. En su lugar,
+// un mapa del mundo con un punto grande y fijo por país (su ubicación real)
+// y un punto por empresa alrededor, en espiral — mismo "look" de clústers
+// que antes, pero sobre geografía real en vez de un layout de fuerza
+// abstracto (pedido explícito). Tamaño del punto = total de contratos
+// adjudicados (todas las licitaciones/bloques sumados).
+function EmpresasClusterChart({ resultado, visibleSeries, onSelectEmpresa }) {
+  const mapaListo = useWorldMap();
+  // País enfocado (clic en su punto o en su territorio) — acerca el mapa a
+  // su zona; "Volver" lo limpia y regresa a la vista mundial completa.
+  const [foco, setFoco] = useState(null);
+  const paisesVisibles = (resultado.groups ?? []).filter(g => g.cuenca !== "Total general" && visibleSeries[g.cuenca] !== false);
+
+  const totalGeneral = paisesVisibles.reduce((acc, g) => acc + (g.data ?? []).reduce((a, b) => a + (b ?? 0), 0), 0);
+  if (!totalGeneral) return <p className="text-sm text-slate-400 p-4">Sin empresas para graficar.</p>;
+  if (!mapaListo) return <LoadingSpinner />;
+
+  const empresaMax = Math.max(1, ...paisesVisibles.flatMap(g =>
+    (g.subgroups?.[0]?.rows ?? []).filter(r => r.type === "operator").map(r => (r.data ?? []).reduce((a, b) => a + (b ?? 0), 0))
+  ));
+
+  const hubs = [];
+  const empresas = [];
+  const regiones = [];
+  paisesVisibles.forEach((g, gi) => {
+    const centro = PAIS_CENTRO[g.cuenca];
+    const totalPais = (g.data ?? []).reduce((a, b) => a + (b ?? 0), 0);
+    if (!totalPais || !centro) return;
+    const color = PALETTE[gi % PALETTE.length];
+    const nombreMapa = PAIS_MAPA_EN[g.cuenca];
+    if (nombreMapa) regiones.push({ name: nombreMapa, itemStyle: { areaColor: color, opacity: 0.18 } });
+    hubs.push({
+      name: g.cuenca, value: [...centro, totalPais],
+      itemStyle: { color, opacity: 0.95, borderWidth: 2, borderColor: "#fff" },
+      symbolSize: 14 + 16 * Math.sqrt(totalPais / totalGeneral),
+      label: { show: true, formatter: g.cuenca, fontWeight: 700, fontSize: 10.5, color: "#1f2937" },
+    });
+    let i = 0;
+    for (const row of g.subgroups?.[0]?.rows ?? []) {
+      if (row.type !== "operator") continue;
+      const total = (row.data ?? []).reduce((a, b) => a + (b ?? 0), 0);
+      if (!total) continue;
+      i++;
+      empresas.push({
+        name: row.label, pais: g.cuenca, value: [...puntoEnEspiral(i, centro), total],
+        itemStyle: { color, opacity: 0.75 },
+        symbolSize: 5 + 16 * Math.sqrt(total / empresaMax),
+      });
+    }
+  });
+
+  // Acercamiento: centra el mapa en el país enfocado con un zoom fijo; sin
+  // foco, deja que ECharts encuadre el mundo completo (centro/zoom por
+  // defecto). El nivel de zoom es fijo (no por tamaño real del país) porque
+  // el interés aquí es ver bien el clúster de empresas alrededor del punto,
+  // no el país de borde a borde.
+  const centroFoco = foco ? PAIS_CENTRO[foco] : null;
+
+  const option = {
+    tooltip: {
+      formatter: p => `<b>${p.name}</b><br/>${p.value[2]} contrato${p.value[2] === 1 ? "" : "s"}`,
+    },
+    geo: {
+      map: "world", roam: true, top: 44, bottom: 10, left: 10, right: 10,
+      itemStyle: { areaColor: "#eef2f5", borderColor: "#cbd5e1", borderWidth: 0.6 },
+      emphasis: { itemStyle: { areaColor: "#e2e8f0" }, label: { show: false } },
+      regions: regiones,
+      ...(centroFoco ? { center: centroFoco, zoom: 7 } : { center: null, zoom: 1 }),
+    },
+    series: [
+      { type: "scatter", coordinateSystem: "geo", data: empresas, silent: false, zlevel: 2 },
+      { type: "scatter", coordinateSystem: "geo", data: hubs, silent: false, zlevel: 3 },
+    ],
+  };
+
+  // Clic en el punto de una EMPRESA -> Ver como tablas, filtrada a esa
+  // empresa (pedido explícito: de "vi el clúster" a "vi el detalle" en un
+  // clic). Clic en el punto de un país o en su territorio -> enfoca/acerca
+  // ese país en el mapa, sin salir de la vista de gráficos.
+  const onChartClick = (params) => {
+    if (params.componentType === "series") {
+      if (params.seriesIndex === 0) { onSelectEmpresa?.(params.name); return; }
+      if (params.name) setFoco(params.name);
+      return;
+    }
+    if (params.componentType === "geo") {
+      const pais = Object.entries(PAIS_MAPA_EN).find(([, en]) => en === params.name)?.[0];
+      if (pais && PAIS_CENTRO[pais]) setFoco(pais);
+    }
+    // Clic sencillo en zona sin país (mar) no hace nada — doble clic ahí
+    // sí resetea (ver dblclick abajo), para no perder el zoom por error con
+    // un clic que caiga un poco fuera del territorio.
+  };
+  // Doble clic en cualquier parte (típicamente el mar/área en blanco, sin
+  // país) -> vuelve al mapa mundial en su estado inicial.
+  const onChartDblClick = () => setFoco(null);
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm flex flex-col" style={{ flex: 1, minHeight: 0 }}>
+      <div className="flex items-baseline justify-between mb-3 shrink-0">
+        <span className="text-[11px] font-semibold text-teal-700">
+          Empresas por país
+          {foco && <span className="text-slate-400 font-normal"> · enfocado en {foco}</span>}
+        </span>
+        <div className="flex items-center gap-2">
+          {foco && (
+            <button onClick={() => setFoco(null)}
+              className="px-2.5 py-1 rounded-md text-[10.5px] font-semibold text-teal-700 bg-teal-50 border border-teal-200 hover:bg-teal-100">
+              ← Volver al mundo
+            </button>
+          )}
+          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Clústers</span>
+        </div>
+      </div>
+      <ReactECharts option={option} style={{ flex: 1, minHeight: 0 }} notMerge onEvents={{ click: onChartClick, dblclick: onChartDblClick }} />
+    </div>
+  );
+}
+
+// "Reservas por campo": cascada horizontal por campo (Top N por 3P) en vez
+// del genérico Simple/SingleChart — 1P (garantizado) como base, +2P/+3P como
+// incrementos apilados, mismos colores que las filas de DynamicTable (verde/
+// azul/naranja) para que la lectura sea consistente entre tabla y gráfica.
+const RESERVAS_UNIDAD = {
+  ReservasP: "MMb", ReservasG: "MMMpc", ReservasPCE: "MMbpce",
+  ReservasAsigP: "MMb", ReservasAsigG: "MMMpc", ReservasAsigPCE: "MMbpce",
+};
+const RESERVAS_TITULO = {
+  ReservasP: "Reservas de petróleo por campo", ReservasG: "Reservas de gas por campo", ReservasPCE: "Reservas de petróleo crudo equivalente por campo",
+  ReservasAsigP: "Reservas de petróleo por asignación-contrato", ReservasAsigG: "Reservas de gas por asignación-contrato", ReservasAsigPCE: "Reservas de petróleo crudo equivalente por asignación-contrato",
+};
+// Mismas 3 pestañas Aceite/Gas/PCE, con el json_arg de la familia activa
+// (Reservas por campo vs Reservas por asignación-contrato comparten toda la
+// UI/gráficas, solo cambia la tabla origen en el backend).
+function reservasTabs(esAsig) {
+  return esAsig
+    ? [["ReservasAsigP", "Aceite"], ["ReservasAsigG", "Gas"], ["ReservasAsigPCE", "PCE"]]
+    : [["ReservasP", "Aceite"], ["ReservasG", "Gas"], ["ReservasPCE", "PCE"]];
+}
+const RESERVAS_COLORS = ["#22c55e", "#3b82f6", "#f97316"];
+
+function buildReservasWaterfall(resultado, topN = 8, search = "") {
+  const campos = [];
+  for (const g of resultado.groups ?? []) {
+    if (g.cuenca === "Total general") continue;
+    for (const sg of g.subgroups ?? []) {
+      const rows = sg.rows ?? [];
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i].type !== "subtotal") continue;
+        const [r1, r2, r3] = [rows[i + 1], rows[i + 2], rows[i + 3]];
+        // Reservas por asignación-contrato intercala un subtotal de Cuenca
+        // antes de cada item — solo es una hoja real si le siguen sus 3 filas
+        // 1P/2P/3P (type "operator"), si no, es solo un encabezado de Cuenca.
+        if (!r1 || !r2 || !r3 || r1.type !== "operator" || r2.type !== "operator" || r3.type !== "operator") continue;
+        const last = arr => (arr?.length ? arr[arr.length - 1] : 0) ?? 0;
+        campos.push({ campo: rows[i].label, p1: last(r1.data), p2: last(r2.data), p3: last(r3.data) });
+      }
+    }
+  }
+  const q = search.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const filtrados = q ? campos.filter(c => c.campo.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q)) : campos;
+  return filtrados.sort((a, b) => b.p3 - a.p3).slice(0, topN);
+}
+
+// Tabla para "Generar reporte": una fila real por item (campo/asignación/
+// contrato) y año, sin sumarlos entre sí — buildPivotExport (genérico, usado
+// por el resto de temas) no distingue el nivel de item aquí y terminaba
+// sumando todo dentro de (Ambiente, grupo), de ahí los totales inflados que
+// se veían en el PDF. En Asignaciones la Cuenca real sí se conoce (subtotal
+// intercalado); en Contratos no se guarda por item, columna en "—".
+function buildReservasTabla(resultado, { esReservasAsig, entidadLabel, unidad }) {
+  const anios = resultado.categories ?? [];
+  const filas = [];
+  for (const g of resultado.groups ?? []) {
+    if (g.cuenca === "Total general") continue;
+    for (const sg of g.subgroups ?? []) {
+      const rows = sg.rows ?? [];
+      let cuencaActual = null;
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i].type !== "subtotal") continue;
+        const [r1, r2, r3] = [rows[i + 1], rows[i + 2], rows[i + 3]];
+        const esItem = r1?.type === "operator" && r2?.type === "operator" && r3?.type === "operator";
+        if (!esItem) { cuencaActual = rows[i].label; continue; }
+        anios.forEach((anio, ai) => {
+          const base = esReservasAsig ? [g.cuenca, cuencaActual ?? "—"] : [g.cuenca];
+          filas.push([
+            ...base, sg.ubicacion, rows[i].label, anio,
+            (r1.data[ai] ?? 0).toLocaleString("es-MX"),
+            (r2.data[ai] ?? 0).toLocaleString("es-MX"),
+            (r3.data[ai] ?? 0).toLocaleString("es-MX"),
+          ]);
+        });
+      }
+    }
+  }
+  const columnas = esReservasAsig
+    ? ["Modalidad", "Cuenca", "Ambiente", entidadLabel, "Año", `1P (${unidad})`, `2P (${unidad})`, `3P (${unidad})`]
+    : ["Cuenca", "Ambiente", entidadLabel, "Año", `1P (${unidad})`, `2P (${unidad})`, `3P (${unidad})`];
+  return { columnas, filas };
+}
+
+// Suma 1P/2P/3P por Cuenca (agrega todos los campos de cada cuenca) — para la
+// fila de sumatoria y la "Gráfica personalizada por cuenca".
+function buildReservasPorCuenca(resultado) {
+  const out = [];
+  for (const g of resultado.groups ?? []) {
+    if (g.cuenca === "Total general") continue;
+    let p1 = 0, p2 = 0, p3 = 0;
+    for (const sg of g.subgroups ?? []) {
+      const rows = sg.rows ?? [];
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i].type !== "subtotal") continue;
+        const [r1, r2, r3] = [rows[i + 1], rows[i + 2], rows[i + 3]];
+        if (!r1 || !r2 || !r3 || r1.type !== "operator" || r2.type !== "operator" || r3.type !== "operator") continue;
+        const last = arr => (arr?.length ? arr[arr.length - 1] : 0) ?? 0;
+        p1 += last(r1.data); p2 += last(r2.data); p3 += last(r3.data);
+      }
+    }
+    if (p3 > 0) out.push({ cuenca: g.cuenca, p1, p2, p3 });
+  }
+  return out.sort((a, b) => b.p3 - a.p3);
+}
+
+// Barras apiladas 1P/2P/3P reutilizada por la cascada (top N campos) y por
+// las gráficas personalizadas (un solo campo o una sola cuenca) — mismo
+// bloque de opción de ECharts, solo cambia cuántas categorías trae. Las
+// cifras solo se ven al pasar el cursor (tooltip), no fijas sobre la barra.
+function buildReservasStackedOption(labels, p1, p2, p3, unidad) {
+  const round1 = v => Math.round(v * 10) / 10;
+  const inc2 = p2.map((v, i) => round1(v - p1[i]));
+  const inc3 = p3.map((v, i) => round1(v - p1[i] - inc2[i]));
+  // Categoría en orden manual (más grande arriba, ECharts pinta la primera
+  // categoría abajo por defecto).
+  return {
+    color: RESERVAS_COLORS,
+    tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+    legend: { top: 0, textStyle: { fontSize: 11 }, data: ["1P probadas", "+2P probables", "+3P posibles"] },
+    // "containLabel" mide el ancho real de las etiquetas más largas y ajusta
+    // el margen izquierdo solo, en vez de un "left" fijo que las corta.
+    // Unidad debajo del eje X (nameLocation "middle" + nameGap), no al final
+    // de la última marca — ahí "right: 24" la recortaba a una sola letra.
+    grid: { left: 12, right: 24, top: 36, bottom: 46, containLabel: true },
+    xAxis: {
+      type: "value", name: unidad, nameLocation: "middle", nameGap: 28,
+      nameTextStyle: { fontSize: 11, fontWeight: 600 }, axisLabel: { fontSize: 10 },
+    },
+    yAxis: { type: "category", data: [...labels].reverse(), axisLabel: { fontSize: 11, overflow: "none" } },
+    series: [
+      { name: "1P probadas", type: "bar", stack: "total", data: [...p1.map(round1)].reverse() },
+      { name: "+2P probables", type: "bar", stack: "total", data: [...inc2].reverse() },
+      { name: "+3P posibles", type: "bar", stack: "total", data: [...inc3].reverse() },
+    ],
+  };
+}
+
+function ReservasWaterfallChart({ resultado, unidad, entidad = "campos", search = "" }) {
+  const buscando = search.trim().length > 0;
+  const datos = useMemo(() => buildReservasWaterfall(resultado, buscando ? Infinity : 8, search), [resultado, search, buscando]);
+  if (!datos.length) {
+    return buscando
+      ? <div className="text-sm text-slate-400 p-4">Sin {entidad} que coincidan con "{search}".</div>
+      : <div className="text-sm text-slate-400 p-4">Sin {entidad} con reservas 1P vigentes en el año seleccionado.</div>;
+  }
+  const option = buildReservasStackedOption(datos.map(d => d.campo), datos.map(d => d.p1), datos.map(d => d.p2), datos.map(d => d.p3), unidad);
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <span className="text-[11px] font-semibold text-teal-700">{buscando ? `${datos.length} ${entidad} encontrados` : `Top ${datos.length} ${entidad} por reserva`}</span>
+        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Cascada</span>
+      </div>
+      <ReactECharts option={option} style={{ height: Math.max(260, datos.length * 42) }} notMerge />
+    </div>
+  );
+}
+
+// Círculos con un tangente izquierdo común (1P⊂2P⊂3P, misma altura) — cada
+// etiqueta va al punto medio de la franja visible de su anillo sobre esa
+// línea central, así siempre cae dentro de su color sea cual sea la
+// proporción real entre 1P/2P/3P.
+// Paleta por tipo: Aceite=naranjas, Gas=azules, PCE=verdes (claro→oscuro, 1P→3P).
+const RESERVAS_CIRCULOS_PALETAS = {
+  ReservasP:       { r1: "#fdba74", r2: "#f97316", r3: "#9a3412" },
+  ReservasG:       { r1: "#0bafef", r2: "#0570bf", r3: "#022060" },
+  ReservasPCE:     { r1: "#86efac", r2: "#22c55e", r3: "#14532d" },
+  ReservasAsigP:   { r1: "#fdba74", r2: "#f97316", r3: "#9a3412" },
+  ReservasAsigG:   { r1: "#0bafef", r2: "#0570bf", r3: "#022060" },
+  ReservasAsigPCE: { r1: "#86efac", r2: "#22c55e", r3: "#14532d" },
+};
+
+function ReservasCirclesChart({ label, p1, p2, p3, unidad, tipo }) {
+  const paleta = RESERVAS_CIRCULOS_PALETAS[tipo] ?? RESERVAS_CIRCULOS_PALETAS.ReservasP;
+  const max = Math.max(p3, 1);
+  const rMax = 145;
+  const escala = v => Math.max(38, rMax * Math.sqrt(Math.max(v, 0) / max));
+  const r3 = rMax;
+  const r1raw = escala(p1), r2raw = escala(p2);
+  // El área real (raíz del valor) puede dejar una franja casi sin ancho para
+  // 2P o 3P si están muy cerca en magnitud — no cabe la cifra. Se fuerza un
+  // mínimo de ancho de banda (2P ≤ 72% de 3P, 1P ≤ 62% de 2P) a costa de la
+  // proporción exacta, para que el texto de las tres siempre entre.
+  const r2 = Math.min(Math.max(r2raw, r1raw * 1.15), r3 * 0.72);
+  const r1 = Math.min(r1raw, r2 * 0.62);
+  const tangenteX = 24, cy = r3 + 24;
+  const cx1 = tangenteX + r1, cx2 = tangenteX + r2, cx3 = tangenteX + r3;
+  const fmt = v => v.toLocaleString("es-MX", { maximumFractionDigits: 1 });
+  // Viewbox ajustado al contenido real (no un lienzo fijo de sobra) para que
+  // el diagrama quede centrado en la tarjeta, sin franja vacía a la derecha.
+  const anchoTotal = tangenteX + r2 + r3 + 90;
+  const altoTotal = cy + r3 + 20;
+
+  const Etiqueta = ({ x, tag, valor }) => (
+    <text x={x} y={cy} textAnchor="middle" dominantBaseline="middle">
+      <tspan x={x} dy="-19" fontSize="21" fontWeight="700" fill="rgba(255,255,255,0.97)">{tag}</tspan>
+      <tspan x={x} dy="30" fontSize="24" fontFamily="'Noto Sans', sans-serif" fontWeight="700" fill="rgba(255,255,255,0.96)">{fmt(valor)}</tspan>
+      <tspan x={x} dy="22" fontSize="14" fontFamily="'Noto Sans', sans-serif" fill="rgba(255,255,255,0.85)">{unidad}</tspan>
+    </text>
+  );
+
+  return (
+    <div className="flex flex-col items-center gap-2 py-4">
+      <svg viewBox={`0 0 ${anchoTotal} ${altoTotal}`} width={anchoTotal} height={altoTotal} style={{ maxWidth: "100%" }} role="img" aria-label={`Círculos de reservas 1P, 2P y 3P de ${label}: 1P ${fmt(p1)}, 2P ${fmt(p2)}, 3P ${fmt(p3)} ${unidad}`}>
+        <circle cx={cx3} cy={cy} r={r3} fill={paleta.r3} />
+        <circle cx={cx2} cy={cy} r={r2} fill={paleta.r2} />
+        <circle cx={cx1} cy={cy} r={r1} fill={paleta.r1} />
+        <Etiqueta x={tangenteX + r2 + r3} tag="3P" valor={p3} />
+        <Etiqueta x={tangenteX + r1 + r2} tag="2P" valor={p2} />
+        <Etiqueta x={cx1} tag="1P" valor={p1} />
+      </svg>
+      <span style={{
+        background: "#f0fdfa", color: "#0f766e", fontSize: 12.5, fontWeight: 600,
+        padding: "5px 14px", borderRadius: 6, border: "1px solid #99f6e4",
+      }}>
+        {label}
+      </span>
+    </div>
+  );
+}
+
+// "Gráfica personalizada por cuenca": fila con la sumatoria 1P/2P/3P de cada
+// cuenca + cascada con TODAS las cuencas (el buscador filtra cuáles se ven,
+// no selecciona una sola).
+function ReservasCuencaCustomChart({ resultado, unidad, entidadLabel = "cuenca", entidadLabelPlural = "cuencas" }) {
+  const cuencas = useMemo(() => buildReservasPorCuenca(resultado), [resultado]);
+  const [busqueda, setBusqueda] = useState("");
+
+  if (!cuencas.length) return <p className="text-sm text-slate-400 p-4">Sin {entidadLabelPlural} con reservas 1P vigentes en el año seleccionado.</p>;
+
+  const q = busqueda.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const visibles = q ? cuencas.filter(c => c.cuenca.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q)) : cuencas;
+  const option = visibles.length
+    ? buildReservasStackedOption(visibles.map(c => c.cuenca), visibles.map(c => c.p1), visibles.map(c => c.p2), visibles.map(c => c.p3), unidad)
+    : null;
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
+      <input
+        type="text"
+        value={busqueda}
+        onChange={e => setBusqueda(e.target.value)}
+        placeholder={`Buscar una ${entidadLabel}…`}
+        className="w-full text-[12px] border border-slate-200 rounded-lg px-2.5 py-1.5 mb-3 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-teal-400"
+        style={{ maxWidth: 280 }}
+      />
+      {option
+        ? <ReactECharts option={option} style={{ height: Math.max(200, visibles.length * 42) }} notMerge />
+        : <p className="text-sm text-slate-400 p-2">Sin {entidadLabelPlural} que coincidan con "{busqueda}".</p>}
+    </div>
+  );
+}
+
+// "Gráfica personalizada por campo": elegir UN campo y ver su desglose
+// 1P/2P/3P, en círculos concéntricos (por defecto) o en cascada.
+function ReservasCampoCustomChart({ resultado, unidad, tipo, entidad = "campos", selected, onSelectedChange }) {
+  const campos = useMemo(
+    () => buildReservasWaterfall(resultado, Infinity).sort((a, b) => a.campo.localeCompare(b.campo)),
+    [resultado],
+  );
+  const [estilo, setEstilo] = useState("circulos");
+  const actual = campos.find(c => c.campo === selected) ?? campos[0];
+
+  if (!campos.length) return <p className="text-sm text-slate-400 p-4">Sin {entidad} con reservas 1P vigentes en el año seleccionado.</p>;
+
+  const option = actual ? buildReservasStackedOption([actual.campo], [actual.p1], [actual.p2], [actual.p3], unidad) : null;
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
+      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+        <SearchableSelect options={campos.map(c => c.campo)} value={selected || campos[0]?.campo} onChange={onSelectedChange} />
+        <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-white">
+          {[["circulos", "Círculos"], ["cascada", "Cascada"]].map(([id, label]) => (
+            <button key={id} onClick={() => setEstilo(id)}
+              className={`px-3 py-1.5 text-[12px] font-medium ${estilo === id ? "bg-tih-dark text-white" : "text-slate-600 hover:bg-slate-50"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {estilo === "circulos"
+        ? actual && <ReservasCirclesChart label={actual.campo} p1={actual.p1} p2={actual.p2} p3={actual.p3} unidad={unidad} tipo={tipo} />
+        : option && <ReactECharts option={option} style={{ height: 200 }} notMerge />}
+    </div>
+  );
+}
+
 function PreciosDashboard({ categories, series }) {
   const petroleo = series.filter(s => s.name.includes("USD/bbl"));
   const gas = series.filter(s => s.name.includes("USD/MMBtu"));
   const [grupo, setGrupo] = useState("petroleo");
 
-  function ultimoYCambio(s) {
-    const vals = s.data.map((v, i) => ({ v, i })).filter(d => d.v != null && d.v !== 0);
-    if (!vals.length) return { valor: null, cambio: null, min: null, max: null };
-    const ultimo = vals[vals.length - 1];
-    const anterior = vals.length > 1 ? vals[vals.length - 2].v : null;
-    return {
-      valor: ultimo.v,
-      cambio: anterior ? ((ultimo.v - anterior) / anterior) * 100 : null,
-      // Mín/máx del último periodo mostrado (el año o mes más reciente,
-      // según Anual/Mensual) — no del rango completo seleccionado.
-      min: s.min?.[ultimo.i] ?? null,
-      max: s.max?.[ultimo.i] ?? null,
-    };
-  }
-
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex gap-3 flex-wrap">
-        {[...petroleo, ...gas].map(s => {
-          const { valor, cambio, min, max } = ultimoYCambio(s);
-          return (
-            <PrecioStatCard key={s.name} nombre={s.name.replace(/\s*\(.*\)/, "")}
-              valor={valor} unidad={s.name.match(/\((.*)\)/)?.[1] ?? ""} cambio={cambio}
-              min={min} max={max}
-              color={PRECIOS_COLORS[s.name] ?? "#64748b"} />
-          );
-        })}
-      </div>
       <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5 w-fit">
         {[
           { id: "petroleo", label: "Petróleo (USD/bbl)" },
@@ -350,7 +832,7 @@ function PreciosDashboard({ categories, series }) {
 }
 
 // ── Inversiones aprobadas por cuenca ────────────────────────────────────────
-function ViewBar({ viewMode, setViewMode, chartType, setChartType, hideGraphics = false, extra, extraModos = [], onGenerarReporte, hideChartTypes = false }) {
+function ViewBar({ viewMode, setViewMode, chartType, setChartType, hideGraphics = false, extra, extraModos = [], onGenerarReporte, hideChartTypes = false, chartTypes = CHART_TYPES }) {
   const modos = [
     ...(hideGraphics
       ? [{ id: "tablas", label: "Ver como tablas" }]
@@ -375,11 +857,11 @@ function ViewBar({ viewMode, setViewMode, chartType, setChartType, hideGraphics 
       <div className="flex items-center gap-2">
         {!hideGraphics && !hideChartTypes && viewMode === "graficos" && (
           <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm">
-            {CHART_TYPES.map(({ id, label, icon }, idx) => (
+            {chartTypes.map(({ id, label, icon }, idx) => (
               <button key={id} title={label} onClick={() => setChartType(id)}
                 className={`px-3 py-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center transition-colors ${
                   chartType === id ? "bg-tih-dark text-white" : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"
-                } ${idx < CHART_TYPES.length - 1 ? "border-r border-slate-200" : ""}`}>
+                } ${idx < chartTypes.length - 1 ? "border-r border-slate-200" : ""}`}>
                 {icon}
               </button>
             ))}
@@ -454,7 +936,7 @@ const KPI_CONFIG = [
   },
   {
     key:   (k) => k.anio_top,
-    label: "Año más activo",
+    label: "Periodo más activo",
     icon:  (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-5 h-5">
         <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
@@ -554,48 +1036,6 @@ function KpiCards({ kpis, topic }) {
           </div>
         );
       })}
-    </div>
-  );
-}
-
-// "Precios" en vista Anual: en vez de las 5 KPI genéricas (Total de pozos,
-// Año más activo…, que no aplican aquí), solo 2 — precio más bajo/alto de
-// Brent (el benchmark de referencia) con la fecha exacta en que ocurrió,
-// dentro del rango de años seleccionado. Viene de `extremos` en la respuesta
-// de /precios/ (min/max sobre el dato diario crudo, no sobre el promedio).
-function PreciosExtremosKpis({ extremos }) {
-  const b = extremos?.brent;
-  const mme = extremos?.mme;
-  const hh = extremos?.henry_hub;
-  if (!b?.min || !b?.max) return null;
-  const fmtFecha = (f) => {
-    const [y, m, d] = f.split("-");
-    return `${d}/${m}/${y}`;
-  };
-  const Card = ({ label, color, dato }) => (
-    <div className="rounded-xl px-4 py-3.5 flex flex-col gap-2 bg-white border border-slate-200 shadow-sm w-fit min-w-[190px]">
-      <div className="flex items-center gap-1.5 text-slate-400">
-        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
-        <span className="text-[10px] font-semibold uppercase tracking-wider leading-tight">{label}</span>
-      </div>
-      <p className="text-slate-800 text-lg font-bold leading-tight whitespace-nowrap">
-        ${dato.valor.toFixed(2)}
-        <span className="text-[12px] font-normal text-slate-400"> ({fmtFecha(dato.fecha)})</span>
-      </p>
-    </div>
-  );
-  return (
-    <div className="flex flex-wrap gap-3 mb-5">
-      <Card label="Precio más bajo (Brent)" color="#059669" dato={b.min} />
-      <Card label="Precio más alto (Brent)" color="#dc2626" dato={b.max} />
-      {mme?.min && mme?.max && <>
-        <Card label="Precio más bajo (MME)" color="#059669" dato={mme.min} />
-        <Card label="Precio más alto (MME)" color="#dc2626" dato={mme.max} />
-      </>}
-      {hh?.min && hh?.max && <>
-        <Card label="Precio más bajo (Henry Hub)" color="#059669" dato={hh.min} />
-        <Card label="Precio más alto (Henry Hub)" color="#dc2626" dato={hh.max} />
-      </>}
     </div>
   );
 }
@@ -720,59 +1160,6 @@ function buildUbicacionSeries(resultado, ubicacion) {
   return [...merged].map(([name, data]) => ({ name, data })).filter(s => s.data.some(v => v));
 }
 
-// "Producción por operador" — vista GENERAL: una comparación Pemex vs
-// Privados por cada producto, tomada de la fila "Nacional" del backend
-// (subtotal = producto, operator = Pemex Exploración y Producción/Privadas).
-// Solo existe con esa forma cuando no hay un solo grupo filtrado.
-function buildOperadoresComparacion(resultado) {
-  const nac = (resultado.groups ?? []).find(g => g.cuenca === "Nacional");
-  const nacSg = nac?.subgroups?.find(sg => sg.ubicacion === "Nacional");
-  if (!nacSg) return [];
-  const out = [];
-  let current = null;
-  for (const row of nacSg.rows ?? []) {
-    if (row.type === "subtotal") { current = { label: row.label, series: [] }; out.push(current); continue; }
-    if (row.type === "operator" && current) current.series.push({ name: row.label, data: row.data });
-  }
-  return out;
-}
-
-// "Producción por operador" — 2+ empresas puntuales seleccionadas (grupo o
-// checkboxes de empresa, ver TopBar): sin grupo "Nacional" propio, el backend
-// trae una lista plana de empresas (Producto → Contrato dentro de cada una).
-// Mezclar los 8 productos de varias empresas en una sola gráfica no dice
-// nada (unidades distintas, demasiadas líneas) — igual que la comparación
-// Pemex/Privados, se arma un gráfico por producto, comparando cada empresa
-// elegida (sumando sus contratos).
-function buildEmpresasComparacion(resultado) {
-  const empresas = (resultado.groups ?? []).filter(g => g.cuenca !== "Nacional");
-  if (empresas.length < 2) return [];
-  const porProducto = new Map();
-  for (const g of empresas) {
-    const rows = g.subgroups?.[0]?.rows ?? [];
-    for (const row of rows) {
-      if (row.type !== "subtotal") continue;
-      if (!porProducto.has(row.label)) porProducto.set(row.label, []);
-      porProducto.get(row.label).push({ name: g.cuenca, data: row.data });
-    }
-  }
-  return [...porProducto].map(([label, series]) => ({ label, series }));
-}
-
-const OPERADOR_GRUPO_COLORS = { "Pemex Exploración y Producción": "#10b981", "Privadas": "#6366f1" };
-
-function OperadorComparacionChart({ label, series, categories, chartType }) {
-  const option = buildChartOption(categories, series.map(s => ({ ...s, color: OPERADOR_GRUPO_COLORS[s.name] })), chartType);
-  return (
-    <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
-      <div className="flex items-baseline justify-between mb-3">
-        <span className="text-[11px] font-semibold text-teal-700">{label}</span>
-      </div>
-      <ReactECharts option={option} style={{ height: 280 }} notMerge />
-    </div>
-  );
-}
-
 // Captura genérica de todas las gráficas ECharts montadas dentro de un
 // contenedor — funciona sin necesitar un ref propio por cada variante de
 // gráfica (Operadores, Cuenca, Contratos, comparaciones, small multiples…);
@@ -884,7 +1271,7 @@ function SearchableSelect({ options, value, onChange }) {
   }, []);
 
   const filtered = query.trim()
-    ? options.filter(o => o.toLowerCase().includes(query.trim().toLowerCase()))
+    ? options.filter(o => o.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(query.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()))
     : options;
 
   // Al abrir, escribir, o cambiar el filtrado, resaltar la opción actual (si
@@ -955,12 +1342,12 @@ function SearchableSelect({ options, value, onChange }) {
 // "Gráfica personalizada": el usuario elige UNA empresa y ve toda su
 // producción (todos los productos con datos) en una sola gráfica,
 // exportable como PNG con un banner de título superpuesto.
-function OperadorCustomChart({ empresas, categories, chartType, tituloTema }) {
+function OperadorCustomChart({ empresas, categories, chartType, tituloTema, visibleSeries = {} }) {
   const [selected, setSelected] = useState(empresas[0]?.empresa ?? "");
   const chartRef = useRef(null);
   const emp = empresas.find(e => e.empresa === selected) ?? empresas[0];
-  const series = emp?.series ?? [];
-  const option = useMemo(() => buildChartOption(categories, series, chartType), [categories, series, chartType]);
+  const series = filterSeries(emp?.series ?? [], visibleSeries);
+  const option = useMemo(() => buildChartOption(categories, series, chartType, { zoomable: true }), [categories, series, chartType]);
 
   if (!empresas.length) return <p className="text-sm text-slate-400 p-4">Sin empresas disponibles para graficar.</p>;
 
@@ -1150,7 +1537,7 @@ function DataTitle({ titulo, period, start_year, end_year }) {
 }
 
 export default function ChartArea() {
-  const { resultado, loading, error, tema, visibleSeries, toggleSerie, setAllVisible, groupBy, setGroupBy, period, start_year, end_year, start_month, end_month, perfFiltros, prodFiltros, prodOpciones, compareMode } = useExplorer();
+  const { resultado, loading, error, tema, visibleSeries, toggleSerie, setAllVisible, groupBy, setGroupBy, period, start_year, end_year, start_month, end_month, perfFiltros, prodFiltros, prodOpciones, compareMode, reservasTipo, setReservasTipo, reservasSearch, setReservasSearch, reservasCampoSel, setReservasCampoSel } = useExplorer();
   const [viewMode, setViewMode]   = useState("tablas");
   const [chartType, setChartType] = useState("line");
   // "Precios de petróleo y gas": arranca en gráficos (el diseño propio,
@@ -1163,6 +1550,11 @@ export default function ChartArea() {
   useEffect(() => {
     const esInvOPozos = ["InvCuenca", "InvCont", "PozosLic", "EfectivoLic", "InvLic", "EmpresasG"].includes(tema?.json_arg);
     if (esInvOPozos && chartType === "line") setChartType("bar");
+  }, [tema?.json_arg]);
+  // "Producción por operador": sin Pastel ni Mapa de calor (no aportan con
+  // la jerarquía Empresa→Contrato→Producto de este tema).
+  useEffect(() => {
+    if (tema?.json_arg === "Operadores" && (chartType === "pie" || chartType === "heatmap")) setChartType("bar");
   }, [tema?.json_arg]);
   // "Licitaciones y Contratos": siempre arranca en tabla (nunca en gráfico).
   useEffect(() => {
@@ -1180,6 +1572,14 @@ export default function ChartArea() {
   // Inversiones por contrato: gráfica personalizada por contrato (el botón
   // de Filtros vive en TopBar, igual que Perforación/Producción).
   const [invPersonalizada, setInvPersonalizada] = useState(false);
+  // Contratos adjudicados: clic en el punto de una empresa en el mapa de
+  // clústers -> Ver como tablas, ya filtrada a esa empresa (mismo buscador
+  // de texto de la tabla, controlado desde aquí para poder empujarle un
+  // valor desde el mapa).
+  const [empresaBuscar, setEmpresaBuscar] = useState("");
+  // Reservas por campo: "Gráfica personalizada" tiene dos variantes propias
+  // (por cuenca / por campo) en vez del botón simple de Inversiones/Contratos.
+  const [reservasModo, setReservasModo] = useState(null);
   // "Generar reporte" desde la vista de gráficas (tabs/simple/gráfico
   // jerárquico) — contentRef envuelve lo que esté montado ahora mismo, para
   // ubicar las instancias de ECharts renderizadas sin necesitar un ref propio
@@ -1249,7 +1649,7 @@ export default function ChartArea() {
     </div>
   );
 
-  const tituloTema = tema?.titulo || tema?.tema || "";
+  const tituloTema = acentuarTema(tema?.titulo || tema?.tema || "");
 
   // ── Inversiones aprobadas por cuenca / por contrato: Total (+ desglose) →
   // grupo → (Licitación →) hoja — mismo componente y estilo que las tablas
@@ -1261,11 +1661,15 @@ export default function ChartArea() {
   // visibleSeries, que ese drawer ya controla. La búsqueda de texto de la
   // tabla cubre cualquier nivel (cuenca/entidad/ambiente o ronda/licitación/
   // contrato) y abre la rama donde está el resultado.
-  if (["InvCuenca", "InvCont", "PozosLic", "EfectivoLic", "InvLic", "EmpresasG", "ReservasP", "ReservasG", "ReservasPCE"].includes(tema?.json_arg)) {
+  if (["InvCuenca", "InvCont", "PozosLic", "EfectivoLic", "InvLic", "EmpresasG", "ReservasP", "ReservasG", "ReservasPCE", "ReservasAsigP", "ReservasAsigG", "ReservasAsigPCE"].includes(tema?.json_arg)) {
     const esCuenca = tema.json_arg === "InvCuenca";
     const esPozos = tema.json_arg === "PozosLic";
     const esEmpresas = tema.json_arg === "EmpresasG";
-    const esReservas = ["ReservasP", "ReservasG", "ReservasPCE"].includes(tema.json_arg);
+    const esReservasCampo = ["ReservasP", "ReservasG", "ReservasPCE"].includes(tema.json_arg);
+    const esReservasAsig = ["ReservasAsigP", "ReservasAsigG", "ReservasAsigPCE"].includes(tema.json_arg);
+    const esReservas = esReservasCampo || esReservasAsig;
+    const reservasUnidad = RESERVAS_UNIDAD[reservasTipo] ?? "MMb";
+    const tituloReservas = RESERVAS_TITULO[reservasTipo] ?? tituloTema;
     const esModalidad = ["PozosLic", "EfectivoLic", "InvLic"].includes(tema.json_arg);
     const gruposChip = (resultado.groups ?? []).filter(g => g.cuenca !== "Total general");
     const chartSeries = gruposChip
@@ -1279,22 +1683,56 @@ export default function ChartArea() {
       : tema.json_arg === "InvLic" ? "Montos en millones de USD (dólares estadounidenses). PMT: Programa Mínimo de Trabajo."
       : "Montos en USD (dólares estadounidenses).";
     const rowHeaderLabel = esCuenca ? "Cuenca / Entidad Federativa / Ambiente"
-      : esEmpresas ? "País de origen / Empresa"
+      : esEmpresas ? "Empresa"
+      : esReservasAsig ? "Asignaciones-Contratos / Ambiente / Cuenca / item"
       : esReservas ? "Cuenca / Ambiente / Campo"
       : esModalidad ? "Modalidad / Ronda-Licitación / Contrato"
       : "Ronda / Licitación / Contrato";
     const searchPlaceholder = esCuenca ? "Buscar cuenca, entidad o ambiente"
-      : esEmpresas ? "Buscar empresa"
+      : esEmpresas ? "Buscar empresa o país"
+      : esReservasAsig ? "Buscar cuenca, ambiente o asignación/contrato"
       : esReservas ? "Buscar cuenca, ambiente o campo"
       : esModalidad ? "Buscar modalidad, ronda, licitación o contrato"
       : "Buscar ronda, licitación o contrato";
+    const reservasTabsActivas = reservasTabs(esReservasAsig);
+    const entityLabelValor = esEmpresas ? "empresas" : esReservasAsig ? "asignaciones/contratos" : esReservas ? "campos" : esModalidad || !esCuenca ? "contratos" : "ambientes";
 
     return (
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        {esReservas && (
+          <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm w-fit mb-3">
+            {reservasTabsActivas.map(([id, label], idx) => (
+              <button key={id} onClick={() => setReservasTipo(id)}
+                className={`px-4 py-2 text-[12px] font-semibold transition-colors ${
+                  reservasTipo === id ? "bg-tih-dark text-white" : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+                } ${idx < reservasTabsActivas.length - 1 ? "border-r border-slate-200" : ""}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         <ViewBar
           viewMode={viewMode} setViewMode={setViewMode} chartType={chartType} setChartType={setChartType}
           hideChartTypes
-          extra={contratosPersonalizada.length > 0 ? (
+          onGenerarReporte={() => setReportModalOpen(true)}
+          extra={esReservas ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setReservasModo(m => m === "cuenca" ? null : "cuenca")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                  reservasModo === "cuenca" ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
+                }`}>
+                Gráfica personalizada por {esReservasAsig ? "modalidad" : "cuenca"}
+              </button>
+              <button
+                onClick={() => setReservasModo(m => m === "campo" ? null : "campo")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                  reservasModo === "campo" ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
+                }`}>
+                Gráfica personalizada por {esReservasAsig ? "asignación/contrato" : "campo"}
+              </button>
+            </div>
+          ) : contratosPersonalizada.length > 0 ? (
             <button
               onClick={() => setInvPersonalizada(v => !v)}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
@@ -1304,7 +1742,7 @@ export default function ChartArea() {
             </button>
           ) : null}
         />
-        {viewMode === "graficos" && !verPersonalizada && (
+        {viewMode === "graficos" && !verPersonalizada && !esReservas && !esEmpresas && (
           <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm w-fit mb-4">
             {CHART_TYPES.filter(t => t.id === "bar" || t.id === "pie").map(({ id, label, icon }, idx, arr) => (
               <button key={id} title={label} onClick={() => setChartType(id)}
@@ -1316,9 +1754,35 @@ export default function ChartArea() {
             ))}
           </div>
         )}
+        <div ref={contentRef} style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {viewMode === "graficos" ? (
-          <div style={{ flex: 1, minHeight: 0 }}>
-            {verPersonalizada
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            {esReservas && !reservasModo && (
+              <div className="relative mb-3 w-fit">
+                <input
+                  type="text"
+                  value={reservasSearch}
+                  onChange={e => setReservasSearch(e.target.value)}
+                  placeholder={searchPlaceholder}
+                  className="text-[12px] border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-teal-400"
+                  style={{ width: 280 }}
+                />
+                {reservasSearch && (
+                  <button className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                    onClick={() => setReservasSearch("")}>✕</button>
+                )}
+              </div>
+            )}
+            {esReservas
+              ? reservasModo === "cuenca"
+                ? <ReservasCuencaCustomChart resultado={resultado} unidad={reservasUnidad} entidadLabel={esReservasAsig ? "modalidad" : "cuenca"} entidadLabelPlural={esReservasAsig ? "modalidades" : "cuencas"} />
+                : reservasModo === "campo"
+                ? <ReservasCampoCustomChart resultado={resultado} unidad={reservasUnidad} tipo={reservasTipo} entidad={esReservasAsig ? "asignaciones/contratos" : "campos"} selected={reservasCampoSel} onSelectedChange={setReservasCampoSel} />
+                : <ReservasWaterfallChart resultado={resultado} unidad={reservasUnidad} entidad={esReservasAsig ? "asignaciones/contratos" : "campos"} search={reservasSearch} />
+              : esEmpresas
+              ? <EmpresasClusterChart resultado={resultado} visibleSeries={visibleSeries}
+                  onSelectEmpresa={(nombre) => { setEmpresaBuscar(nombre); setViewMode("tablas"); }} />
+              : verPersonalizada
               ? <ContratoCustomChart contratos={contratosPersonalizada} categories={resultado.categories ?? []} chartType={chartType === "heatmap" ? "line" : chartType} tituloTema={tituloTema}
                   badgeFor={c => `${c.grupo}${c.licitacion ? " · " + c.licitacion : ""}`} />
               : <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={chartSeries} chartType={chartType === "heatmap" ? "line" : chartType} />}
@@ -1331,16 +1795,34 @@ export default function ChartArea() {
                 resultado={resultado}
                 visibleSeries={visibleSeries}
                 groupBy="cuenca"
-                titulo={tituloTema}
+                titulo={esReservas ? tituloReservas : tituloTema}
                 period={esModalidad || esEmpresas ? null : period} start_year={start_year} end_year={end_year}
-                entityLabel={esEmpresas ? "empresas" : esReservas ? "campos" : esModalidad || !esCuenca ? "contratos" : "ambientes"}
+                entityLabel={entityLabelValor}
                 rowHeaderLabel={rowHeaderLabel}
                 searchPlaceholder={searchPlaceholder}
                 preserveColumnOrder={esModalidad || esEmpresas}
+                sinResumen={esReservasAsig}
+                flatAlfabetico={esEmpresas}
+                {...(esReservas ? { search: reservasSearch, onSearchChange: setReservasSearch }
+                  : esEmpresas ? { search: empresaBuscar, onSearchChange: setEmpresaBuscar } : {})}
               />
             </div>
             <p className="text-[10.5px] text-slate-400 mt-1 shrink-0">{notaUnidad}</p>
           </div>
+        )}
+        </div>
+        {reportModalOpen && (
+          <ReportBuilderModal
+            graficaDisponible={viewMode === "graficos"}
+            onClose={() => setReportModalOpen(false)}
+            onGenerar={(seleccion) => generarReporteDesdeBloques(seleccion, {
+              tabla: buildReservasTabla(resultado, { esReservasAsig, entidadLabel: entityLabelValor, unidad: reservasUnidad }),
+              filtrosLineas: [],
+              tituloReporte: esReservas ? tituloReservas : tituloTema,
+              periodoNota: `${PERIOD_LABEL[period] ?? period} — ${start_year} — ${end_year}`,
+              contentRef,
+            })}
+          />
         )}
       </div>
     );
@@ -1386,12 +1868,6 @@ export default function ChartArea() {
       : buildHierSeries(resultado, groupBy);
     const cuencaCount = (resultado.groups ?? []).filter(g => g.cuenca !== "Nacional").length;
     const chartHierSeries = hierSeries;
-    // Operadores: comparación Pemex vs Privados por producto (vista Nacional
-    // general) — solo existe con esta forma cuando no hay un solo grupo
-    // filtrado; si lo hay, se cae al gráfico simple de siempre.
-    const operadorComparaciones = esOperadores
-      ? (buildOperadoresComparacion(resultado).length ? buildOperadoresComparacion(resultado) : buildEmpresasComparacion(resultado))
-      : [];
     // "Gráfica personalizada": en Operadores elige una empresa; en "Producción
     // por ubicación" (Cuenca) elige un Ambiente; en "Producción por contrato"
     // elige un contrato — reemplaza al viejo toggle "Por cuenca" (se quitó).
@@ -1434,7 +1910,9 @@ export default function ChartArea() {
         : undefined;
 
     function buildTablaReporteJerarquico() {
-      const pivot = flatExportEntidadValue
+      const pivot = esOperadores
+        ? buildOperadorTabla(resultado, "", resultado.categories ?? [])
+        : flatExportEntidadValue
         ? buildFlatExport(resultado, filtrosActivos, visibleSeries, "", resultado.categories ?? [], flatExportEntidadValue, "Cant. pozos")
         : buildPivotExport(resultado, filtrosActivos, visibleSeries, "", resultado.categories ?? [], entityLabelValue);
       return {
@@ -1502,6 +1980,7 @@ export default function ChartArea() {
           viewMode={vistaEfectiva} setViewMode={setViewMode}
           chartType={chartType} setChartType={setChartType}
           hideGraphics={hideGraphics}
+          chartTypes={esOperadores ? CHART_TYPES.filter(t => t.id !== "pie" && t.id !== "heatmap") : CHART_TYPES}
           onGenerarReporte={() => setReportModalOpen(true)}
           extraModos={tema?.json_arg === "Asignaciones" ? [{ id: "ranking", label: "Ranking" }] : []}
           extra={puedeVerPersonalizada ? (
@@ -1545,9 +2024,22 @@ export default function ChartArea() {
                 // columnas) — antes salía "al revés", una columna por cada campo/
                 // operador. Ver buildFlatExport en DynamicTable.jsx.
                 flatExportEntidad={flatExportEntidadValue}
+                // "Producción por operador": Empresa → Contrato → Producto en
+                // vez de Empresa → Producto → Contrato — buildPivotExport
+                // genérico no lo interpreta bien (ver buildOperadorTabla).
+                exportOperadorTabla={esOperadores}
                 historicoTopic={
                   tema?.json_arg === "PozosCampos" || tema?.json_arg === "PozTerm" || tema?.json_arg === "PozPerf"
+                    || tema?.json_arg === "Cuenca" || tema?.json_arg === "Campos"
                     ? tema.json_arg
+                    : undefined
+                }
+                // "Descargar todo" de Producción (Cuenca/Campos, misma fuente
+                // PRODUCCION_CAMPOS) usa su propio endpoint histórico — el de
+                // Perforación es el default de DynamicTable.
+                historicoFetch={
+                  tema?.json_arg === "Cuenca" || tema?.json_arg === "Campos"
+                    ? "fetchProduccionHistorico"
                     : undefined
                 }
                 rowHeaderLabel={
@@ -1585,18 +2077,27 @@ export default function ChartArea() {
               : esOperadores
                 ? (
                   verPersonalizada
-                    ? <OperadorCustomChart empresas={resultado.empresas ?? []} categories={resultado.categories ?? []} chartType={chartType} tituloTema={tituloTema} />
-                    : operadorComparaciones.length > 0
-                      ? (
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                          {operadorComparaciones
-                            .filter(c => visibleSeries[c.label] !== false)
-                            .map(c => (
-                              <OperadorComparacionChart key={c.label} label={c.label} series={c.series} categories={resultado.categories ?? []} chartType={chartType} />
-                            ))}
-                        </div>
-                      )
-                      : <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={filterSeries(chartHierSeries, visibleSeries)} chartType={chartType} subtitle={chartSubtitle} />
+                    ? <OperadorCustomChart empresas={resultado.empresas ?? []} categories={resultado.categories ?? []} chartType={chartType} tituloTema={tituloTema} visibleSeries={visibleSeries} />
+                    : (() => {
+                        // Vista por defecto: 2 gráficos totales por unidad (Mbd/MMpcd),
+                        // ya reflejan el filtro Pemex/Privadas/empresas aplicado en TopBar
+                        // (el backend devuelve resultado.series ya acotado a esa selección).
+                        // Reemplaza la rejilla anterior de un gráfico por contrato, que
+                        // salía vacía: los subtotales de contrato no traen data.
+                        const visible = filterSeries(chartHierSeries, visibleSeries);
+                        const mbdSeries = visible.filter(s => !s.name.includes("MMpcd"));
+                        const mmpcdSeries = visible.filter(s => s.name.includes("MMpcd"));
+                        return (
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            {mbdSeries.length > 0 && (
+                              <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={mbdSeries} chartType={chartType} subtitle="Mbd" zoomable />
+                            )}
+                            {mmpcdSeries.length > 0 && (
+                              <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={mmpcdSeries} chartType={chartType} subtitle="MMpcd" zoomable />
+                            )}
+                          </div>
+                        );
+                      })()
                 )
               : esCuencaTopic && verPersonalizada
                 ? <CuencaCustomChart ubicaciones={prodOpciones?.ubicaciones ?? []} resultado={resultado} categories={resultado.categories ?? []} chartType={chartType} tituloTema={tituloTema} />
@@ -1732,7 +2233,7 @@ export default function ChartArea() {
   return (
     <div>
       {tema?.json_arg === "Precios"
-        ? <PreciosExtremosKpis extremos={resultado.extremos} />
+        ? <PreciosStatCards series={allSimpleSeries} extremos={resultado.extremos} />
         : simpleKpis && <KpiCards kpis={simpleKpis} topic={tema?.json_arg} />}
       <SeriesChips
         items={allSimpleSeries}
