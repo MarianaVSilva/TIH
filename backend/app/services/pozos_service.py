@@ -8,12 +8,17 @@ from app.services.produccion_service import _where_fecha, _rollup_periodo
 from app.services import pozos_cache
 
 BD_POZOS = "cmde_raw.dbo.bd_pozos"
+_PG = settings.db_engine == "postgres"
 
 
 def _source_table() -> str:
     """Tabla/vista de la que se lee la producción por pozo: el caché local
     materializado e indexado (TIH_pozos_cache) si ya se sincronizó, o la vista
-    original (más lenta, pero siempre disponible) si no."""
+    original (más lenta, pero siempre disponible) si no. En Postgres no aplica
+    el caché SQL-Server-especifico (particiones + BRIN ya resuelven el
+    rendimiento) -- se usa api.v_produccion_pozos siempre."""
+    if _PG:
+        return "api.v_produccion_pozos"
     return "TIH_pozos_cache.dbo.produccion_pozos" if pozos_cache.is_cache_available() else f"{settings.db_name}.{settings.db_schema}.PRODUCCION_POZOS"
 
 
@@ -34,11 +39,12 @@ POZO_PRODUCTOS = [
 def get_produccion_pozos_arbol(engine: Engine) -> dict:
     """Árbol Cuenca→Campo (Asig_Cont)→Pozo, SIN cifras — filtrado a actividad
     de los últimos 2 años (evita listar pozos cerrados desde hace décadas)."""
+    fecha_corte = "(CURRENT_DATE - INTERVAL '2 years')" if _PG else "DATEADD(year, -2, GETDATE())"
     sql = f"""
         SELECT DISTINCT CUENCA, ASIG_CONT, WELL_NAME
         FROM {_source_table()}
         WHERE CUENCA IS NOT NULL AND ASIG_CONT IS NOT NULL AND WELL_NAME IS NOT NULL
-          AND FECHA >= DATEADD(year, -2, GETDATE())
+          AND FECHA >= {fecha_corte}
     """
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
@@ -93,7 +99,7 @@ def get_produccion_pozo_detalle(
     df = df.reindex(categories, fill_value=0)
 
     rows = [
-        {"label": label, "data": [round(float(v), 2) for v in df[col]]}
+        {"label": label, "data": [round(float(v), 3) for v in df[col]]}
         for col, label in POZO_PRODUCTOS
     ]
     return {"categories": categories, "rows": rows}
@@ -143,7 +149,7 @@ def get_produccion_pozos_resumen(
 
     num_pozos = int(df[df["periodo"] == ultimo]["well_name"].nunique())
     kpis = [
-        {"label": label, "valor": round(float(rollup.loc[ultimo, col]), 2)}
+        {"label": label, "valor": round(float(rollup.loc[ultimo, col]), 3)}
         for col, label in POZO_PRODUCTOS
     ]
     return {"periodo": ultimo, "num_pozos": num_pozos, "kpis": kpis}
@@ -152,7 +158,17 @@ def get_produccion_pozos_resumen(
 # ── Analítica avanzada ──────────────────────────────────────────────────────
 
 _ORDEN_SEVERIDAD = ["CRITICO", "DECLINANDO", "ESTABLE", "CRECIENDO"]  # peor -> mejor
-_UMBRAL_MOMENTUM = 3.1453  # mismo umbral crítico trimestral (sourced) usado como "desviación significativa"
+# Ventana de momentum reciente: 6 meses (antes 3) — con pozos de producción
+# baja/marginal, un solo mes atípico dominaba la suma de 3 meses (ver caso
+# ÁRABE-1: +2,425% en un mes por ruido de medición). 6 meses diluye ese
+# ruido a costa de tardar un poco más en reflejar un cambio reciente real.
+# Mismos umbrales sourced (Payne Institute/IEA: -12%/-5%/+5% anual), pero
+# convertidos a su equivalente SEMESTRAL (interés compuesto, exponente 0.5
+# en vez de 0.25 de la versión trimestral anterior).
+_UMBRAL_MOMENTUM = abs(((1 - 0.12) ** 0.5 - 1) * 100)  # ≈ 6.1917
+_UMBRAL_CRITICO_6M = ((1 - 0.12) ** 0.5 - 1) * 100      # ≈ -6.1917
+_UMBRAL_DECLINANDO_6M = ((1 - 0.05) ** 0.5 - 1) * 100   # ≈ -2.5321
+_UMBRAL_CRECIENDO_6M = ((1 + 0.05) ** 0.5 - 1) * 100    # ≈ +2.4695
 
 
 def _clasificar_declinacion(valor: float, u_critico: float, u_declinando: float, u_creciendo: float) -> str:
@@ -162,35 +178,34 @@ def _clasificar_declinacion(valor: float, u_critico: float, u_declinando: float,
     return "CRECIENDO"
 
 
-def _tendencia(suma_3m: float, anual: float | None = None) -> str:
+def _tendencia(suma_6m: float, anual: float | None = None) -> str:
     """Clasificación BASE = la tasa de declinación anual propia del pozo (12m
-    vs 12m previos, Sección 4 — ventana estable) contra rangos de industria
-    con fuente real: convencional general 5-10%/año, terminal percentil 20-80
-    = 2.9-9.4%/año (Payne Institute), Mar del Norte 8-12%/año (IEA) →
-    -12%/-5%/+5% anual.
+    vs 12m previos) contra rangos de industria con fuente real: convencional
+    general 5-10%/año, terminal percentil 20-80 = 2.9-9.4%/año (Payne
+    Institute), Mar del Norte 8-12%/año (IEA) → -12%/-5%/+5% anual.
 
-    Luego se compara suma_3m (los últimos 3 meses) contra el EQUIVALENTE
-    TRIMESTRAL de esa MISMA tasa anual propia — no contra un umbral genérico
-    — usando interés compuesto: (1+anual/100)^0.25 - 1. Si el trimestre
-    reciente se desvía de ese equivalente por más de ~3.1 puntos (el mismo
-    umbral crítico sourced), se sube o baja un nivel de severidad respecto a
-    la base: así una buena racha de 3 meses atenúa (pero no borra) una
-    declinación estructural real, y viceversa.
+    Luego se compara suma_6m (los últimos 6 meses) contra el EQUIVALENTE
+    SEMESTRAL de esa MISMA tasa anual propia — no contra un umbral genérico
+    — usando interés compuesto: (1+anual/100)^0.5 - 1. Si el semestre
+    reciente se desvía de ese equivalente por más de ~6.19 puntos (el mismo
+    umbral crítico sourced, convertido a 6 meses), se sube o baja un nivel de
+    severidad respecto a la base: así una buena racha de 6 meses atenúa (pero
+    no borra) una declinación estructural real, y viceversa.
 
-    Sin `anual` (pozo con <24 meses de histórico), se usa solo suma_3m contra
-    los umbrales trimestrales fijos (-3.1%/-1.3%/+1.2%, mismo origen)."""
+    Sin `anual` (pozo con <24 meses de histórico), se usa solo suma_6m contra
+    los umbrales semestrales fijos (mismo origen)."""
     if anual is None:
-        return _clasificar_declinacion(suma_3m, -3.1453, -1.2741, 1.2272)
+        return _clasificar_declinacion(suma_6m, _UMBRAL_CRITICO_6M, _UMBRAL_DECLINANDO_6M, _UMBRAL_CRECIENDO_6M)
 
     base = _clasificar_declinacion(anual, -12, -5, 5)
-    equivalente_propio = ((1 + anual / 100) ** 0.25 - 1) * 100
-    delta = suma_3m - equivalente_propio
+    equivalente_propio = ((1 + anual / 100) ** 0.5 - 1) * 100
+    delta = suma_6m - equivalente_propio
 
     idx = _ORDEN_SEVERIDAD.index(base)
     if delta < -_UMBRAL_MOMENTUM and idx > 0:
-        idx -= 1  # el trimestre reciente empeora respecto a su propia tendencia
+        idx -= 1  # el semestre reciente empeora respecto a su propia tendencia
     elif delta > _UMBRAL_MOMENTUM and idx < len(_ORDEN_SEVERIDAD) - 1:
-        idx += 1  # el trimestre reciente mejora respecto a su propia tendencia
+        idx += 1  # el semestre reciente mejora respecto a su propia tendencia
     return _ORDEN_SEVERIDAD[idx]
 
 
@@ -202,21 +217,21 @@ def _tendencia_por_pozo(mensual: pd.DataFrame, group_cols: list[str], metric_col
     """mensual: filas well_id/well_name/[...group_cols]/fecha/<metric_col> —
     puede haber más de una fila por pozo-mes (se suma). Devuelve un registro
     por pozo con su producción del último mes y tendencia (la más severa entre
-    la señal de 3 meses y la tasa anual real 12m-vs-12m, ver _tendencia).
+    la señal de 6 meses y la tasa anual real 12m-vs-12m, ver _tendencia).
     Vectorizado con pandas (groupby + shift/rolling) en vez de iterar pozo por
     pozo en Python — con miles de pozos a escala nacional, el for-loop
     original tardaba ~6.5s por sí solo. metric_col por defecto son líquidos,
     pero se puede pasar gas_mmpcd para cuencas de gas seco donde los líquidos
     son cero para todos los pozos (Burgos, p. ej.) y no sirven para rankear."""
     if mensual.empty:
-        return pd.DataFrame(columns=group_cols + ["produccion_mbd", "tendencia", "tasa_3m"])
+        return pd.DataFrame(columns=group_cols + ["produccion_mbd", "tendencia", "tasa_6m"])
 
     g = mensual.groupby(group_cols + ["fecha"], as_index=False)[metric_col].sum()
     g = g.sort_values(group_cols + ["fecha"])
     prev = g.groupby(group_cols)[metric_col].shift(1)
     prev_safe = prev.replace(0, np.nan).astype("float64")
     g["_tasa"] = ((g[metric_col] - prev) / prev_safe * 100).astype("float64")
-    g["_suma3"] = g.groupby(group_cols)["_tasa"].transform(lambda s: s.rolling(3, min_periods=1).sum())
+    g["_suma6"] = g.groupby(group_cols)["_tasa"].transform(lambda s: s.rolling(6, min_periods=1).sum())
 
     # Tasa anual real: promedio móvil de 12 meses, comparado contra el mismo
     # promedio de hace 12 meses (shift del propio rolling), igual que en
@@ -227,15 +242,15 @@ def _tendencia_por_pozo(mensual: pd.DataFrame, group_cols: list[str], metric_col
 
     ultimo = g.groupby(group_cols, as_index=False).tail(1).copy()
     ultimo["tendencia"] = ultimo.apply(
-        lambda r: _tendencia(r["_suma3"], r["_anual"] if pd.notna(r["_anual"]) else None) if pd.notna(r["_suma3"]) else "SIN_DATOS",
+        lambda r: _tendencia(r["_suma6"], r["_anual"] if pd.notna(r["_anual"]) else None) if pd.notna(r["_suma6"]) else "SIN_DATOS",
         axis=1,
     )
-    ultimo = ultimo.rename(columns={metric_col: "produccion_mbd", "_suma3": "tasa_3m"})
-    ultimo["produccion_mbd"] = ultimo["produccion_mbd"].round(2)
-    ultimo["tasa_3m"] = ultimo["tasa_3m"].round(2)
+    ultimo = ultimo.rename(columns={metric_col: "produccion_mbd", "_suma6": "tasa_6m"})
+    ultimo["produccion_mbd"] = ultimo["produccion_mbd"].round(3)
+    ultimo["tasa_6m"] = ultimo["tasa_6m"].round(3)
     if "well_id" in ultimo.columns:
         ultimo["well_id"] = ultimo["well_id"].astype("Int64")
-    return ultimo[group_cols + ["produccion_mbd", "tendencia", "tasa_3m"]].reset_index(drop=True)
+    return ultimo[group_cols + ["produccion_mbd", "tendencia", "tasa_6m"]].reset_index(drop=True)
 
 
 def _serie_mensual_pozo(engine: Engine, campo: str, pozo: str, metrica: str = "auto") -> tuple[pd.DataFrame, int | None, str]:
@@ -286,10 +301,24 @@ def _meta_bd_pozos(engine: Engine, well_ids: list[int]) -> pd.DataFrame:
     if not well_ids:
         return pd.DataFrame()
     ids_sql = ",".join(str(int(w)) for w in well_ids)
-    sql = f"""
-        SELECT WELL_ID, CURRENT_CONDITION, DRILLING_START_DATE, OPERATOR, DEPTH_MD, CATEGORY
-        FROM {BD_POZOS} WHERE WELL_ID IN ({ids_sql})
-    """
+    # api.v_pozos_meta ya viene de core.dim_pozo (una fila por well_id, la mas
+    # reciente por update_date -- ver postgres_migration/sql/04_transform_staging_to_core.sql)
+    # a diferencia de cmde_raw.dbo.bd_pozos que puede tener varias filas por
+    # WELL_ID (sidetracks/reentradas); se alian las columnas a los mismos
+    # nombres que espera el resto de esta funcion (CURRENT_CONDITION/OPERATOR/
+    # CATEGORY) para no duplicar la logica de renombrado de abajo.
+    if _PG:
+        sql = f"""
+            SELECT well_id AS "WELL_ID", current_condition AS "CURRENT_CONDITION",
+                   drilling_start_date AS "DRILLING_START_DATE", operador AS "OPERATOR",
+                   depth_md AS "DEPTH_MD", categoria AS "CATEGORY"
+            FROM api.v_pozos_meta WHERE well_id IN ({ids_sql})
+        """
+    else:
+        sql = f"""
+            SELECT WELL_ID, CURRENT_CONDITION, DRILLING_START_DATE, OPERATOR, DEPTH_MD, CATEGORY
+            FROM {BD_POZOS} WHERE WELL_ID IN ({ids_sql})
+        """
     with engine.connect() as conn:
         meta = pd.read_sql(sql, conn)
     meta.columns = meta.columns.str.lower()
@@ -325,20 +354,20 @@ def get_pozo_analisis(engine: Engine, campo: str, pozo: str, metrica: str = "aut
     pico_idx = valores.index(pico)
 
     tasas = _tasas_mensuales(valores)
-    ultimos_3 = [t for t in tasas[-3:] if t is not None]
-    suma_3m = sum(ultimos_3) if ultimos_3 else None
+    ultimos_6 = [t for t in tasas[-6:] if t is not None]
+    suma_6m = sum(ultimos_6) if ultimos_6 else None
 
     def _promedio(k):
         vals = valores[-k:]
-        return round(sum(vals) / len(vals), 2) if vals else None
+        return round(sum(vals) / len(vals), 3) if vals else None
 
     anual = None
     if n >= 24:
         prom_actual = sum(valores[-12:]) / 12
         prom_previo = sum(valores[-24:-12]) / 12
-        anual = round((prom_actual - prom_previo) / prom_previo * 100, 2) if prom_previo else None
+        anual = round((prom_actual - prom_previo) / prom_previo * 100, 3) if prom_previo else None
 
-    tendencia = _tendencia(suma_3m, anual) if suma_3m is not None else "SIN_DATOS"
+    tendencia = _tendencia(suma_6m, anual) if suma_6m is not None else "SIN_DATOS"
 
     vida_remanente_meses = None
     if anual is not None and anual < 0 and actual > 0:
@@ -355,23 +384,23 @@ def get_pozo_analisis(engine: Engine, campo: str, pozo: str, metrica: str = "aut
     if tendencia == "CRITICO":
         alerta = {"nivel": "CRITICA", "mensaje": (
             f"Declinación acelerada: {abs(anual):.1f}% en el último año." if anual is not None
-            else f"Declinación acelerada: {abs(suma_3m):.1f}% en los últimos 3 meses."
+            else f"Declinación acelerada: {abs(suma_6m):.1f}% en los últimos 6 meses."
         )}
     elif tendencia == "DECLINANDO":
         alerta = {"nivel": "MEDIA", "mensaje": (
             f"Declinación moderada: {abs(anual):.1f}% en el último año." if anual is not None
-            else f"Declinación moderada: {abs(suma_3m):.1f}% en los últimos 3 meses."
+            else f"Declinación moderada: {abs(suma_6m):.1f}% en los últimos 6 meses."
         )}
 
     resultado = {
         "disponible": True,
         "unidad": unidad,
         "periodo_actual": fechas[-1].strftime("%Y-%m"),
-        "produccion_actual_mbd": round(float(actual), 2),
-        "pico_historico_mbd": round(float(pico), 2),
+        "produccion_actual_mbd": round(float(actual), 3),
+        "pico_historico_mbd": round(float(pico), 3),
         "pico_historico_periodo": fechas[pico_idx].strftime("%Y-%m"),
         "pct_vs_pico": round(actual / pico * 100, 1) if pico else None,
-        "tasa_declinacion_mensual": round(tasas[-1], 2) if tasas and tasas[-1] is not None else None,
+        "tasa_declinacion_mensual": round(tasas[-1], 3) if tasas and tasas[-1] is not None else None,
         "tasa_declinacion_anual": anual,
         "tendencia": tendencia,
         "promedio_3m": _promedio(3), "promedio_6m": _promedio(6), "promedio_12m": _promedio(12),
@@ -394,6 +423,98 @@ def get_pozo_analisis(engine: Engine, campo: str, pozo: str, metrica: str = "aut
     return resultado
 
 
+def get_pozo_tendencia_desglose(engine: Engine, campo: str, pozo: str, metrica: str = "auto") -> dict:
+    """Desglose paso a paso de cómo se calculó la Tendencia (y la Vida
+    Remanente si aplica) de un pozo — mismos números y fórmulas que
+    get_pozo_analisis/_tendencia, pero exponiendo los pasos intermedios
+    (tasas mensuales, promedios 12m, equivalente semestral, delta, ajuste)
+    para explicarlo en un modal, no solo el resultado final."""
+    serie, well_id, unidad = _serie_mensual_pozo(engine, campo, pozo, metrica)
+    if serie.empty:
+        return {"disponible": False}
+
+    fechas = serie["fecha"].tolist()
+    valores = serie["valor"].tolist()
+    n = len(valores)
+
+    es_gas = unidad == "MMpcd"
+    producto = "Gas (MMpcd)" if es_gas else "Hidrocarburos líquidos (Mbd)"
+
+    ultimos_13 = [
+        {"fecha": f.strftime("%Y-%m"), "valor": round(float(v), 4)}
+        for f, v in zip(fechas[-13:], valores[-13:])
+    ]
+
+    tasas = _tasas_mensuales(valores)
+    ultimos_6_idx = list(range(max(0, len(tasas) - 6), len(tasas)))
+    pasos_6m = [
+        {
+            "fecha": fechas[i + 1].strftime("%Y-%m"),
+            "valor_anterior": round(float(valores[i]), 4),
+            "valor_actual": round(float(valores[i + 1]), 4),
+            "tasa": round(tasas[i], 3) if tasas[i] is not None else None,
+        }
+        for i in ultimos_6_idx
+    ]
+    validas_6m = [p["tasa"] for p in pasos_6m if p["tasa"] is not None]
+    suma_6m = round(sum(validas_6m), 3) if validas_6m else None
+
+    anual = None
+    prom_actual_12m = prom_previo_12m = None
+    if n >= 24:
+        prom_actual_12m = round(sum(valores[-12:]) / 12, 4)
+        prom_previo_12m = round(sum(valores[-24:-12]) / 12, 4)
+        anual = round((prom_actual_12m - prom_previo_12m) / prom_previo_12m * 100, 3) if prom_previo_12m else None
+
+    base = _clasificar_declinacion(anual, -12, -5, 5) if anual is not None else (
+        _clasificar_declinacion(suma_6m, _UMBRAL_CRITICO_6M, _UMBRAL_DECLINANDO_6M, _UMBRAL_CRECIENDO_6M)
+        if suma_6m is not None else None
+    )
+
+    equivalente_semestral = delta = None
+    ajuste = None
+    tendencia_final = _tendencia(suma_6m, anual) if suma_6m is not None else "SIN_DATOS"
+    if anual is not None and suma_6m is not None:
+        equivalente_semestral = round(((1 + anual / 100) ** 0.5 - 1) * 100, 3)
+        delta = round(suma_6m - equivalente_semestral, 3)
+        if delta < -_UMBRAL_MOMENTUM and tendencia_final != base:
+            ajuste = "baja"
+        elif delta > _UMBRAL_MOMENTUM and tendencia_final != base:
+            ajuste = "sube"
+        else:
+            ajuste = "igual"
+
+    actual = valores[-1]
+    vida = None
+    if anual is not None and anual < 0 and actual > 0:
+        k = abs(anual) / 100
+        limite = round(actual * 0.1, 6)
+        if k > 0:
+            import math
+            t_anios = math.log(actual / limite) / k
+            vida = {
+                "k": round(k, 5), "limite": limite,
+                "t_anios": round(t_anios, 3),
+                "meses": max(0, round(t_anios * 12)),
+            }
+
+    return {
+        "disponible": True,
+        "campo": campo, "pozo": pozo, "unidad": unidad, "producto": producto, "es_gas_seco": es_gas,
+        "n_meses": n,
+        "rango": f"{fechas[0].strftime('%Y-%m')} a {fechas[-1].strftime('%Y-%m')}",
+        "ultimos_13": ultimos_13,
+        "pasos_6m": pasos_6m, "suma_6m": suma_6m,
+        "prom_actual_12m": prom_actual_12m, "prom_previo_12m": prom_previo_12m, "anual": anual,
+        "base": base,
+        "equivalente_semestral": equivalente_semestral, "delta": delta,
+        "umbral_momentum": round(_UMBRAL_MOMENTUM, 3), "ajuste": ajuste,
+        "tendencia_final": tendencia_final,
+        "produccion_actual": round(float(actual), 4),
+        "vida_remanente": vida,
+    }
+
+
 def get_pozos_ranking(
     engine: Engine, cuenca: str, campo: str, start_year: int, end_year: int,
     start_month: int, end_month: int, period: str, years: str = "",
@@ -409,7 +530,7 @@ def get_pozos_ranking(
         where_extra += " AND ASIG_CONT = :campo"
         params["campo"] = campo
     sql = f"""
-        SELECT FECHA, WELL_ID, WELL_NAME, PETROLEO_MBD, CONDENSADO_MBD, GAS_MMPCD
+        SELECT FECHA, WELL_ID, WELL_NAME, ASIG_CONT, PETROLEO_MBD, CONDENSADO_MBD, GAS_MMPCD
         FROM {_source_table()}
         WHERE {where_fecha}{where_extra}
     """
@@ -434,6 +555,30 @@ def get_pozos_ranking(
     ranking = _tendencia_por_pozo(df, ["well_id", "well_name"], metric_col=metric_col)
     if ranking.empty:
         return {"periodo": None, "promedio_mbd": None, "num_pozos": 0, "pozos": [], "unidad": unidad}
+
+    # La producción mostrada debe coincidir con la que ve el usuario al entrar
+    # al detalle del pozo: en vista anual esa columna es el PROMEDIO de los
+    # meses del año (_rollup_periodo, igual que el resto del tablero), no el
+    # último mes crudo — antes el ranking tomaba directo la última fila
+    # mensual, lo que no coincidía con la cifra del detalle (p. ej. 6.89 en
+    # el ranking vs 6.85 en el detalle para el mismo pozo/año).
+    df["periodo"] = df["fecha"].dt.strftime("%Y-%m") if period == "monthly" else df["fecha"].dt.strftime("%Y")
+    # dropna=False: un pozo sin WELL_ID (groupby excluye NaN por default) se
+    # quedaba sin match en el merge de abajo -> produccion_mbd salía null y
+    # tronaba toda la tarjeta (el resto de las columnas sí toleran null).
+    por_periodo = df.groupby(["well_id", "well_name", "periodo"], as_index=False, dropna=False)[metric_col].mean()
+    ultimo_periodo = por_periodo["periodo"].max()
+    prod_ultimo_periodo = (
+        por_periodo[por_periodo["periodo"] == ultimo_periodo]
+        [["well_id", "well_name", metric_col]]
+        .rename(columns={metric_col: "produccion_mbd"})
+    )
+    ranking = ranking.drop(columns=["produccion_mbd"]).merge(
+        prod_ultimo_periodo, on=["well_id", "well_name"], how="left"
+    )
+    # Salvaguarda: si por lo que sea algún pozo sigue sin match, 0 en vez de
+    # null — un valor raro en pantalla es mejor que tumbar todo el ranking.
+    ranking["produccion_mbd"] = ranking["produccion_mbd"].fillna(0).round(3)
 
     # La tendencia de arriba se calculó solo con el rango de la UI, lo que
     # puede contradecir get_pozo_analisis (que evalúa el histórico completo).
@@ -469,15 +614,24 @@ def get_pozos_ranking(
     else:
         ranking["estado_operativo"] = None
 
+    # Campo (ASIG_CONT) de cada pozo — necesario para poder seleccionar un
+    # pozo desde un ranking a nivel CUENCA (varios campos mezclados) y que el
+    # detalle sepa a qué campo pedirle la serie; antes el frontend asumía el
+    # campo ya elegido en el árbol, así que un pozo de otro campo dentro de
+    # la misma cuenca salía como "sin producción registrada".
+    campo_por_pozo = df.drop_duplicates(subset=["well_id", "well_name"])[["well_id", "well_name", "asig_cont"]]
+    ranking = ranking.merge(campo_por_pozo, on=["well_id", "well_name"], how="left")
+    ranking = ranking.rename(columns={"asig_cont": "campo"})
+
     ranking = ranking.sort_values("produccion_mbd", ascending=False).reset_index(drop=True)
     ranking.insert(0, "ranking", ranking.index + 1)
     ranking = ranking.rename(columns={"well_name": "pozo"})
 
     ultimo = df["fecha"].max().strftime("%Y-%m") if period == "monthly" else str(df["fecha"].max().year)
-    promedio = round(float(ranking["produccion_mbd"].mean()), 2) if not ranking.empty else None
+    promedio = round(float(ranking["produccion_mbd"].mean()), 3) if not ranking.empty else None
     return {
         "periodo": ultimo, "promedio_mbd": promedio, "num_pozos": len(ranking), "unidad": unidad,
-        "pozos": ranking[["ranking", "well_id", "pozo", "produccion_mbd", "tendencia", "estado_operativo"]].to_dict("records"),
+        "pozos": ranking[["ranking", "well_id", "pozo", "campo", "produccion_mbd", "tendencia", "estado_operativo"]].to_dict("records"),
     }
 
 
@@ -508,7 +662,7 @@ def get_pozos_comparar(engine: Engine, especificaciones: list[tuple[str, str]], 
             "name": pozo,
             "unidad": unidad,
             "categories": rollup["periodo"].tolist(),
-            "data": [round(float(v), 2) for v in rollup["valor"]],
+            "data": [round(float(v), 3) for v in rollup["valor"]],
         })
         tabla.append({
             "pozo": pozo, "campo": campo,

@@ -4,13 +4,17 @@ from app.config import settings
 from app.services.cache_utils import cached
 
 SCHEMA = settings.db_schema + "."
+_PG = settings.db_engine == "postgres"
+_TABLA_PRODUCCION_ESTADO = "api.v_produccion_estado" if _PG else f"{SCHEMA}PRODUCCION_ESTADO"
+_YEAR_FECHA = "EXTRACT(YEAR FROM FECHA)" if _PG else "YEAR(FECHA)"
+_ISNULL = "COALESCE" if _PG else "ISNULL"
 
 
 def _where_fecha(start_year, start_month, end_year, end_month, period, years=""):
     years_list = [int(y.strip()) for y in years.split("|") if y.strip()] if years else []
     if years_list:
         años_sql = ", ".join(str(y) for y in years_list)
-        return f"YEAR(FECHA) IN ({años_sql})", "annually"
+        return f"{_YEAR_FECHA} IN ({años_sql})", "annually"
     init = f"{start_year}-{start_month:02d}-01"
     end = f"{end_year}-{end_month:02d}-01"
     return f"FECHA BETWEEN '{init}' AND '{end}'", period
@@ -29,11 +33,11 @@ def get_por_estado(engine: Engine, start_year: int, end_year: int, start_month: 
     where_fecha, period = _where_fecha(start_year, start_month, end_year, end_month, period, years)
     sql = f"""
         SELECT NOM_ENT, FECHA, UBICACION,
-               SUM(ISNULL(PETROLEO_MBD,0)+ISNULL(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
+               SUM({_ISNULL}(PETROLEO_MBD,0)+{_ISNULL}(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
                SUM(PETROLEO_MBD)  AS PETROLEO_MBD,
                SUM(CONDENSADO_MBD) AS CONDENSADO_MBD,
                SUM(GAS_MMPCD)     AS GAS_MMPCD
-        FROM {SCHEMA}PRODUCCION_ESTADO
+        FROM {_TABLA_PRODUCCION_ESTADO}
         WHERE {where_fecha}
         GROUP BY NOM_ENT, FECHA, UBICACION
     """

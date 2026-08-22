@@ -4,7 +4,7 @@ from sqlalchemy.engine import Engine
 from app.database import get_db_dep
 from app.services.produccion_service import (
     get_produccion, get_produccion_cuenca, get_produccion_detalle, get_produccion_filtros,
-    get_asignaciones_ranking, get_asignacion_detalle,
+    get_asignaciones_ranking, get_asignacion_detalle, get_produccion_historico,
 )
 from app.services import pozos_cache, pozos_service
 
@@ -71,6 +71,11 @@ def produccion_filtros(engine: Engine = Depends(get_db_dep)):
     return get_produccion_filtros(engine)
 
 
+@router.get("/historico")
+def produccion_historico(topic: str = Query(...), engine: Engine = Depends(get_db_dep)):
+    return get_produccion_historico(engine, topic)
+
+
 @router.get("/pozos/arbol")
 def produccion_pozos_arbol(engine: Engine = Depends(get_db_dep)):
     return pozos_service.get_produccion_pozos_arbol(engine)
@@ -114,6 +119,16 @@ def produccion_pozo_analisis(
     engine: Engine = Depends(get_db_dep),
 ):
     return pozos_service.get_pozo_analisis(engine, campo, pozo, metrica)
+
+
+@router.get("/pozos/tendencia-desglose")
+def produccion_pozo_tendencia_desglose(
+    campo: str = Query(...),
+    pozo: str = Query(...),
+    metrica: str = Query("auto"),
+    engine: Engine = Depends(get_db_dep),
+):
+    return pozos_service.get_pozo_tendencia_desglose(engine, campo, pozo, metrica)
 
 
 @router.get("/pozos/ranking")

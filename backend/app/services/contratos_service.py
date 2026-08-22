@@ -4,6 +4,21 @@ from app.config import settings
 from app.services.cache_utils import cached
 
 SCHEMA = settings.db_schema + "."
+_PG = settings.db_engine == "postgres"
+_YEAR_FECHA = "EXTRACT(YEAR FROM FECHA)" if _PG else "YEAR(FECHA)"
+_ISNULL = "COALESCE" if _PG else "ISNULL"
+# SUBSTRING(x,1,2) es sintaxis SQL Server; en Postgres es SUBSTRING(x FROM 1 FOR 2)
+_SUBSTR2 = (lambda col: f"SUBSTRING({col} FROM 1 FOR 2)") if _PG else (lambda col: f"SUBSTRING({col},1,2)")
+_TABLA_PRODUCCION_CAMPOS = "api.v_produccion_campos" if _PG else f"{SCHEMA}PRODUCCION_CAMPOS"
+_TABLA_PRODUCCION_OPERADOR_IP = "api.v_produccion_operador_ip" if _PG else f"{SCHEMA}PRODUCCION_OPERADOR_IP"
+# api.v_produccion_operador_ip ya expone la columna como "operador" (no "empresa" como en dbo.PRODUCCION_OPERADOR_IP)
+_COL_EMPRESA = "operador" if _PG else "EMPRESA"
+_TABLA_POZOS_COMPROMETIDOS = "api.v_pozos_comprometidos" if _PG else "rdmx.T_21_PozosComprometidos"
+_TABLA_INVERSIONES = "api.v_inversiones_aprobadas" if _PG else f"{SCHEMA}INVERSIONES_APROBADAS"
+_TABLA_LICITACIONES_OFERTAS = "api.v_licitaciones_ofertas" if _PG else "licitaciones_bloques_ofertas"
+# ID<>1 (fila de totales/placeholder) ya se descarto al cargar core.fact_produccion_campo
+# -- ver postgres_migration/00_PLAN.md regla #6 -- no hace falta filtrarlo de nuevo.
+_FILTRO_ID = "" if _PG else "AND ID <> 1"
 
 
 def _date_range(start_year, start_month, end_year, end_month):
@@ -14,7 +29,7 @@ def _where_fecha(start_year, start_month, end_year, end_month, period, years="")
     years_list = [int(y.strip()) for y in years.split("|") if y.strip()] if years else []
     if years_list:
         años_sql = ", ".join(str(y) for y in years_list)
-        return f"YEAR(FECHA) IN ({años_sql})", "annually"
+        return f"{_YEAR_FECHA} IN ({años_sql})", "annually"
     init, end = _date_range(start_year, start_month, end_year, end_month)
     return f"FECHA BETWEEN '{init}' AND '{end}'", period
 
@@ -59,7 +74,7 @@ def get_contratos(engine: Engine, start_year, end_year, start_month, end_month, 
     sql = f"""
         SELECT
             DIAS_PRODUCCION, FECHA, ASIG_CONT, TIPO, OPERADOR,
-            SUM(ISNULL(PETROLEO_MBD,0)+ISNULL(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
+            SUM({_ISNULL}(PETROLEO_MBD,0)+{_ISNULL}(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
             SUM(PETROLEO_MBD)    AS PETROLEO_MBD,
             SUM(CONDENSADO_MBD)  AS CONDENSADO_MBD,
             SUM(GAS_MMPCD)       AS GAS_MMPCD,
@@ -67,8 +82,8 @@ def get_contratos(engine: Engine, start_year, end_year, start_month, end_month, 
             SUM(GAS_NASOC_MMPCD) AS GAS_NASOC_MMPCD,
             SUM(N2_MMPCD)        AS N2_MMPCD,
             SUM(AGUA_MBD)        AS AGUA_MBD
-        FROM {SCHEMA}PRODUCCION_CAMPOS
-        WHERE ID <> 1
+        FROM {_TABLA_PRODUCCION_CAMPOS}
+        WHERE 1=1 {_FILTRO_ID}
           AND {where_fecha}
           AND TIPO = '{tipo}'
         GROUP BY DIAS_PRODUCCION, FECHA, ASIG_CONT, TIPO, OPERADOR
@@ -114,18 +129,18 @@ def get_operadores(engine: Engine, start_year, end_year, start_month, end_month,
     sql = f"""
         SELECT
             DIAS_PRODUCCION, FECHA,
-            CASE WHEN SUBSTRING(ASIG_CONT,1,2) IN ('A-','AE','AR') THEN 'Asignaciones'
+            CASE WHEN {_SUBSTR2("ASIG_CONT")} IN ('A-','AE','AR') THEN 'Asignaciones'
                  ELSE ASIG_CONT END AS ASIG_CONT,
-            EMPRESA AS OPERADOR,
-            CASE WHEN SUBSTRING(ASIG_CONT,1,2) = 'A-' THEN 'ASIGNACION'
+            {_COL_EMPRESA} AS OPERADOR,
+            CASE WHEN {_SUBSTR2("ASIG_CONT")} = 'A-' THEN 'ASIGNACION'
                  ELSE 'Contratos' END AS TIPO,
-            SUM(ISNULL(PETROLEO_MBD,0)*FACTOR_O+ISNULL(CONDENSADO_MBD,0)*FACTOR_O) AS LIQUIDOS_MBD,
+            SUM({_ISNULL}(PETROLEO_MBD,0)*FACTOR_O+{_ISNULL}(CONDENSADO_MBD,0)*FACTOR_O) AS LIQUIDOS_MBD,
             SUM(PETROLEO_MBD*FACTOR_O)    AS PETROLEO_MBD,
             SUM(GAS_MMPCD*FACTOR_O)       AS GAS_MMPCD,
             SUM(AGUA_MBD*FACTOR_O)        AS AGUA_MBD
-        FROM {SCHEMA}PRODUCCION_OPERADOR_IP
+        FROM {_TABLA_PRODUCCION_OPERADOR_IP}
         WHERE FECHA BETWEEN '{init}' AND '{end}'
-        GROUP BY DIAS_PRODUCCION, FECHA, ASIG_CONT, EMPRESA
+        GROUP BY DIAS_PRODUCCION, FECHA, ASIG_CONT, {_COL_EMPRESA}
     """
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
@@ -177,11 +192,12 @@ def get_pozos_comprometidos(engine: Engine) -> dict:
     # se toman de INVERSIONES_APROBADAS (mismo CONTRATO) para poder armar la
     # jerarquía Modalidad → Ronda/Licitación → Contrato con desglose por
     # Ambiente que pide el tema.
+    pozos_planes_col = "pozos_planes" if _PG else "pozosPlanes"
     sql = f"""
-        SELECT p.contrato, p.ronda, p.licitacion, p.pozosPlanes,
+        SELECT p.contrato, p.ronda, p.licitacion, p.{pozos_planes_col} AS pozosPlanes,
                i.MODALIDAD, i.UBICACION
-        FROM rdmx.T_21_PozosComprometidos p
-        LEFT JOIN (SELECT DISTINCT CONTRATO, MODALIDAD, UBICACION FROM {SCHEMA}INVERSIONES_APROBADAS) i
+        FROM {_TABLA_POZOS_COMPROMETIDOS} p
+        LEFT JOIN (SELECT DISTINCT CONTRATO, MODALIDAD, UBICACION FROM {_TABLA_INVERSIONES}) i
           ON i.CONTRATO = p.contrato
     """
     with engine.connect() as conn:
@@ -211,9 +227,11 @@ def get_pozos_comprometidos(engine: Engine) -> dict:
     ]
 
     for modalidad, sub_mod in df.groupby("modalidad"):
+        if modalidad == "Sin clasificar":
+            continue
         rows = []
         for grupo, sub_grupo in sub_mod.groupby("grupo"):
-            rows.append({"type": "subtotal", "label": f"{grupo} (Pozos)", "data": serie_por_ambiente(sub_grupo)})
+            rows.append({"type": "subtotal", "label": grupo, "data": serie_por_ambiente(sub_grupo)})
             for _, fila in sub_grupo.sort_values("contrato").iterrows():
                 rows.append({"type": "operator", "label": fila["contrato"], "data": serie_por_ambiente(sub_grupo[sub_grupo["contrato"] == fila["contrato"]])})
         groups.append({"cuenca": modalidad, "data": serie_por_ambiente(sub_mod), "subgroups": [{"ubicacion": "Nacional", "rows": rows}]})
@@ -239,10 +257,10 @@ def get_ofertas_efectivo(engine: Engine) -> dict:
     # realidad la Modalidad (Licencia/Producción compartida) y
     # "contrato_nombre" el identificador real del contrato — mismo patrón que
     # Pozos comprometidos.
-    sql = """
+    sql = f"""
         SELECT ronda, licitacion, contrato AS modalidad, contrato_nombre AS contrato,
                ubicacion, bono
-        FROM licitaciones_bloques_ofertas
+        FROM {_TABLA_LICITACIONES_OFERTAS}
         WHERE bono IS NOT NULL AND contrato_nombre IS NOT NULL AND id_licitante = id_licitante_adj
     """
     with engine.connect() as conn:
@@ -274,7 +292,7 @@ def get_ofertas_efectivo(engine: Engine) -> dict:
     for modalidad, sub_mod in df.groupby("modalidad"):
         rows = []
         for grupo, sub_grupo in sub_mod.groupby("grupo"):
-            rows.append({"type": "subtotal", "label": f"{grupo} (Bono)", "data": serie_por_ambiente(sub_grupo)})
+            rows.append({"type": "subtotal", "label": grupo, "data": serie_por_ambiente(sub_grupo)})
             for contrato, sub_contrato in sub_grupo.groupby("contrato"):
                 rows.append({"type": "operator", "label": contrato, "data": serie_por_ambiente(sub_contrato)})
         groups.append({"cuenca": modalidad, "data": serie_por_ambiente(sub_mod), "subgroups": [{"ubicacion": "Nacional", "rows": rows}]})
@@ -295,10 +313,10 @@ def get_inversion_comprometida(engine: Engine) -> dict:
     # — un valor por contrato, no por socio del consorcio (a diferencia de
     # "bono", que sí se reparte) — de ahí el groupby...first() en vez de sum().
     # Cifras en millones de USD (mismo criterio que el sitio de origen).
-    sql = """
+    sql = f"""
         SELECT ronda, licitacion, contrato AS modalidad, contrato_nombre AS contrato,
                ubicacion, inv_usd
-        FROM licitaciones_bloques_ofertas
+        FROM {_TABLA_LICITACIONES_OFERTAS}
         WHERE inv_usd IS NOT NULL AND contrato_nombre IS NOT NULL AND id_licitante = id_licitante_adj
     """
     with engine.connect() as conn:
@@ -338,7 +356,7 @@ def get_inversion_comprometida(engine: Engine) -> dict:
     for modalidad, sub_mod in df.groupby("modalidad"):
         rows = []
         for grupo, sub_grupo in sub_mod.groupby("grupo"):
-            rows.append({"type": "subtotal", "label": f"{grupo} (PMT)", "data": serie_por_ambiente(sub_grupo)})
+            rows.append({"type": "subtotal", "label": grupo, "data": serie_por_ambiente(sub_grupo)})
             for contrato, sub_contrato in sub_grupo.groupby("contrato"):
                 rows.append({"type": "operator", "label": contrato, "data": serie_por_ambiente(sub_contrato)})
         groups.append({"cuenca": modalidad, "data": serie_por_ambiente(sub_mod), "subgroups": [{"ubicacion": "Nacional", "rows": rows}]})
@@ -359,11 +377,12 @@ def _col_contrato(ronda: str, licitacion: str, contrato: str) -> str:
     return f"R0{ronda}-L0{licitacion}"
 
 
+
 @cached()
 def get_contratos_adjudicados(engine: Engine) -> dict:
-    sql = """
+    sql = f"""
         SELECT ronda, licitacion, contrato_nombre, pais, empresa
-        FROM licitaciones_bloques_ofertas
+        FROM {_TABLA_LICITACIONES_OFERTAS}
         WHERE contrato_nombre IS NOT NULL AND id_licitante = id_licitante_adj
     """
     with engine.connect() as conn:
@@ -382,12 +401,17 @@ def get_contratos_adjudicados(engine: Engine) -> dict:
         conteo = sub.groupby("columna")["contrato_nombre"].nunique()
         return [int(conteo.get(c, 0)) for c in categories]
 
+    # El país se mantiene como grupo real (habilita el filtro por país en
+    # Filtros/TopBar y la búsqueda de texto por país) pero el front ya no lo
+    # muestra como encabezado — las empresas van sueltas y ordenadas
+    # alfabéticamente, con la bandera del país (ícono, no emoji — Windows no
+    # renderiza casi ninguna bandera de emoji Unicode) al frente del nombre.
     groups = []
     for pais, sub_pais in sorted(df.groupby("pais")):
         rows = [
-            {"type": "operator", "label": empresa, "data": serie(sub_emp)}
+            {"type": "operator", "label": empresa, "pais": pais, "data": serie(sub_emp)}
             for empresa, sub_emp in sorted(sub_pais.groupby("empresa"))
         ]
-        groups.append({"cuenca": f"{pais} (Contratos)", "data": serie(sub_pais), "subgroups": [{"ubicacion": "Nacional", "rows": rows}]})
+        groups.append({"cuenca": pais, "data": serie(sub_pais), "subgroups": [{"ubicacion": "Nacional", "rows": rows}]})
 
     return {"type": "hierarchical", "categories": categories, "groups": groups}

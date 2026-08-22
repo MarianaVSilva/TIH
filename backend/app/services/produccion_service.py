@@ -5,6 +5,22 @@ from app.config import settings
 from app.services.cache_utils import cached
 
 SCHEMA = settings.db_schema + "."
+_PG = settings.db_engine == "postgres"
+_YEAR_FECHA = "EXTRACT(YEAR FROM FECHA)" if _PG else "{_YEAR_FECHA}"
+_ISNULL = "COALESCE" if _PG else "ISNULL"
+_TABLA_PRODUCCION_CAMPOS = "api.v_produccion_campos" if _PG else f"{SCHEMA}PRODUCCION_CAMPOS"
+_TABLA_PRODUCCION_ESTADO = "api.v_produccion_estado" if _PG else f"{SCHEMA}PRODUCCION_ESTADO"
+_TABLA_PRODUCCION_OPERADOR_IP = "api.v_produccion_operador_ip" if _PG else f"{SCHEMA}PRODUCCION_OPERADOR_IP"
+_TABLA_PRODUCCION_CAMPOS_POZOS = "api.v_produccion_campos_pozos" if _PG else f"{SCHEMA}PRODUCCION_CAMPOS_POZOS"
+# api.v_produccion_operador_ip expone "operador" (no "empresa" como en dbo.PRODUCCION_OPERADOR_IP)
+_COL_EMPRESA = "operador" if _PG else "EMPRESA"
+# ID<>1 (fila de totales/placeholder) ya se descarto al cargar core.fact_produccion_campo (regla #6, 00_PLAN.md)
+_FILTRO_ID = "" if _PG else "ID <> 1 AND "
+_FILTRO_ID_WHERE = "1=1" if _PG else "ID <> 1"
+# DATEADD(unit,-n,GETDATE()) es sintaxis SQL Server (unit en singular: year/month);
+# equivalente en Postgres: CURRENT_DATE - INTERVAL 'n unit' (unit en plural).
+def _dateadd_ago(n: int, unit_singular: str) -> str:
+    return f"(CURRENT_DATE - INTERVAL '{n} {unit_singular}s')" if _PG else f"DATEADD({unit_singular}, -{n}, GETDATE())"
 
 
 def _date_range(start_year: int, start_month: int, end_year: int, end_month: int):
@@ -18,7 +34,7 @@ def _where_fecha(start_year: int, start_month: int, end_year: int, end_month: in
     years_list = [int(y.strip()) for y in years.split("|") if y.strip()] if years else []
     if years_list:
         años_sql = ", ".join(str(y) for y in years_list)
-        return f"YEAR(FECHA) IN ({años_sql})", "annually"
+        return f"{_YEAR_FECHA} IN ({años_sql})", "annually"
     init, end = _date_range(start_year, start_month, end_year, end_month)
     return f"FECHA BETWEEN '{init}' AND '{end}'", period
 
@@ -51,10 +67,10 @@ NUMERIC_COLS_CUENCA = [c for c, _ in PRODUCTOS]
 
 @cached()
 def get_produccion_filtros(engine: Engine) -> dict:
-    sql = f"SELECT DISTINCT CUENCA, UBICACION FROM {SCHEMA}PRODUCCION_CAMPOS"
+    sql = f"SELECT DISTINCT CUENCA, UBICACION FROM {_TABLA_PRODUCCION_CAMPOS}"
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
-        empresas_df = pd.read_sql(f"SELECT DISTINCT EMPRESA FROM {SCHEMA}PRODUCCION_OPERADOR_IP", conn)
+        empresas_df = pd.read_sql(f"SELECT DISTINCT {_COL_EMPRESA} AS EMPRESA FROM {_TABLA_PRODUCCION_OPERADOR_IP}", conn)
     df.columns = df.columns.str.lower()
     empresas_df.columns = empresas_df.columns.str.lower()
     return {
@@ -119,19 +135,28 @@ def _remap_contrato(asig_cont) -> str:
     return "Asignaciones" if s[:2] in ("A-", "AE", "AR") else s
 
 
-def _filas_empresa_por_producto(sub_df, categories):
-    """Una empresa ya acotada: cada producto (incluido el agregado de
-    líquidos) como subtotal, desglosado por contrato — mismo patrón que
-    _filas_agregadas_por_producto en 'Producción por ubicación', con Contrato
-    en el rol de ambiente."""
+def _filas_empresa_por_contrato(sub_df, categories):
+    """Una empresa ya acotada: cada Contrato/Asignación como subtotal,
+    desglosado por producto (hoja) — pedido explícito: antes era Producto →
+    Contrato, lo que repetía el nombre del contrato una vez por cada
+    producto que produce (7-8 veces seguidas para un mismo contrato).
+    No lleva subtotales aparte de "Hidrocarburos líquidos (Mbd)"/"Gas
+    (MMpcd)" (serían un duplicado del banner Total Mbd/Total MMpcd que ya
+    arma el frontend sumando los operator homónimos bajo cada contrato —
+    ver totalesPorUnidad en DynamicTable.jsx)."""
     rows = []
-    for col, label in PRODUCTOS_EMPRESA:
-        if sub_df[col].sum() == 0:
-            continue  # producto sin producción para esta empresa: no aporta mostrarlo
-        rows.append(_make_row(label, "subtotal", categories, sub_df.groupby("periodo")[col].sum()))
-        pivot = sub_df.groupby(["contrato", "periodo"])[col].sum().unstack(fill_value=0)
-        for contrato in sorted(pivot.index):
-            rows.append(_make_row(contrato, "operator", categories, pivot.loc[contrato]))
+    for contrato in sorted(sub_df["contrato"].dropna().unique()):
+        sub_c = sub_df[sub_df["contrato"] == contrato]
+        productos_activos = [(col, label) for col, label in PRODUCTOS_EMPRESA if sub_c[col].sum() != 0]
+        if not productos_activos:
+            continue
+        # Sin cifra en el encabezado del contrato: mezclar Mbd y MMpcd en un
+        # solo número (antes PCE = líquidos + gas/5) confundía más de lo que
+        # aportaba — mejor sin dato ahí, el detalle real está en las filas
+        # de producto de abajo.
+        rows.append({"label": contrato, "type": "subtotal", "data": [None for _ in categories]})
+        for col, label in productos_activos:
+            rows.append(_make_row(label, "operator", categories, sub_c.groupby("periodo")[col].sum()))
     return rows
 
 
@@ -211,11 +236,12 @@ def _kpis_producto_entidad(df, categories, entidad_col):
 
 
 def _cargar_df_producto_entidad(engine, tabla, entidad_col_sql, where_fecha, extra_where=""):
+    tabla_sql = _TABLA_PRODUCCION_CAMPOS if tabla == "PRODUCCION_CAMPOS" else f"{SCHEMA}{tabla}"
     """SQL genérica para las tablas con las 8 columnas de producto (PRODUCCION_CAMPOS
     y PRODUCCION_ESTADO comparten el mismo patrón de columnas)."""
     sql = f"""
         SELECT FECHA, {entidad_col_sql},
-               SUM(ISNULL(PETROLEO_MBD,0)+ISNULL(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
+               SUM({_ISNULL}(PETROLEO_MBD,0)+{_ISNULL}(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
                SUM(PETROLEO_MBD)      AS PETROLEO_MBD,
                SUM(CONDENSADO_MBD)    AS CONDENSADO_MBD,
                SUM(GAS_MMPCD)         AS GAS_MMPCD,
@@ -223,7 +249,7 @@ def _cargar_df_producto_entidad(engine, tabla, entidad_col_sql, where_fecha, ext
                SUM(GAS_NASOC_MMPCD)   AS GAS_NASOC_MMPCD,
                SUM(N2_MMPCD)          AS N2_MMPCD,
                SUM(AGUA_MBD)          AS AGUA_MBD
-        FROM {SCHEMA}{tabla}
+        FROM {tabla_sql}
         WHERE {extra_where}{where_fecha}
         GROUP BY FECHA, {entidad_col_sql}
     """
@@ -244,13 +270,14 @@ def _preparar_df_producto_entidad(df, entidad_col, period):
 
 
 def _cargar_df_producto_entidad_multi(engine, tabla, cols_sql, where_fecha, extra_where=""):
+    tabla_sql = _TABLA_PRODUCCION_CAMPOS if tabla == "PRODUCCION_CAMPOS" else f"{SCHEMA}{tabla}"
     """Como _cargar_df_producto_entidad pero agrupando por varias columnas de
     entidad a la vez (p. ej. CUENCA, UBICACION y la hoja final) — usado para
     el drill-down Ambiente → Cuenca → Producto → hoja de Campo/Asignación."""
     cols_list = ", ".join(cols_sql)
     sql = f"""
         SELECT FECHA, {cols_list},
-               SUM(ISNULL(PETROLEO_MBD,0)+ISNULL(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
+               SUM({_ISNULL}(PETROLEO_MBD,0)+{_ISNULL}(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
                SUM(PETROLEO_MBD)      AS PETROLEO_MBD,
                SUM(CONDENSADO_MBD)    AS CONDENSADO_MBD,
                SUM(GAS_MMPCD)         AS GAS_MMPCD,
@@ -258,7 +285,7 @@ def _cargar_df_producto_entidad_multi(engine, tabla, cols_sql, where_fecha, extr
                SUM(GAS_NASOC_MMPCD)   AS GAS_NASOC_MMPCD,
                SUM(N2_MMPCD)          AS N2_MMPCD,
                SUM(AGUA_MBD)          AS AGUA_MBD
-        FROM {SCHEMA}{tabla}
+        FROM {tabla_sql}
         WHERE {extra_where}{where_fecha}
         GROUP BY FECHA, {cols_list}
     """
@@ -338,7 +365,7 @@ def get_produccion_contratos(
     terceros, sin asignaciones de Pemex) — mismo patrón que 'Producción por
     operador' pero sin el nivel de empresa."""
     where_fecha, period = _where_fecha(start_year, start_month, end_year, end_month, period, years)
-    df = _cargar_df_producto_entidad(engine, "PRODUCCION_CAMPOS", "ASIG_CONT", where_fecha, extra_where="ID <> 1 AND TIPO = 'CONTRATO' AND ")
+    df = _cargar_df_producto_entidad(engine, "PRODUCCION_CAMPOS", "ASIG_CONT", where_fecha, extra_where=f"{_FILTRO_ID}TIPO = 'CONTRATO' AND ")
     if df.empty:
         return {"type": "hierarchical", "categories": [], "groups": []}
     df = _preparar_df_producto_entidad(df, "asig_cont", period)
@@ -386,7 +413,7 @@ def get_produccion_estado(
     where_fecha, period = _where_fecha(start_year, start_month, end_year, end_month, period, years)
     sql = f"""
         SELECT FECHA, NOM_ENT, UBICACION,
-               SUM(ISNULL(PETROLEO_MBD,0)+ISNULL(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
+               SUM({_ISNULL}(PETROLEO_MBD,0)+{_ISNULL}(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
                SUM(PETROLEO_MBD)      AS PETROLEO_MBD,
                SUM(CONDENSADO_MBD)    AS CONDENSADO_MBD,
                SUM(GAS_MMPCD)         AS GAS_MMPCD,
@@ -394,7 +421,7 @@ def get_produccion_estado(
                SUM(GAS_NASOC_MMPCD)   AS GAS_NASOC_MMPCD,
                SUM(N2_MMPCD)          AS N2_MMPCD,
                SUM(AGUA_MBD)          AS AGUA_MBD
-        FROM {SCHEMA}PRODUCCION_ESTADO
+        FROM {_TABLA_PRODUCCION_ESTADO}
         WHERE {where_fecha}
         GROUP BY FECHA, NOM_ENT, UBICACION
     """
@@ -435,7 +462,7 @@ def _hierarchia_empresa_operador(df, categories):
         sub = df[df["empresa"] == empresa]
         if sub.empty:
             continue
-        groups.append({"cuenca": empresa, "subgroups": [{"ubicacion": "Nacional", "rows": _filas_empresa_por_producto(sub, categories)}]})
+        groups.append({"cuenca": empresa, "subgroups": [{"ubicacion": "Nacional", "rows": _filas_empresa_por_contrato(sub, categories)}]})
     return groups
 
 
@@ -446,7 +473,7 @@ def get_produccion_empresas(
 ) -> dict:
     where_fecha, period = _where_fecha(start_year, start_month, end_year, end_month, period, years)
     sql = f"""
-        SELECT FECHA, EMPRESA, ASIG_CONT,
+        SELECT FECHA, {_COL_EMPRESA} AS EMPRESA, ASIG_CONT,
                SUM(PETROLEO_MBD*FACTOR_O)    AS PETROLEO_MBD,
                SUM(CONDENSADO_MBD*FACTOR_O)  AS CONDENSADO_MBD,
                SUM(GAS_MMPCD*FACTOR_O)       AS GAS_MMPCD,
@@ -454,9 +481,9 @@ def get_produccion_empresas(
                SUM(GAS_NASOC_MMPCD*FACTOR_O) AS GAS_NASOC_MMPCD,
                SUM(N2_MMPCD*FACTOR_O)        AS N2_MMPCD,
                SUM(AGUA_MBD*FACTOR_O)        AS AGUA_MBD
-        FROM {SCHEMA}PRODUCCION_OPERADOR_IP
+        FROM {_TABLA_PRODUCCION_OPERADOR_IP}
         WHERE {where_fecha}
-        GROUP BY FECHA, EMPRESA, ASIG_CONT
+        GROUP BY FECHA, {_COL_EMPRESA}, ASIG_CONT
     """
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
@@ -562,7 +589,7 @@ def get_produccion_cuenca(
 
     sql = f"""
         SELECT CUENCA, UBICACION, FECHA, DIAS_PRODUCCION,
-               SUM(ISNULL(PETROLEO_MBD,0)+ISNULL(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
+               SUM({_ISNULL}(PETROLEO_MBD,0)+{_ISNULL}(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
                SUM(PETROLEO_MBD)      AS PETROLEO_MBD,
                SUM(CONDENSADO_MBD)    AS CONDENSADO_MBD,
                SUM(GAS_MMPCD)         AS GAS_MMPCD,
@@ -570,8 +597,8 @@ def get_produccion_cuenca(
                SUM(GAS_NASOC_MMPCD)   AS GAS_NASOC_MMPCD,
                SUM(AGUA_MBD)          AS AGUA_MBD,
                SUM(N2_MMPCD)          AS N2_MMPCD
-        FROM {SCHEMA}PRODUCCION_CAMPOS
-        WHERE ID <> 1
+        FROM {_TABLA_PRODUCCION_CAMPOS}
+        WHERE {_FILTRO_ID_WHERE}
           AND {where_fecha}
         GROUP BY CUENCA, UBICACION, FECHA, DIAS_PRODUCCION
     """
@@ -647,11 +674,11 @@ def get_resumen_nacional(engine: Engine) -> dict:
     # sin este filtro la query agregaba el histórico completo de la tabla.
     sql = f"""
         SELECT FECHA,
-               SUM(ISNULL(PETROLEO_MBD,0)+ISNULL(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
-               SUM(ISNULL(GAS_MMPCD,0)) AS GAS_MMPCD
-        FROM {SCHEMA}PRODUCCION_CAMPOS
-        WHERE ID <> 1
-          AND FECHA >= DATEADD(year, -2, GETDATE())
+               SUM({_ISNULL}(PETROLEO_MBD,0)+{_ISNULL}(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
+               SUM({_ISNULL}(GAS_MMPCD,0)) AS GAS_MMPCD
+        FROM {_TABLA_PRODUCCION_CAMPOS}
+        WHERE {_FILTRO_ID_WHERE}
+          AND FECHA >= {_dateadd_ago(2, "year")}
         GROUP BY FECHA
     """
     with engine.connect() as conn:
@@ -696,12 +723,12 @@ def get_top_campos(engine: Engine, top_n: int = 8) -> dict:
     # agregar el histórico completo antes de descartarlo en pandas.
     sql = f"""
         SELECT CAMPO_PORTAL, FECHA,
-               SUM(ISNULL(PETROLEO_MBD,0)+ISNULL(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
-               SUM(ISNULL(GAS_MMPCD,0)) AS GAS_MMPCD
-        FROM {SCHEMA}PRODUCCION_CAMPOS
-        WHERE ID <> 1
+               SUM({_ISNULL}(PETROLEO_MBD,0)+{_ISNULL}(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
+               SUM({_ISNULL}(GAS_MMPCD,0)) AS GAS_MMPCD
+        FROM {_TABLA_PRODUCCION_CAMPOS}
+        WHERE {_FILTRO_ID_WHERE}
           AND TIPO = 'ASIGNACION'
-          AND FECHA >= DATEADD(month, -12, GETDATE())
+          AND FECHA >= {_dateadd_ago(12, "month")}
         GROUP BY CAMPO_PORTAL, FECHA
     """
     with engine.connect() as conn:
@@ -749,11 +776,11 @@ def get_produccion_por_operador(engine: Engine) -> dict:
     # Solo se necesita el último mes registrado.
     sql = f"""
         SELECT FECHA, OPERADOR, ASIG_CONT,
-               SUM(ISNULL(PETROLEO_MBD,0)+ISNULL(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
-               SUM(ISNULL(GAS_MMPCD,0)) AS GAS_MMPCD
-        FROM {SCHEMA}PRODUCCION_CAMPOS
-        WHERE ID <> 1
-          AND FECHA >= DATEADD(month, -12, GETDATE())
+               SUM({_ISNULL}(PETROLEO_MBD,0)+{_ISNULL}(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
+               SUM({_ISNULL}(GAS_MMPCD,0)) AS GAS_MMPCD
+        FROM {_TABLA_PRODUCCION_CAMPOS}
+        WHERE {_FILTRO_ID_WHERE}
+          AND FECHA >= {_dateadd_ago(12, "month")}
         GROUP BY FECHA, OPERADOR, ASIG_CONT
     """
     with engine.connect() as conn:
@@ -805,11 +832,11 @@ def get_pozos_operando(engine: Engine) -> dict:
     gas asociado) vs. POZOS_GAS (gas no asociado y condensado)."""
     sql = f"""
         SELECT FECHA,
-               SUM(ISNULL(POZOS_ACEITE,0)) AS POZOS_ACEITE,
-               SUM(ISNULL(POZOS_GAS,0))    AS POZOS_GAS
-        FROM {SCHEMA}PRODUCCION_CAMPOS_POZOS
+               SUM({_ISNULL}(POZOS_ACEITE,0)) AS POZOS_ACEITE,
+               SUM({_ISNULL}(POZOS_GAS,0))    AS POZOS_GAS
+        FROM {_TABLA_PRODUCCION_CAMPOS_POZOS}
         WHERE UBICACION IS NOT NULL
-          AND FECHA >= DATEADD(month, -12, GETDATE())
+          AND FECHA >= {_dateadd_ago(12, "month")}
         GROUP BY FECHA
     """
     with engine.connect() as conn:
@@ -856,7 +883,7 @@ def get_produccion_detalle(
 
     sql = f"""
         SELECT CUENCA, CAMPO_PORTAL, UBICACION, FECHA,
-               SUM(ISNULL(PETROLEO_MBD,0)+ISNULL(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
+               SUM({_ISNULL}(PETROLEO_MBD,0)+{_ISNULL}(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
                SUM(PETROLEO_MBD)      AS PETROLEO_MBD,
                SUM(CONDENSADO_MBD)    AS CONDENSADO_MBD,
                SUM(GAS_MMPCD)         AS GAS_MMPCD,
@@ -864,8 +891,8 @@ def get_produccion_detalle(
                SUM(GAS_NASOC_MMPCD)   AS GAS_NASOC_MMPCD,
                SUM(AGUA_MBD)          AS AGUA_MBD,
                SUM(N2_MMPCD)          AS N2_MMPCD
-        FROM {SCHEMA}PRODUCCION_CAMPOS
-        WHERE ID <> 1
+        FROM {_TABLA_PRODUCCION_CAMPOS}
+        WHERE {_FILTRO_ID_WHERE}
           AND FECHA BETWEEN '{init}' AND '{end}'
         GROUP BY CUENCA, CAMPO_PORTAL, UBICACION, FECHA
     """
@@ -920,12 +947,12 @@ def get_produccion_operadores(
     Top 10 empresas por PCE (petróleo crudo equivalente = líquidos + gas/5)."""
     where_fecha, period = _where_fecha(start_year, start_month, end_year, end_month, period, years)
     sql = f"""
-        SELECT FECHA, EMPRESA,
-               SUM(ISNULL(PETROLEO_MBD,0)*{factor_col}+ISNULL(CONDENSADO_MBD,0)*{factor_col}) AS LIQUIDOS_MBD,
-               SUM(ISNULL(GAS_MMPCD,0)*{factor_col}) AS GAS_MMPCD
-        FROM {SCHEMA}PRODUCCION_OPERADOR_IP
+        SELECT FECHA, {_COL_EMPRESA} AS EMPRESA,
+               SUM({_ISNULL}(PETROLEO_MBD,0)*{factor_col}+{_ISNULL}(CONDENSADO_MBD,0)*{factor_col}) AS LIQUIDOS_MBD,
+               SUM({_ISNULL}(GAS_MMPCD,0)*{factor_col}) AS GAS_MMPCD
+        FROM {_TABLA_PRODUCCION_OPERADOR_IP}
         WHERE {where_fecha}
-        GROUP BY FECHA, EMPRESA
+        GROUP BY FECHA, {_COL_EMPRESA}
     """
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
@@ -967,14 +994,14 @@ def get_produccion_asignaciones(
     Filtrado por Ambiente/Cuenca: drill-down Ambiente → Cuenca → Producto → Asignación."""
     where_fecha, period = _where_fecha(start_year, start_month, end_year, end_month, period, years)
     if not cuencas and not ubicaciones:
-        df = _cargar_df_producto_entidad(engine, "PRODUCCION_CAMPOS", "CUENCA", where_fecha, extra_where="ID <> 1 AND TIPO = 'ASIGNACION' AND ")
+        df = _cargar_df_producto_entidad(engine, "PRODUCCION_CAMPOS", "CUENCA", where_fecha, extra_where=f"{_FILTRO_ID}TIPO = 'ASIGNACION' AND ")
         if df.empty:
             return {"type": "hierarchical", "categories": [], "groups": []}
         df = _preparar_df_producto_entidad(df, "cuenca", period)
         categories = sorted(df["periodo"].unique().tolist())
         return _respuesta_producto_entidad(df, "cuenca", categories)
 
-    df = _cargar_df_producto_entidad_multi(engine, "PRODUCCION_CAMPOS", ["CUENCA", "UBICACION", "ASIG_CONT"], where_fecha, extra_where="ID <> 1 AND TIPO = 'ASIGNACION' AND ")
+    df = _cargar_df_producto_entidad_multi(engine, "PRODUCCION_CAMPOS", ["CUENCA", "UBICACION", "ASIG_CONT"], where_fecha, extra_where=f"{_FILTRO_ID}TIPO = 'ASIGNACION' AND ")
     if df.empty:
         return {"type": "hierarchical", "categories": [], "groups": []}
     nombre_map = _mapa_asig_a_block_name(engine)
@@ -996,11 +1023,19 @@ def _mapa_asig_a_block_name(engine: Engine) -> dict:
     del código en la tabla de Producción por Asignación. Best-effort: si la
     vista no está disponible (falta el linked server, p. ej. en desarrollo
     local), regresa un mapa vacío y el código original se sigue mostrando."""
+    # En Postgres, entitlements.v_general_info depende de un linked server
+    # externo (UATAC_SISEAA) sin resolver todavia (ver postgres_migration/00_PLAN.md,
+    # "Plan para el linked server") -- se usa api.v_bloques como fuente
+    # provisional (solo BLOCK_NAME, sin los atributos de SISEAA) en vez de
+    # degradar siempre a mapa vacio.
+    sql = (
+        "SELECT block_id, block_name FROM api.v_bloques"
+        if _PG else
+        "SELECT BLOCK_ID, BLOCK_NAME FROM [cmde_public].[entitlements].[v_general_info]"
+    )
     try:
         with engine.connect() as conn:
-            meta = pd.read_sql(sqlalchemy_text(
-                "SELECT BLOCK_ID, BLOCK_NAME FROM [cmde_public].[entitlements].[v_general_info]"
-            ), conn)
+            meta = pd.read_sql(sqlalchemy_text(sql), conn)
         meta.columns = meta.columns.str.lower()
         return dict(zip(meta["block_id"], meta["block_name"]))
     except Exception:
@@ -1021,10 +1056,10 @@ def get_asignaciones_ranking(
     where_fecha, period = _where_fecha(start_year, start_month, end_year, end_month, period, years)
     sql = f"""
         SELECT FECHA, ASIG_CONT, CUENCA, UBICACION,
-               SUM(ISNULL(PETROLEO_MBD,0)+ISNULL(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
+               SUM({_ISNULL}(PETROLEO_MBD,0)+{_ISNULL}(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD,
                SUM(GAS_MMPCD) AS GAS_MMPCD
-        FROM {SCHEMA}PRODUCCION_CAMPOS
-        WHERE ID <> 1 AND TIPO = 'ASIGNACION' AND ASIG_CONT IS NOT NULL
+        FROM {_TABLA_PRODUCCION_CAMPOS}
+        WHERE {_FILTRO_ID_WHERE} AND TIPO = 'ASIGNACION' AND ASIG_CONT IS NOT NULL
           AND ASIG_CONT NOT LIKE '{_ASIGNACION_CODIGOS_RUIDO_PREFIJO}%'
           AND {where_fecha}
         GROUP BY FECHA, ASIG_CONT, CUENCA, UBICACION
@@ -1053,14 +1088,25 @@ def get_asignaciones_ranking(
     # local) se degrada con esas columnas vacías en vez de tronar el endpoint.
     meta_cols = ["block_name", "plan", "activity", "environment", "basin",
                  "validity", "start_date", "end_date", "area_km2"]
-    try:
-        with engine.connect() as conn:
-            meta = pd.read_sql(sqlalchemy_text("""
+    # ACTIVITY/ENVIRONMENT/BASIN/AREA_KM2 dependen del linked server SISEAA,
+    # sin resolver en Postgres todavia (ver nota en _mapa_asig_a_block_name) --
+    # api.v_bloques solo trae BLOCK_NAME/PLAN/VALIDITY/START_DATE/END_DATE.
+    sql_meta = (
+        "SELECT block_id, block_name, plan, validity, start_date, end_date FROM api.v_bloques"
+        if _PG else
+        """
                 SELECT BLOCK_ID, BLOCK_NAME, [PLAN], ACTIVITY, ENVIRONMENT, BASIN,
                        VALIDITY, START_DATE, END_DATE, AREA_KM2
                 FROM [cmde_public].[entitlements].[v_general_info]
-            """), conn)
+            """
+    )
+    try:
+        with engine.connect() as conn:
+            meta = pd.read_sql(sqlalchemy_text(sql_meta), conn)
         meta.columns = meta.columns.str.lower()
+        for c in meta_cols:
+            if c not in meta.columns:
+                meta[c] = None
         actual = actual.merge(meta, left_on="asig_cont", right_on="block_id", how="left")
     except Exception:
         for c in meta_cols:
@@ -1105,8 +1151,8 @@ def get_asignacion_detalle(
     sql = f"""
         SELECT FECHA, CAMPO_PORTAL, OPERADOR,
                PETROLEO_MBD, CONDENSADO_MBD, GAS_MMPCD, GAS_ASOC_MMPCD, GAS_NASOC_MMPCD, AGUA_MBD, N2_MMPCD
-        FROM {SCHEMA}PRODUCCION_CAMPOS
-        WHERE ID <> 1 AND TIPO = 'ASIGNACION' AND ASIG_CONT = :asig AND {where_fecha}
+        FROM {_TABLA_PRODUCCION_CAMPOS}
+        WHERE {_FILTRO_ID_WHERE} AND TIPO = 'ASIGNACION' AND ASIG_CONT = :asig AND {where_fecha}
     """
     with engine.connect() as conn:
         df = pd.read_sql(sqlalchemy_text(sql), conn, params={"asig": asignacion})
@@ -1172,17 +1218,24 @@ def get_asignacion_detalle(
     # Atributos del bloque (plan/actividad/ambiente/cuenca) — mismo
     # best-effort que el ranking, degrada sin tronar si no hay linked server.
     block_name = plan = activity = None
-    try:
-        with engine.connect() as conn:
-            meta_bloque = pd.read_sql(sqlalchemy_text("""
+    # ACTIVITY depende del linked server SISEAA (ver nota en _mapa_asig_a_block_name)
+    sql_meta_bloque = (
+        "SELECT block_name, plan FROM api.v_bloques WHERE block_id = :asig"
+        if _PG else
+        """
                 SELECT BLOCK_NAME, [PLAN], ACTIVITY
                 FROM [cmde_public].[entitlements].[v_general_info]
                 WHERE BLOCK_ID = :asig
-            """), conn, params={"asig": asignacion})
+            """
+    )
+    try:
+        with engine.connect() as conn:
+            meta_bloque = pd.read_sql(sqlalchemy_text(sql_meta_bloque), conn, params={"asig": asignacion})
         meta_bloque.columns = meta_bloque.columns.str.lower()
         if not meta_bloque.empty:
             r = meta_bloque.iloc[0]
-            block_name, plan, activity = r["block_name"], r["plan"], r["activity"]
+            block_name, plan = r["block_name"], r["plan"]
+            activity = r["activity"] if "activity" in meta_bloque.columns else None
     except Exception:
         pass
 
@@ -1254,6 +1307,62 @@ def _kpis_hierarquicos(df, categories, campo_col):
     }
 
 
+_HISTORICO_MESES = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+]
+
+# "Descargar todo": misma idea que get_perforacion_historico — consulta
+# directa a PRODUCCION_CAMPOS, sin filtros ni agregación, una fila por
+# registro real (Campo x Fecha). Cubre los temas que se alimentan de esa
+# tabla (Producción por ubicación/Cuenca y Producción por campo); no aplica a
+# Operadores/Contratos/Asignaciones/Estado/API/Gcompo, que vienen de otras
+# fuentes.
+def get_produccion_historico(engine: Engine, topic: str) -> dict:
+    if topic not in ("Cuenca", "Campos"):
+        return {"columnas": [], "filas": [], "periodo_nota": ""}
+
+    # "Producción por campo" no lleva columna Campo en su descarga completa
+    # (pedido explícito) — solo "Producción por ubicación" (Cuenca) la trae.
+    incluir_campo = topic == "Cuenca"
+
+    sql = f"""
+        SELECT FECHA, CAMPO_PORTAL, CUENCA, UBICACION,
+               PETROLEO_MBD, CONDENSADO_MBD, GAS_MMPCD, GAS_ASOC_MMPCD,
+               GAS_NASOC_MMPCD, N2_MMPCD, AGUA_MBD
+        FROM {_TABLA_PRODUCCION_CAMPOS}
+        WHERE {_FILTRO_ID_WHERE}
+    """
+    columnas = [
+        "Fecha", *(["Campo"] if incluir_campo else []), "Cuenca", "Ambiente",
+        "Petróleo (Mbd)", "Condensado (Mbd)", "Gas (MMpcd)", "Gas asociado (MMpcd)",
+        "Gas no asociado (MMpcd)", "Nitrógeno (MMpcd)", "Agua (Mbd)",
+    ]
+    with engine.connect() as conn:
+        df = pd.read_sql(sql, conn)
+
+    if df.empty:
+        return {"columnas": columnas, "filas": [], "periodo_nota": ""}
+
+    df.sort_values(["FECHA", "CUENCA", "CAMPO_PORTAL"], inplace=True)
+    if not incluir_campo:
+        df.drop(columns=["CAMPO_PORTAL"], inplace=True)
+    df.columns = df.columns.str.lower()
+    df["fecha"] = pd.to_datetime(df["fecha"])
+    ultima = df["fecha"].max()
+    periodo_nota = f"Datos a {_HISTORICO_MESES[ultima.month - 1]} de {ultima.year}."
+
+    df["fecha"] = df["fecha"].dt.strftime("%d/%m/%Y")
+    for c in df.columns:
+        if c != "fecha" and pd.api.types.is_numeric_dtype(df[c]):
+            df[c] = df[c].fillna(0)
+        elif c != "fecha":
+            df[c] = df[c].fillna("")
+    filas = df.values.tolist()
+
+    return {"columnas": columnas, "filas": filas, "periodo_nota": periodo_nota}
+
+
 def _parse_lista(s):
     return [x.strip() for x in s.split("|") if x.strip()]
 
@@ -1267,14 +1376,14 @@ def get_produccion_campos(
     Ambiente/Cuenca: drill-down Ambiente → Cuenca → Producto → Campo."""
     where_fecha, period = _where_fecha(start_year, start_month, end_year, end_month, period, years)
     if not cuencas and not ubicaciones:
-        df = _cargar_df_producto_entidad(engine, "PRODUCCION_CAMPOS", "CAMPO_PORTAL", where_fecha, extra_where="ID <> 1 AND ")
+        df = _cargar_df_producto_entidad(engine, "PRODUCCION_CAMPOS", "CAMPO_PORTAL", where_fecha, extra_where=f"{_FILTRO_ID}")
         if df.empty:
             return {"type": "hierarchical", "categories": [], "groups": []}
         df = _preparar_df_producto_entidad(df, "campo_portal", period)
         categories = sorted(df["periodo"].unique().tolist())
         return _respuesta_producto_entidad(df, "campo_portal", categories)
 
-    df = _cargar_df_producto_entidad_multi(engine, "PRODUCCION_CAMPOS", ["CUENCA", "UBICACION", "CAMPO_PORTAL"], where_fecha, extra_where="ID <> 1 AND ")
+    df = _cargar_df_producto_entidad_multi(engine, "PRODUCCION_CAMPOS", ["CUENCA", "UBICACION", "CAMPO_PORTAL"], where_fecha, extra_where=f"{_FILTRO_ID}")
     if df.empty:
         return {"type": "hierarchical", "categories": [], "groups": []}
     return _drilldown_ambiente_cuenca_producto(df, "campo_portal", period, cuencas, ubicaciones)
@@ -1295,9 +1404,9 @@ def get_produccion_api(
     where_fecha, period = _where_fecha(start_year, start_month, end_year, end_month, period, years)
     sql = f"""
         SELECT FECHA, CUENCA, UBICACION, PETROLEO_API,
-               SUM(ISNULL(PETROLEO_MBD,0)+ISNULL(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD
-        FROM {SCHEMA}PRODUCCION_CAMPOS
-        WHERE ID <> 1
+               SUM({_ISNULL}(PETROLEO_MBD,0)+{_ISNULL}(CONDENSADO_MBD,0)) AS LIQUIDOS_MBD
+        FROM {_TABLA_PRODUCCION_CAMPOS}
+        WHERE {_FILTRO_ID_WHERE}
           AND {where_fecha}
         GROUP BY FECHA, CUENCA, UBICACION, PETROLEO_API
     """
@@ -1368,14 +1477,14 @@ def get_produccion_gcompo(
     por ubicación'."""
     where_fecha, period = _where_fecha(start_year, start_month, end_year, end_month, period, years)
     cols = list(_GCOMPO_COLS)
-    cols_sql = ",\n               ".join(f"SUM(ISNULL({c.upper()},0)) AS {c.upper()}" for c in cols)
+    cols_sql = ",\n               ".join(f"SUM({_ISNULL}({c.upper()},0)) AS {c.upper()}" for c in cols)
 
     if not cuencas and not ubicaciones:
         sql = f"""
             SELECT FECHA,
                    {cols_sql}
-            FROM {SCHEMA}PRODUCCION_CAMPOS
-            WHERE ID <> 1
+            FROM {_TABLA_PRODUCCION_CAMPOS}
+            WHERE {_FILTRO_ID_WHERE}
               AND {where_fecha}
             GROUP BY FECHA
         """
@@ -1401,8 +1510,8 @@ def get_produccion_gcompo(
     sql = f"""
         SELECT FECHA, CUENCA, UBICACION,
                {cols_sql}
-        FROM {SCHEMA}PRODUCCION_CAMPOS
-        WHERE ID <> 1
+        FROM {_TABLA_PRODUCCION_CAMPOS}
+        WHERE {_FILTRO_ID_WHERE}
           AND {where_fecha}
         GROUP BY FECHA, CUENCA, UBICACION
     """

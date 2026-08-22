@@ -23,13 +23,27 @@ def _make_connection():
     return pyodbc.connect(conn_str, timeout=30)
 
 
-engine = create_engine(
-    "mssql+pyodbc://",
-    creator=_make_connection,
-    pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
-)
+def _make_mssql_engine():
+    return create_engine(
+        "mssql+pyodbc://",
+        creator=_make_connection,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+    )
+
+
+def _make_postgres_engine():
+    # Motor nuevo (ver postgres_migration/) -- el backend consulta solo el
+    # schema `api`, nunca staging/core directamente.
+    url = (
+        f"postgresql+psycopg2://{settings.pg_user}:{settings.pg_password}"
+        f"@{settings.pg_host}:{settings.pg_port}/{settings.pg_database}"
+    )
+    return create_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=10)
+
+
+engine = _make_postgres_engine() if settings.db_engine == "postgres" else _make_mssql_engine()
 
 
 def get_db_dep():

@@ -4,6 +4,7 @@ from app.config import settings
 from app.services.cache_utils import cached
 
 SCHEMA = settings.db_schema + "."
+_TABLA_INVERSIONES = "api.v_inversiones_aprobadas" if settings.db_engine == "postgres" else f"{SCHEMA}INVERSIONES_APROBADAS"
 
 
 @cached()
@@ -11,21 +12,21 @@ def get_inversiones(engine: Engine, start_year: int, end_year: int, subtopic: st
     if subtopic == "contrato":
         sql = f"""
             SELECT ANIO, RONDA, LICITACION, CONTRATO, ACT_PETROLERA, MONTO_USD
-            FROM {SCHEMA}INVERSIONES_APROBADAS
+            FROM {_TABLA_INVERSIONES}
             WHERE RONDA IS NOT NULL AND ANIO BETWEEN {start_year} AND {end_year}
         """
         group_col = "contrato"
     elif subtopic == "asignacion":
         sql = f"""
             SELECT ANIO, TIPO_PLAN, LICITACION, CONTRATO, ACT_PETROLERA, MONTO_USD
-            FROM {SCHEMA}INVERSIONES_APROBADAS
+            FROM {_TABLA_INVERSIONES}
             WHERE RONDA IS NULL AND ANIO BETWEEN {start_year} AND {end_year}
         """
         group_col = "act_petrolera"
     else:
         sql = f"""
             SELECT ANIO, ACT_PETROLERA, TAREA, ESTADO, UBICACION, MONTO_USD
-            FROM {SCHEMA}INVERSIONES_APROBADAS
+            FROM {_TABLA_INVERSIONES}
             WHERE ANIO BETWEEN {start_year} AND {end_year}
         """
         group_col = "act_petrolera"
@@ -62,7 +63,7 @@ def get_inversiones_cuenca(engine: Engine, start_year: int, end_year: int) -> di
     # Ambiente (Aguas profundas/Aguas someras/Terrestre).
     sql = f"""
         SELECT ANIO, CUENCA, ESTADO AS ENTIDAD, UBICACION AS AMBIENTE, MONTO_USD
-        FROM {SCHEMA}INVERSIONES_APROBADAS
+        FROM {_TABLA_INVERSIONES}
         WHERE ANIO BETWEEN {start_year} AND {end_year} AND CUENCA IS NOT NULL
     """
     with engine.connect() as conn:
@@ -139,7 +140,7 @@ RONDA_ORDEN = ["FM", "MG", "R01", "R02", "R03"]
 def get_inversiones_contrato(engine: Engine, start_year: int, end_year: int) -> dict:
     sql = f"""
         SELECT ANIO, RONDA, CONTRATO, LICITACION, MONTO_USD
-        FROM {SCHEMA}INVERSIONES_APROBADAS
+        FROM {_TABLA_INVERSIONES}
         WHERE ANIO BETWEEN {start_year} AND {end_year} AND RONDA IS NOT NULL
     """
     with engine.connect() as conn:
@@ -177,14 +178,22 @@ def get_inversiones_contrato(engine: Engine, start_year: int, end_year: int) -> 
         sub_ronda = df[df["ronda"] == ronda]
         if sub_ronda.empty:
             continue
-        # Licitación como nivel intermedio (subtotal) entre Ronda/Farmouts/
-        # Migraciones y Contrato — mismo patrón que Entidad Federativa en
-        # Inversiones por cuenca.
         rows = []
-        for licitacion, sub_lic in sub_ronda.groupby("licitacion"):
-            rows.append({"type": "subtotal", "label": f"Licitación {licitacion}", "data": serie_por_anio(sub_lic)})
-            for contrato, sub_contrato in sub_lic.groupby("contrato"):
+        if ronda in ("FM", "MG"):
+            # Pemex Asociaciones/Migraciones: la Licitación (AE/M) es fija,
+            # una por ronda — no aporta como nivel propio, solo repetiría el
+            # mismo nombre sobre cada contrato. Van los contratos sueltos.
+            for contrato, sub_contrato in sub_ronda.groupby("contrato"):
                 rows.append({"type": "operator", "label": contrato, "data": serie_por_anio(sub_contrato)})
+        else:
+            # Rondas de licitación: sí puede haber más de una licitación por
+            # ronda, así que queda como nivel intermedio (subtotal) entre
+            # Ronda y Contrato — mismo patrón que Entidad Federativa en
+            # Inversiones por cuenca.
+            for licitacion, sub_lic in sub_ronda.groupby("licitacion"):
+                rows.append({"type": "subtotal", "label": f"Licitación {licitacion}", "data": serie_por_anio(sub_lic)})
+                for contrato, sub_contrato in sub_lic.groupby("contrato"):
+                    rows.append({"type": "operator", "label": contrato, "data": serie_por_anio(sub_contrato)})
         groups.append({
             "cuenca": RONDA_LABELS[ronda], "data": serie_por_anio(sub_ronda),
             "subgroups": [{"ubicacion": "Nacional", "rows": rows}],

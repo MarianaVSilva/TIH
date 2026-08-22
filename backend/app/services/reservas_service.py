@@ -5,6 +5,18 @@ from app.config import settings
 from app.services.cache_utils import cached
 
 SCHEMA = settings.db_schema + "."
+_PG = settings.db_engine == "postgres"
+# YEAR(fecha) es sintaxis SQL Server; el equivalente en Postgres es
+# EXTRACT(YEAR FROM fecha) -- se define una vez aqui, se usa en todo el archivo.
+_YEAR = "EXTRACT(YEAR FROM fecha)" if _PG else "YEAR(fecha)"
+_TABLA_RESERVAS_CAMPOS = "api.v_reservas_campos" if _PG else f"{SCHEMA}RESERVAS_CAMPOS"
+_TABLA_ASIG_CONT = "api.v_reservas_asig_cont" if _PG else "dbo.reservas_asig_cont"
+_TABLA_ASIG_CONT_CAMPOS = "api.v_reservas_asig_cont_campos" if _PG else "dbo.reservas_asig_cont_campos"
+# En api.v_reservas_campos la columna se llama campo_portal (core.dim_campo),
+# no campo_nombre como en la RESERVAS_CAMPOS de SQL Server -- se alia aqui
+# para no tocar el resto de la logica (pivots, agrupaciones) que asume
+# "campo_nombre" en todo el archivo.
+_CAMPO_NOMBRE_COL = "campo_portal AS campo_nombre" if _PG else "campo_nombre"
 
 # JSON_ARG heredado de CUBOS para los temas "Reservas por campo de X":
 # selecciona el hidrocarburo, no la categoría (esa siempre es PROBADAS = 1P,
@@ -32,10 +44,10 @@ def get_reservas_por_campo(engine: Engine, start_year: int, end_year: int, tipo:
     unidad = UNIDAD_RESERVAS.get(tipo, "MMb")
 
     sql = text(f"""
-        SELECT YEAR(fecha) AS anio, cuenca, ubicacion, campo_nombre, categoria, SUM({columna}) AS valor
-        FROM {SCHEMA}RESERVAS_CAMPOS
-        WHERE YEAR(fecha) BETWEEN :start_year AND :end_year AND campo_nombre IS NOT NULL
-        GROUP BY YEAR(fecha), cuenca, ubicacion, campo_nombre, categoria
+        SELECT {_YEAR} AS anio, cuenca, ubicacion, {_CAMPO_NOMBRE_COL}, categoria, SUM({columna}) AS valor
+        FROM {_TABLA_RESERVAS_CAMPOS}
+        WHERE {_YEAR} BETWEEN :start_year AND :end_year AND {"campo_portal" if _PG else "campo_nombre"} IS NOT NULL
+        GROUP BY {_YEAR}, cuenca, ubicacion, {"campo_portal" if _PG else "campo_nombre"}, categoria
     """)
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn, params={"start_year": start_year, "end_year": end_year})
@@ -66,19 +78,34 @@ def get_reservas_por_campo(engine: Engine, start_year: int, end_year: int, tipo:
         por_anio = sub.groupby("anio")[col].sum()
         return [round(float(por_anio.get(a, 0)), 2) for a in anios]
 
+    def filas_1p2p3p(sub: pd.DataFrame, label: str) -> list:
+        # Subtotal (3P) + desglose 1P/2P/3P para un subconjunto (un campo, un
+        # ambiente, el total nacional…) — mismo bloque de 4 filas en todos los niveles.
+        return [
+            {"type": "subtotal", "label": label, "data": serie(sub, "3P")},
+            {"type": "operator", "label": f"1P = PROBADAS ({unidad})", "data": serie(sub, "1P")},
+            {"type": "operator", "label": f"2P = PROBADAS + PROBABLES ({unidad})", "data": serie(sub, "2P")},
+            {"type": "operator", "label": f"3P = PROBADAS + PROBABLES + POSIBLES ({unidad})", "data": serie(sub, "3P")},
+        ]
+
     def filas_campo(sub_amb: pd.DataFrame) -> list:
         rows = []
         for campo, sub_campo in sorted(sub_amb.groupby("campo_nombre"), key=lambda item: item[0]):
-            rows.append({"type": "subtotal", "label": campo, "data": serie(sub_campo, "3P")})
-            rows.append({"type": "operator", "label": f"1P = PROBADAS ({unidad})", "data": serie(sub_campo, "1P")})
-            rows.append({"type": "operator", "label": f"2P = PROBADAS + PROBABLES ({unidad})", "data": serie(sub_campo, "2P")})
-            rows.append({"type": "operator", "label": f"3P = PROBADAS + PROBABLES + POSIBLES ({unidad})", "data": serie(sub_campo, "3P")})
+            if serie(sub_campo, "1P")[0] == 0:
+                # Sin 1P al inicio del rango: campo sin reservas probadas vigentes, se omite.
+                continue
+            rows += filas_1p2p3p(sub_campo, campo)
         return rows
 
-    total_general_rows = [
-        {"type": "operator", "label": "Todos los ambientes", "data": serie(pivot, "3P")},
-        *[{"type": "operator", "label": amb, "data": serie(sub, "3P")} for amb, sub in pivot.groupby("ubicacion")],
-    ]
+    # "Total general": suma nacional 1P/2P/3P + desglose por Ambiente, cada uno
+    # también dividido en 1P/2P/3P — sobre TODOS los campos (el filtro de
+    # filas_campo solo oculta filas individuales, no debe restar del total).
+    total_general_rows = filas_1p2p3p(pivot, "Todos los ambientes")
+    for amb in AMBIENTES_ORDEN_RESERVAS + sorted(set(pivot["ubicacion"]) - set(AMBIENTES_ORDEN_RESERVAS)):
+        sub_amb = pivot[pivot["ubicacion"] == amb]
+        if not sub_amb.empty:
+            total_general_rows += filas_1p2p3p(sub_amb, amb)
+
     groups = [
         {"cuenca": "Total general", "data": serie(pivot, "3P"), "subgroups": [{"ubicacion": "Nacional", "rows": total_general_rows}]},
     ]
@@ -86,11 +113,138 @@ def get_reservas_por_campo(engine: Engine, start_year: int, end_year: int, tipo:
     cuencas_ordenadas = sorted(pivot.groupby("cuenca"), key=lambda item: item[1]["3P"].sum(), reverse=True)
     for cuenca, sub_cuenca in cuencas_ordenadas:
         ambientes = AMBIENTES_ORDEN_RESERVAS + sorted(set(sub_cuenca["ubicacion"]) - set(AMBIENTES_ORDEN_RESERVAS))
-        subgroups = [
-            {"ubicacion": amb, "rows": filas_campo(sub_cuenca[sub_cuenca["ubicacion"] == amb])}
-            for amb in ambientes if not sub_cuenca[sub_cuenca["ubicacion"] == amb].empty
+        subgroups = []
+        for amb in ambientes:
+            rows = filas_campo(sub_cuenca[sub_cuenca["ubicacion"] == amb])
+            if rows:
+                subgroups.append({"ubicacion": amb, "rows": rows})
+        if subgroups:
+            groups.append({"cuenca": cuenca, "data": serie(sub_cuenca, "3P"), "subgroups": subgroups})
+
+    return {"type": "hierarchical", "categories": categories, "groups": groups}
+
+
+# JSON_ARG de "Reservas por asignacion-contrato de X" — tabla propia
+# (dbo.reservas_asig_cont), sin esquema de negocio: se consulta sin SCHEMA.
+TIPO_COLUMNA_ASIG = {
+    "ReservasAsigP":   "rr_aceite_mmb",
+    "ReservasAsigG":   "rr_gas_natural_mmmpc",
+    "ReservasAsigPCE": "rr_pce_mmbpce",
+}
+
+
+@cached()
+def get_reservas_asignacion_contrato(engine: Engine, start_year: int, end_year: int, tipo: str = "ReservasAsigP") -> dict:
+    # Jerarquía Nacional (Total general) → Cuenca → Ambiente → Asignación/
+    # Contrato → 1P/2P/3P — mismo formato que get_reservas_por_campo, pero
+    # aquí la columna "tipo" de la tabla origen YA viene como 1P/2P/3P (no
+    # PROBADAS/PROBABLES/POSIBLES por acumular).
+    columna = TIPO_COLUMNA_ASIG.get(tipo)
+    if not columna:
+        return {"type": "hierarchical", "categories": [], "groups": []}
+    unidad = UNIDAD_RESERVAS.get(tipo.replace("Asig", ""), "MMb")
+
+    sql = text(f"""
+        SELECT {_YEAR} AS anio, cuenca, ubicacion, asignacion_contrato, tipo, SUM({columna}) AS valor
+        FROM {_TABLA_ASIG_CONT}
+        WHERE {_YEAR} BETWEEN :start_year AND :end_year AND asignacion_contrato IS NOT NULL
+        GROUP BY {_YEAR}, cuenca, ubicacion, asignacion_contrato, tipo
+    """)
+    with engine.connect() as conn:
+        df = pd.read_sql(sql, conn, params={"start_year": start_year, "end_year": end_year})
+        # reservas_asig_cont solo trae el código ("A-0001"); el nombre completo
+        # del bloque ("A-0001-6M - Campo Abkatún") vive en la tabla de detalle
+        # por campo — se usa solo como catálogo código→nombre.
+        nombres_df = pd.read_sql(
+            f"SELECT DISTINCT asignacion_contrato, asignacion_contrato_nombre FROM {_TABLA_ASIG_CONT_CAMPOS} WHERE asignacion_contrato IS NOT NULL",
+            conn,
+        )
+
+    if df.empty:
+        return {"type": "hierarchical", "categories": [], "groups": []}
+
+    nombres = dict(zip(nombres_df["asignacion_contrato"], nombres_df["asignacion_contrato_nombre"]))
+
+    df.columns = df.columns.str.lower()
+    df["anio"] = df["anio"].astype(int)
+    df["cuenca"] = df["cuenca"].fillna("Sin clasificar")
+    df["ubicacion"] = df["ubicacion"].fillna("Sin clasificar")
+    anios = sorted(df["anio"].unique().tolist())
+    categories = [str(a) for a in anios]
+
+    pivot = df.pivot_table(
+        index=["cuenca", "ubicacion", "asignacion_contrato", "anio"], columns="tipo", values="valor",
+        aggfunc="sum", fill_value=0,
+    )
+    for cat in ["1P", "2P", "3P"]:
+        if cat not in pivot.columns:
+            pivot[cat] = 0
+    pivot = pivot.reset_index()
+    # "A-0001" = Asignación; cualquier otro prefijo (CNH-…, rondas/licitaciones
+    # tipo "R01L02") es Contrato — nunca se mezclan en el mismo grupo.
+    pivot["tipo_item"] = pivot["asignacion_contrato"].apply(lambda n: "Asignaciones" if str(n).startswith("A") else "Contratos")
+
+    def serie(sub: pd.DataFrame, col: str) -> list:
+        por_anio = sub.groupby("anio")[col].sum()
+        return [round(float(por_anio.get(a, 0)), 2) for a in anios]
+
+    def filas_1p2p3p(sub: pd.DataFrame, label: str) -> list:
+        return [
+            {"type": "subtotal", "label": label, "data": serie(sub, "3P")},
+            {"type": "operator", "label": f"1P = PROBADAS ({unidad})", "data": serie(sub, "1P")},
+            {"type": "operator", "label": f"2P = PROBADAS + PROBABLES ({unidad})", "data": serie(sub, "2P")},
+            {"type": "operator", "label": f"3P = PROBADAS + PROBABLES + POSIBLES ({unidad})", "data": serie(sub, "3P")},
         ]
-        groups.append({"cuenca": cuenca, "data": serie(sub_cuenca, "3P"), "subgroups": subgroups})
+
+    def filas_asig(sub_amb: pd.DataFrame) -> list:
+        rows = []
+        for asig, sub_asig in sorted(sub_amb.groupby("asignacion_contrato"), key=lambda item: item[0]):
+            if serie(sub_asig, "1P")[0] == 0:
+                continue
+            # nombres.get(asig, asig): algunos códigos ("R01L03"…) sí están en
+            # el catálogo pero con nombre NULL — el default de .get() no
+            # aplica ahí (la clave existe), hace falta el "or" explícito.
+            rows += filas_1p2p3p(sub_asig, nombres.get(asig) or asig)
+        return rows
+
+    total_general_rows = filas_1p2p3p(pivot, "Todos los ambientes")
+    for amb in AMBIENTES_ORDEN_RESERVAS + sorted(set(pivot["ubicacion"]) - set(AMBIENTES_ORDEN_RESERVAS)):
+        sub_amb = pivot[pivot["ubicacion"] == amb]
+        if not sub_amb.empty:
+            total_general_rows += filas_1p2p3p(sub_amb, amb)
+
+    groups = [
+        {"cuenca": "Total general", "data": serie(pivot, "3P"), "subgroups": [{"ubicacion": "Nacional", "rows": total_general_rows}]},
+    ]
+
+    # Nivel superior = Asignaciones / Contratos (nunca revueltos) → Ambiente →
+    # item. Las Asignaciones llevan además la Cuenca como subtotal intermedio
+    # (son cientos, agrupar ayuda); los Contratos son pocos y van directo,
+    # sin nivel de Cuenca, ordenados alfabéticamente por nombre.
+    for categoria in ["Asignaciones", "Contratos"]:
+        sub_cat = pivot[pivot["tipo_item"] == categoria]
+        if sub_cat.empty:
+            continue
+        ambientes = AMBIENTES_ORDEN_RESERVAS + sorted(set(sub_cat["ubicacion"]) - set(AMBIENTES_ORDEN_RESERVAS))
+        subgroups = []
+        for amb in ambientes:
+            sub_amb = sub_cat[sub_cat["ubicacion"] == amb]
+            if sub_amb.empty:
+                continue
+            if categoria == "Contratos":
+                rows = filas_asig(sub_amb)
+            else:
+                rows = []
+                for cuenca, sub_cuenca_amb in sorted(sub_amb.groupby("cuenca"), key=lambda item: item[0]):
+                    filas = filas_asig(sub_cuenca_amb)
+                    if not filas:
+                        continue
+                    rows.append({"type": "subtotal", "label": cuenca, "data": serie(sub_cuenca_amb, "3P")})
+                    rows += filas
+            if rows:
+                subgroups.append({"ubicacion": amb, "rows": rows})
+        if subgroups:
+            groups.append({"cuenca": categoria, "data": serie(sub_cat, "3P"), "subgroups": subgroups})
 
     return {"type": "hierarchical", "categories": categories, "groups": groups}
 
@@ -99,7 +253,7 @@ def get_reservas_por_campo(engine: Engine, start_year: int, end_year: int, tipo:
 def get_reservas(engine: Engine, start_year: int, end_year: int, tipo: str = "1P") -> dict:
     sql = text(f"""
         SELECT
-            YEAR(fecha)            AS anio,
+            {_YEAR}            AS anio,
             cuenca,
             ubicacion,
             categoria,
@@ -109,11 +263,11 @@ def get_reservas(engine: Engine, start_year: int, end_year: int, tipo: str = "1P
             SUM(rr_liquidos_planta_mmb) AS liquidos_planta_mmb,
             SUM(vo_aceite_mmb)          AS vo_aceite_mmb,
             SUM(vo_gas_mmmpc)           AS vo_gas_mmmpc
-        FROM {SCHEMA}RESERVAS_CAMPOS
-        WHERE YEAR(fecha) BETWEEN :start_year AND :end_year
+        FROM {_TABLA_RESERVAS_CAMPOS}
+        WHERE {_YEAR} BETWEEN :start_year AND :end_year
           AND categoria = :tipo
-        GROUP BY YEAR(fecha), cuenca, ubicacion, categoria
-        ORDER BY YEAR(fecha), cuenca
+        GROUP BY {_YEAR}, cuenca, ubicacion, categoria
+        ORDER BY {_YEAR}, cuenca
     """)
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn, params={"start_year": start_year, "end_year": end_year, "tipo": tipo})
@@ -122,6 +276,7 @@ def get_reservas(engine: Engine, start_year: int, end_year: int, tipo: str = "1P
         return {"series_aceite": [], "series_gas": [], "categories": [], "tipo": tipo}
 
     df.columns = df.columns.str.lower()
+    df["anio"] = df["anio"].astype(int)
     numeric = ["aceite_mmb", "gas_mmmpc", "condensado_mmb", "liquidos_planta_mmb"]
     df[numeric] = df[numeric].fillna(0)
 
@@ -151,7 +306,7 @@ def get_reservas(engine: Engine, start_year: int, end_year: int, tipo: str = "1P
 
 @cached()
 def get_categorias_disponibles(engine: Engine) -> list[str]:
-    sql = f"SELECT DISTINCT categoria FROM {SCHEMA}RESERVAS_CAMPOS WHERE categoria IS NOT NULL ORDER BY categoria"
+    sql = f"SELECT DISTINCT categoria FROM {_TABLA_RESERVAS_CAMPOS} WHERE categoria IS NOT NULL ORDER BY categoria"
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
     return df["categoria"].tolist()
@@ -159,7 +314,7 @@ def get_categorias_disponibles(engine: Engine) -> list[str]:
 
 @cached()
 def _ultima_fecha(engine: Engine) -> str | None:
-    sql = text(f"SELECT MAX(fecha) AS fecha FROM {SCHEMA}RESERVAS_CAMPOS")
+    sql = text(f"SELECT MAX(fecha) AS fecha FROM {_TABLA_RESERVAS_CAMPOS}")
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
     if df.empty or pd.isna(df.loc[0, "fecha"]):
@@ -182,10 +337,10 @@ def get_top5_reservas_por_campo(engine: Engine, n: int = 5) -> dict:
         return {}
 
     sql = text(f"""
-        SELECT campo_nombre, categoria, SUM(rr_aceite_mmb) AS aceite_mmb, SUM(rr_gas_mmmpc) AS gas_mmmpc
-        FROM {SCHEMA}RESERVAS_CAMPOS
-        WHERE fecha = :fecha AND campo_nombre IS NOT NULL
-        GROUP BY campo_nombre, categoria
+        SELECT {_CAMPO_NOMBRE_COL}, categoria, SUM(rr_aceite_mmb) AS aceite_mmb, SUM(rr_gas_mmmpc) AS gas_mmmpc
+        FROM {_TABLA_RESERVAS_CAMPOS}
+        WHERE {"campo_portal" if _PG else "campo_nombre"} IS NOT NULL AND fecha = :fecha
+        GROUP BY {"campo_portal" if _PG else "campo_nombre"}, categoria
     """)
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn, params={"fecha": fecha})
@@ -223,7 +378,7 @@ def get_reservas_1p2p3p(engine: Engine) -> dict:
 
     sql = text(f"""
         SELECT categoria, SUM(rr_aceite_mmb) AS aceite_mmb, SUM(rr_gas_mmmpc) AS gas_mmmpc
-        FROM {SCHEMA}RESERVAS_CAMPOS
+        FROM {_TABLA_RESERVAS_CAMPOS}
         WHERE fecha = :fecha
         GROUP BY categoria
     """)

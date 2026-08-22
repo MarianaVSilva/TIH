@@ -33,6 +33,11 @@ def _asegurar_tabla_precios_autom(engine: Engine) -> None:
     global _precios_autom_lista
     if _precios_autom_lista:
         return
+    if settings.db_engine == "postgres":
+        # core.fact_precios_autom ya existe (creada por postgres_migration/sql/02_core_schema.sql,
+        # con la misma PK (fecha, producto)) -- no hay DDL condicional que correr aqui.
+        _precios_autom_lista = True
+        return
     with engine.begin() as conn:
         conn.execute(sqlalchemy_text(_PRECIOS_AUTOM_DDL))
     _precios_autom_lista = True
@@ -40,26 +45,41 @@ def _asegurar_tabla_precios_autom(engine: Engine) -> None:
 
 def _guardar_precio_autom(engine: Engine, producto: str, fecha: str, valor: float, fuente: str) -> None:
     _asegurar_tabla_precios_autom(engine)
-    sql = f"""
-        MERGE {SCHEMA}PRECIOS_AUTOM AS destino
-        USING (SELECT :fecha AS FECHA, :producto AS PRODUCTO) AS origen
-        ON destino.FECHA = origen.FECHA AND destino.PRODUCTO = origen.PRODUCTO
-        WHEN MATCHED THEN UPDATE SET VALOR = :valor, FUENTE = :fuente, ACTUALIZADO_EN = GETDATE()
-        WHEN NOT MATCHED THEN INSERT (FECHA, PRODUCTO, VALOR, FUENTE) VALUES (:fecha, :producto, :valor, :fuente);
-    """
+    if settings.db_engine == "postgres":
+        sql = """
+            INSERT INTO core.fact_precios_autom (fecha, producto, valor, fuente, actualizado_en)
+            VALUES (:fecha, :producto, :valor, :fuente, now())
+            ON CONFLICT (fecha, producto) DO UPDATE SET
+                valor = EXCLUDED.valor, fuente = EXCLUDED.fuente, actualizado_en = now()
+        """
+    else:
+        sql = f"""
+            MERGE {SCHEMA}PRECIOS_AUTOM AS destino
+            USING (SELECT :fecha AS FECHA, :producto AS PRODUCTO) AS origen
+            ON destino.FECHA = origen.FECHA AND destino.PRODUCTO = origen.PRODUCTO
+            WHEN MATCHED THEN UPDATE SET VALOR = :valor, FUENTE = :fuente, ACTUALIZADO_EN = GETDATE()
+            WHEN NOT MATCHED THEN INSERT (FECHA, PRODUCTO, VALOR, FUENTE) VALUES (:fecha, :producto, :valor, :fuente);
+        """
     with engine.begin() as conn:
         conn.execute(sqlalchemy_text(sql), {"fecha": fecha, "producto": producto, "valor": valor, "fuente": fuente})
 
 
 def _get_precio_autom_anterior(engine: Engine, producto: str, fecha_actual: str) -> float | None:
     _asegurar_tabla_precios_autom(engine)
-    sql = f"""
-        SELECT TOP 1 VALOR FROM {SCHEMA}PRECIOS_AUTOM
-        WHERE PRODUCTO = :producto AND FECHA < :fecha ORDER BY FECHA DESC
-    """
+    if settings.db_engine == "postgres":
+        sql = """
+            SELECT valor FROM core.fact_precios_autom
+            WHERE producto = :producto AND fecha < :fecha ORDER BY fecha DESC LIMIT 1
+        """
+    else:
+        sql = f"""
+            SELECT TOP 1 VALOR FROM {SCHEMA}PRECIOS_AUTOM
+            WHERE PRODUCTO = :producto AND FECHA < :fecha ORDER BY FECHA DESC
+        """
     with engine.connect() as conn:
         df = pd.read_sql(sqlalchemy_text(sql), conn, params={"producto": producto, "fecha": fecha_actual})
-    return round(float(df["VALOR"].iloc[0]), 2) if not df.empty else None
+    col = "valor" if settings.db_engine == "postgres" else "VALOR"
+    return round(float(df[col].iloc[0]), 2) if not df.empty else None
 
 # ── Indicadores económicos en vivo (Brent y Mezcla Mexicana) ─────────────────
 # Ninguno de los dos vive en la base de datos: se piden directo a fuentes
@@ -139,19 +159,26 @@ def _get_mme_anterior(engine: Engine, fecha_actual: str) -> float | None:
     if propio is not None:
         return propio
 
-    sql = f"""
-        SELECT TOP 1 FECHA, MME FROM {SCHEMA}PRECIOS
-        WHERE MME IS NOT NULL AND FECHA < :fecha ORDER BY FECHA DESC
-    """
+    if settings.db_engine == "postgres":
+        sql = """
+            SELECT fecha, mme FROM api.v_precios
+            WHERE mme IS NOT NULL AND fecha < :fecha ORDER BY fecha DESC LIMIT 1
+        """
+    else:
+        sql = f"""
+            SELECT TOP 1 FECHA, MME FROM {SCHEMA}PRECIOS
+            WHERE MME IS NOT NULL AND FECHA < :fecha ORDER BY FECHA DESC
+        """
     with engine.connect() as conn:
         df = pd.read_sql(sqlalchemy_text(sql), conn, params={"fecha": fecha_actual})
+    df.columns = df.columns.str.lower()
     if df.empty:
         return None
-    fecha_anterior = pd.to_datetime(df["FECHA"].iloc[0])
+    fecha_anterior = pd.to_datetime(df["fecha"].iloc[0])
     brecha_dias = (pd.to_datetime(fecha_actual) - fecha_anterior).days
     if brecha_dias > 5:
         return None
-    return round(float(df["MME"].iloc[0]), 2)
+    return round(float(df["mme"].iloc[0]), 2)
 
 
 def get_indicadores_economicos(engine: Engine | None = None) -> dict:
@@ -204,12 +231,20 @@ def get_precios(engine: Engine, start_year: int, end_year: int, start_month: int
     # "Diario" con calendario: rango exacto de días, sin pasar por año/mes.
     init = start_date or f"{start_year}-{start_month:02d}-01"
     end = end_date or f"{end_year}-{end_month:02d}-01"
-    sql = f"""
-        SELECT FECHA, BRENT, WTI, MME, HENRY_HUB
-        FROM {SCHEMA}PRECIOS
-        WHERE FECHA BETWEEN '{init}' AND '{end}'
-        ORDER BY FECHA
-    """
+    if settings.db_engine == "postgres":
+        sql = f"""
+            SELECT fecha, brent, wti, mme, henry_hub
+            FROM api.v_precios
+            WHERE fecha BETWEEN '{init}' AND '{end}'
+            ORDER BY fecha
+        """
+    else:
+        sql = f"""
+            SELECT FECHA, BRENT, WTI, MME, HENRY_HUB
+            FROM {SCHEMA}PRECIOS
+            WHERE FECHA BETWEEN '{init}' AND '{end}'
+            ORDER BY FECHA
+        """
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
 
@@ -264,56 +299,24 @@ def get_precios(engine: Engine, start_year: int, end_year: int, start_month: int
         for c in cols
     ]
 
-    # Extremos POR PERIODO (no del rango completo) — el día exacto dentro de
-    # CADA año/mes en que cada referencia tocó su precio más bajo/alto. Antes
-    # esto se calculaba una sola vez sobre todo el rango seleccionado, así
-    # que con varios años/meses seleccionados el "más bajo/alto" no
-    # correspondía al periodo que se estaba viendo (pedido explícito: que
-    # coincida con el año/mes seleccionado, igual que el resto de la vista).
-    extremos_por_periodo = {c: {} for c in cols}
-    for c in cols:
-        serie_valida = df[["periodo", "fecha", c]].dropna(subset=[c])
-        if serie_valida.empty:
-            continue
-        idx_min = serie_valida.groupby("periodo")[c].idxmin()
-        idx_max = serie_valida.groupby("periodo")[c].idxmax()
-        for periodo, i in idx_min.items():
-            fila = serie_valida.loc[i]
-            extremos_por_periodo[c].setdefault(periodo, {})["min"] = {
-                "valor": round(float(fila[c]), 2), "fecha": fila["fecha"].strftime("%Y-%m-%d"),
-            }
-        for periodo, i in idx_max.items():
-            fila = serie_valida.loc[i]
-            extremos_por_periodo[c].setdefault(periodo, {})["max"] = {
-                "valor": round(float(fila[c]), 2), "fecha": fila["fecha"].strftime("%Y-%m-%d"),
-            }
-
-    # El front pide el extremo del ÚLTIMO periodo mostrado (el año/mes más
-    # reciente del rango elegido) — se resuelve aquí para no duplicar la
-    # lógica de "cuál es el último periodo con dato" en el cliente.
-    # "Diario": el "periodo" ya es el día, así que "el último periodo" sería
-    # un solo día (min == max, sin utilidad) — en su lugar se usa el extremo
-    # de TODO el rango de fechas elegido en el calendario.
+    # Extremos de TODO el rango seleccionado (no solo el último año/mes) — el
+    # día exacto (dato diario crudo) en que cada referencia tocó su precio
+    # más bajo/alto. Antes solo miraba el último periodo mostrado, así que
+    # con un rango de varios años/meses un extremo real (p. ej. el WTI
+    # negativo del 20/abr/2020) quedaba fuera si no caía en el último tramo
+    # del rango — el mín/máx de las tarjetas ya se anuncia como "del periodo
+    # mostrado" (todo lo que trae el filtro), así que debe cubrirlo entero.
     extremos = {}
-    if period == "daily":
-        for c in cols:
-            serie_valida = df[["fecha", c]].dropna(subset=[c])
-            if serie_valida.empty:
-                extremos[c] = {"min": None, "max": None}
-                continue
-            fila_min = serie_valida.loc[serie_valida[c].idxmin()]
-            fila_max = serie_valida.loc[serie_valida[c].idxmax()]
-            extremos[c] = {
-                "min": {"valor": round(float(fila_min[c]), 2), "fecha": fila_min["fecha"].strftime("%Y-%m-%d")},
-                "max": {"valor": round(float(fila_max[c]), 2), "fecha": fila_max["fecha"].strftime("%Y-%m-%d")},
-            }
-    else:
-        for c in cols:
-            for periodo in reversed(categories):
-                if periodo in extremos_por_periodo[c]:
-                    extremos[c] = extremos_por_periodo[c][periodo]
-                    break
-            else:
-                extremos[c] = {"min": None, "max": None}
+    for c in cols:
+        serie_valida = df[["fecha", c]].dropna(subset=[c])
+        if serie_valida.empty:
+            extremos[c] = {"min": None, "max": None}
+            continue
+        fila_min = serie_valida.loc[serie_valida[c].idxmin()]
+        fila_max = serie_valida.loc[serie_valida[c].idxmax()]
+        extremos[c] = {
+            "min": {"valor": round(float(fila_min[c]), 2), "fecha": fila_min["fecha"].strftime("%Y-%m-%d")},
+            "max": {"valor": round(float(fila_max[c]), 2), "fecha": fila_max["fecha"].strftime("%Y-%m-%d")},
+        }
 
     return {"categories": categories, "series": series, "extremos": extremos}

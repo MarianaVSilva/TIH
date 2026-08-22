@@ -5,11 +5,15 @@ from app.config import settings
 from app.services.cache_utils import cached
 
 SCHEMA = settings.db_schema + "."
+_PG = settings.db_engine == "postgres"
+_YEAR_FECHA = "EXTRACT(YEAR FROM FECHA)" if _PG else "YEAR(FECHA)"
+_TABLA_PRODUCCION_CAMPOS_POZOS = "api.v_produccion_campos_pozos" if _PG else f"{SCHEMA}PRODUCCION_CAMPOS_POZOS"
+_TABLA_BD_POZOS_VALID = "api.v_bd_pozos_valid" if _PG else "cmde_valid.dbo.bd_pozos"
 
 TOPIC_MAP = {
-    "PozPerf": ("PERFORACION_POZOS_PERF", "POZOS_PERFORADOS"),
-    "PozTerm": ("PERFORACION_POZOS_TERM", "POZOS_TERMINADOS"),
-    "EqPerf":  ("PERFORACION_EQUIPOS",    "PROM_EQ_PERFORACION"),
+    "PozPerf": ("api.v_perforacion_pozos_perf" if _PG else f"{SCHEMA}PERFORACION_POZOS_PERF", "pozos_perforados" if _PG else "POZOS_PERFORADOS"),
+    "PozTerm": ("api.v_perforacion_pozos_term" if _PG else f"{SCHEMA}PERFORACION_POZOS_TERM", "pozos_terminados" if _PG else "POZOS_TERMINADOS"),
+    "EqPerf":  ("api.v_perforacion_equipos" if _PG else f"{SCHEMA}PERFORACION_EQUIPOS",       "prom_eq_perforacion" if _PG else "PROM_EQ_PERFORACION"),
 }
 
 CAT_MAP = {
@@ -31,7 +35,7 @@ def get_perforacion_filtros(engine: Engine, topic: str = "PozPerf") -> dict:
     if topic == "PozosCampos":
         # Esta tabla no tiene categoria_pozo ni operador — "campo" ocupa el
         # lugar de "operador" en el drawer de filtros, y no hay categorías.
-        sql = f"SELECT DISTINCT CUENCA, UBICACION, CAMPO_PORTAL AS CAMPO FROM {SCHEMA}PRODUCCION_CAMPOS_POZOS"
+        sql = f"SELECT DISTINCT CUENCA, UBICACION, CAMPO_PORTAL AS CAMPO FROM {_TABLA_PRODUCCION_CAMPOS_POZOS}"
         with engine.connect() as conn:
             df = pd.read_sql(sql, conn)
         df.columns = df.columns.str.lower()
@@ -42,11 +46,11 @@ def get_perforacion_filtros(engine: Engine, topic: str = "PozPerf") -> dict:
             "operadores":  sorted(df["campo"].dropna().unique().tolist()),
         }
 
-    tabla = TOPIC_MAP["PozPerf"][0]
+    tabla, var = TOPIC_MAP["PozPerf"]
     sql = f"""
         SELECT DISTINCT CUENCA, CATEGORIA_POZO, UBICACION, OPERADOR
-        FROM {SCHEMA}{tabla}
-        WHERE POZOS_PERFORADOS > 0
+        FROM {tabla}
+        WHERE {var} > 0
     """
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
@@ -95,7 +99,7 @@ def get_perforacion(
 
     if years_list:
         años_sql = ", ".join(str(y) for y in years_list)
-        where_fecha = f"YEAR(FECHA) IN ({años_sql})"
+        where_fecha = f"{_YEAR_FECHA} IN ({años_sql})"
         period = "annually"
     else:
         init = f"{start_year}-{start_month:02d}-01"
@@ -104,7 +108,7 @@ def get_perforacion(
 
     sql = f"""
         SELECT FECHA, CUENCA, CATEGORIA_POZO, UBICACION, OPERADOR, {var}
-        FROM {SCHEMA}{tabla}
+        FROM {tabla}
         WHERE {where_fecha}
           AND {var} > 0
     """
@@ -254,7 +258,7 @@ def get_perforacion_historico(engine: Engine, topic: str) -> dict:
     if topic == "PozosCampos":
         sql = f"""
             SELECT FECHA, CAMPO_PORTAL AS CAMPO, CUENCA, UBICACION, POZOS_ACEITE, POZOS_GAS
-            FROM {SCHEMA}PRODUCCION_CAMPOS_POZOS
+            FROM {_TABLA_PRODUCCION_CAMPOS_POZOS}
         """
         orden = ["FECHA", "CUENCA", "CAMPO"]
         columnas = ["Fecha", "Campo", "Cuenca", "Ambiente", "Pozos de petróleo y gas asociado", "Pozos de gas no asociado"]
@@ -262,7 +266,7 @@ def get_perforacion_historico(engine: Engine, topic: str) -> dict:
         tabla, var = TOPIC_MAP[topic]
         sql = f"""
             SELECT FECHA, OPERADOR, CATEGORIA_POZO, CUENCA, UBICACION, {var}
-            FROM {SCHEMA}{tabla}
+            FROM {tabla}
         """
         orden = ["FECHA", "CUENCA", "OPERADOR"]
         columnas = ["Fecha", "Operador", "Categoría", "Cuenca", "Ambiente", var.replace("_", " ").title()]
@@ -275,8 +279,8 @@ def get_perforacion_historico(engine: Engine, topic: str) -> dict:
     if df.empty:
         return {"columnas": columnas, "filas": [], "periodo_nota": ""}
 
-    df.sort_values(orden, inplace=True)
     df.columns = df.columns.str.lower()
+    df.sort_values([c.lower() for c in orden], inplace=True)
     df["fecha"] = pd.to_datetime(df["fecha"])
     ultima = df["fecha"].max()
     periodo_nota = f"Datos a {_HISTORICO_MESES[ultima.month - 1]} de {ultima.year}."
@@ -317,11 +321,16 @@ def get_perforacion_pozos_detalle(
         return {"pozos": [], "total": 0}
 
     campo_fecha = "DRILLING_FINISH_DATE" if topic == "PozPerf" else "COMPLETION_FINISH_DATE"
+    _year_of = (lambda c: f"EXTRACT(YEAR FROM {c})") if _PG else (lambda c: f"YEAR({c})")
+    _month_of = (lambda c: f"EXTRACT(MONTH FROM {c})") if _PG else (lambda c: f"MONTH({c})")
+    _campo_year = "YEAR" if _PG else "[YEAR]"
+    _campo_type = "TYPE" if _PG else "[TYPE]"
+    _status_concluido = "upper(STATUS) = 'CONCLUIDO'" if _PG else "STATUS = 'CONCLUIDO'"
 
     params = {}
-    where = [f"{campo_fecha} IS NOT NULL", "[YEAR] >= 1960", "PETROLEUM_PROVINCE IS NOT NULL", "[TYPE] IS NOT NULL"]
+    where = [f"{campo_fecha} IS NOT NULL", f"{_campo_year} >= 1960", "PETROLEUM_PROVINCE IS NOT NULL", f"{_campo_type} IS NOT NULL"]
     if topic == "PozTerm":
-        where.append("STATUS = 'CONCLUIDO'")
+        where.append(_status_concluido)
     if cuenca:
         where.append("PETROLEUM_PROVINCE = :cuenca")
         params["cuenca"] = cuenca
@@ -334,17 +343,17 @@ def get_perforacion_pozos_detalle(
 
     periodo = periodo.strip()
     if len(periodo) == 4:
-        where.append(f"YEAR({campo_fecha}) = :anio")
+        where.append(f"{_year_of(campo_fecha)} = :anio")
         params["anio"] = int(periodo)
     else:
         anio, mes = periodo.split("-")
-        where.append(f"YEAR({campo_fecha}) = :anio")
-        where.append(f"MONTH({campo_fecha}) = :mes")
+        where.append(f"{_year_of(campo_fecha)} = :anio")
+        where.append(f"{_month_of(campo_fecha)} = :mes")
         params["anio"], params["mes"] = int(anio), int(mes)
 
     sql = f"""
-        SELECT WELL_NAME, {campo_fecha} AS FECHA_EVENTO, [TYPE], OPERATOR
-        FROM cmde_valid.dbo.bd_pozos
+        SELECT WELL_NAME, {campo_fecha} AS FECHA_EVENTO, {_campo_type}, OPERATOR
+        FROM {_TABLA_BD_POZOS_VALID}
         WHERE {" AND ".join(where)}
     """
     with engine.connect() as conn:
@@ -381,6 +390,12 @@ def get_perforacion_pozos_detalle(
         with engine.connect() as conn:
             df_campo = pd.read_sql(sqlalchemy_text(sql_campo), conn, params=params_campo)
         df_campo.columns = df_campo.columns.str.lower()
+        # Un pozo puede tener mas de un ASIG_CONT distinto en su historial
+        # (p.ej. una asignacion real y, en otro registro, una administrativa
+        # "ADM-%" — ver nota de core.dim_contrato en 04_transform_staging_to_core.sql).
+        # dict(zip(...)) se queda con el ultimo valor visto, no determinista;
+        # se ordena para que una asignacion real siempre gane sobre "ADM-%".
+        df_campo = df_campo.sort_values("asig_cont", key=lambda s: s.str.startswith("ADM-"), ascending=False)
         campo_por_pozo = dict(zip(df_campo["well_name"].str.upper(), df_campo["asig_cont"]))
     except Exception:
         pass
@@ -442,7 +457,7 @@ def _get_pozos_campos(
     years_list = [int(y.strip()) for y in years.split("|") if y.strip()] if years else []
     if years_list:
         años_sql = ", ".join(str(y) for y in years_list)
-        where_fecha = f"YEAR(FECHA) IN ({años_sql})"
+        where_fecha = f"{_YEAR_FECHA} IN ({años_sql})"
         period = "annually"
     else:
         init = f"{start_year}-{start_month:02d}-01"
@@ -451,7 +466,7 @@ def _get_pozos_campos(
 
     sql = f"""
         SELECT FECHA, CUENCA, CAMPO_PORTAL AS CAMPO, UBICACION, POZOS_ACEITE, POZOS_GAS
-        FROM {SCHEMA}PRODUCCION_CAMPOS_POZOS
+        FROM {_TABLA_PRODUCCION_CAMPOS_POZOS}
         WHERE {where_fecha}
     """
     with engine.connect() as conn:
