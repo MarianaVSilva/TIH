@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    db_engine: str = "mssql"  # "mssql" (por defecto, sin cambios) | "postgres" (ver postgres_migration/)
+    db_engine: str = "postgres"  # rama "postgres": fuente de datos = Postgres (ver postgres_migration/). En master sigue siendo "mssql".
     db_server: str = "172.16.200.99"
     db_instance: str = "UMBRACODB"
     db_name: str = "cmde_public"
