@@ -1,6 +1,7 @@
 import { useState } from "react";
+import { tendenciaLabel } from "../../utils/tendenciaLabel";
 
-const TENDENCIAS = ["CRECIENDO", "ESTABLE", "DECLINANDO", "CRITICO"];
+const TENDENCIAS = ["CRECIENDO", "ESTABLE", "DECLINANDO", "CRITICO", "SIN_PRODUCCION"];
 const ESTADOS = ["Productor", "Inactivo", "Cerrado", "Abandono permanente", "Abandono temporal", "En inyección"];
 
 function toggleSet(set, setter, v) {
@@ -62,7 +63,7 @@ export default function PozosFiltrosPanel({ onAplicar, onLimpiar, activo }) {
                 className={`px-2 py-0.5 rounded-full text-[10px] border ${
                   tendencias.has(t) ? "bg-tih-dark text-white border-tih-dark" : "border-slate-200 text-slate-500"
                 }`}>
-                {t}
+                {tendenciaLabel(t)}
               </button>
             ))}
           </div>

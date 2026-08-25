@@ -507,6 +507,23 @@ function formatFechaExport(periodo) {
   return periodo;
 }
 
+// Transpone una tabla "vieja" (label x periodo, con los periodos como
+// columnas — el árbol indentado que se ve en pantalla) al formato PLANO/
+// vertical (1 fila por Fecha, 1 columna por label/serie) — mismo criterio
+// que buildPivotExport, para los pocos exports que todavía arman su tabla a
+// mano en vez de usar el resultado jerárquico del backend (comparar pozos,
+// detalle de un pozo).
+export function transponerAPivot(columnasPeriodo, filas, etiquetaIdentidad = "Fecha") {
+  return {
+    columnasIdentidad: [etiquetaIdentidad],
+    columnasValor: filas.map(f => f.label),
+    filas: columnasPeriodo.map((periodo, i) => ({
+      identidad: [formatFechaExport(periodo)],
+      valores: filas.map(f => f.valores[i]),
+    })),
+  };
+}
+
 // ── Exportar: tabla PLANA/pivote (1 fila por Fecha + combinación hoja, 1
 // columna por producto/serie) en vez del árbol indentado que se ve en
 // pantalla — pedido explícito del usuario, con
@@ -1384,7 +1401,7 @@ function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, tit
 }
 
 // ── Componente principal ──────────────────────────────────────────────────────
-export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick, onCellClick, flatExportEntidad, historicoTopic, historicoFetch, preserveColumnOrder, search: searchControlada, onSearchChange, sinResumen, exportOperadorTabla, flatAlfabetico }) {
+export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick, onCellClick, flatExportEntidad, historicoTopic, historicoFetch, preserveColumnOrder, search: searchControlada, onSearchChange, sinResumen, exportOperadorTabla, flatAlfabetico, ocultarSuma }) {
   const { pendingBusqueda, setPendingBusqueda } = useExplorer();
   const [searchLocal, setSearchLocal] = useState("");
   // Búsqueda controlada desde afuera (Reservas, ver ChartArea): sobrevive al
@@ -1606,8 +1623,11 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   const isCompare = !!compareMode && !isMonthly && visCats.length === 2;
 
   // Columna de suma a la derecha con 2+ años (vista anual); en vista mensual
-  // se agrega al final de cada año en vez de una sola global.
-  const sumaDisponible = isMonthly ? visCats.length > 0 : visCats.length >= 2;
+  // se agrega al final de cada año en vez de una sola global. "Pozos
+  // operando por campo" la oculta (ocultarSuma, pedido explícito): son fotos
+  // de pozos activos por año (promedio, no acumulado, ver
+  // perforacion_service.py), sumar dos años no tiene significado real.
+  const sumaDisponible = !ocultarSuma && (isMonthly ? visCats.length > 0 : visCats.length >= 2);
   const showSuma = sumaDisponible && !sumaOculta;
   const extraSumaCols = isMonthly ? (showSuma ? yearGroups.length : 0) : (showSuma ? 1 : 0);
 

@@ -763,7 +763,7 @@ def _grupo_contrato(asig_cont) -> str:
     if s.startswith("CNH-M"):
         return "Migraciones"
     if s.startswith("CNH-A"):
-        return "Farmouts"
+        return "Asociaciones"
     if s.startswith("CNH-R"):
         return "Rondas"
     return "Asignaciones"

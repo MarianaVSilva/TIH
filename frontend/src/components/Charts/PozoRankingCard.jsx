@@ -1,10 +1,12 @@
 import { useState } from "react";
 import TendenciaDesgloseModal from "./TendenciaDesgloseModal";
+import { tendenciaLabel } from "../../utils/tendenciaLabel";
 
-const TENDENCIA_ICON  = { CRECIENDO: "↑", ESTABLE: "→", DECLINANDO: "↓", CRITICO: "⚠" };
-const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626" };
-const TENDENCIA_BG    = { CRECIENDO: "#ecfdf5", ESTABLE: "#f1f5f9", DECLINANDO: "#fffbeb", CRITICO: "#fef2f2" };
-// Pozo sin producción actual: la tendencia no tiene sentido, se omite.
+const TENDENCIA_ICON  = { CRECIENDO: "↑", ESTABLE: "→", DECLINANDO: "↓", CRITICO: "⚠", SIN_PRODUCCION: "◼" };
+const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626", SIN_PRODUCCION: "#94a3b8" };
+const TENDENCIA_BG    = { CRECIENDO: "#ecfdf5", ESTABLE: "#f1f5f9", DECLINANDO: "#fffbeb", CRITICO: "#fef2f2", SIN_PRODUCCION: "#f8fafc" };
+// SIN_PRODUCCION ya viene calculado desde el backend (sin producción en los
+// últimos 6 meses calendario) — se muestra como badge normal, no se omite.
 const ESTADOS_SIN_TENDENCIA = ["Cerrado", "Inactivo", "Abandono permanente", "Abandono temporal"];
 
 export function TendenciaBadge({ tendencia, estado, campo, pozo }) {
@@ -16,7 +18,7 @@ export function TendenciaBadge({ tendencia, estado, campo, pozo }) {
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-semibold whitespace-nowrap"
         style={{ color: TENDENCIA_COLOR[tendencia] ?? "#64748b", background: TENDENCIA_BG[tendencia] ?? "#f1f5f9" }}
       >
-        {TENDENCIA_ICON[tendencia] ?? "–"} {tendencia}
+        {TENDENCIA_ICON[tendencia] ?? "–"} {tendenciaLabel(tendencia)}
       </span>
       {campo && pozo && (
         <button
@@ -82,7 +84,7 @@ export default function PozoRankingCard({ ranking, onSelectPozo, onClose, campo 
   return (
     <div className="rounded-2xl border border-slate-200 shadow-sm bg-white overflow-hidden mb-4">
       <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-1" style={{ background: "linear-gradient(90deg,#10312B,#1a4a3a)" }}>
-        <span className="text-white text-[13px] font-bold tracking-wide">Ranking en el campo</span>
+        <span className="text-white text-[13px] font-bold tracking-wide">Ranking por asignación</span>
         <div className="flex items-center gap-2">
           <span className="text-teal-200/90 text-[11px]">
             {ranking.num_pozos} pozos · promedio {ranking.promedio_mbd?.toLocaleString("es-MX", { minimumFractionDigits: 3, maximumFractionDigits: 3 })} {unidad}

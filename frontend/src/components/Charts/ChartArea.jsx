@@ -2007,6 +2007,7 @@ export default function ChartArea() {
                 // Nacional por producto — forceDivisions oculta el total que
                 // las sumaría sin sentido, igual que en "Producción por ubicación".
                 forceDivisions={esProdCuenca || esOperadores}
+                ocultarSuma={tema?.json_arg === "PozosCampos"}
                 entityLabel={entityLabelValue}
                 searchPlaceholder={
                   tema?.json_arg === "PozosCampos" || tema?.json_arg === "Campos" ? "Buscar Campo"

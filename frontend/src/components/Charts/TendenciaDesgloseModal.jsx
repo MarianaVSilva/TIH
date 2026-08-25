@@ -1,13 +1,9 @@
 import { useEffect, useState } from "react";
 import { fetchPozoTendenciaDesglose } from "../../api/client";
 import LoadingSpinner from "../UI/LoadingSpinner";
+import { tendenciaLabel } from "../../utils/tendenciaLabel";
 
-const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626" };
-const AJUSTE_TEXTO = {
-  sube: "sube un nivel de severidad (el semestre reciente mejora respecto a la tendencia anual)",
-  baja: "baja un nivel de severidad (el semestre reciente empeora respecto a la tendencia anual)",
-  igual: "no cambia de nivel (el semestre reciente está dentro de lo esperado para la tendencia anual)",
-};
+const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626", SIN_PRODUCCION: "#94a3b8" };
 
 function fmt(n, dec = 3) {
   return n == null ? "—" : n.toLocaleString("es-MX", { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -114,9 +110,28 @@ export default function TendenciaDesgloseModal({ campo, pozo, metrica = "auto", 
                 </p>
               </Seccion>
 
-              {datos.anual != null ? (
-                <Seccion n={2} titulo="Tasa anual real (12 meses vs 12 meses previos)">
-                  <p>Se promedian los últimos 12 meses y se comparan contra el promedio de los 12 meses anteriores a esos:</p>
+              {datos.sin_produccion ? (
+                <Seccion n={2} titulo="Sin producción">
+                  <p>
+                    El pozo no tuvo producción (mayor a cero) en ninguno de los últimos <b>6 meses calendario</b> —
+                    se clasifica directo como <b style={{ color: TENDENCIA_COLOR.SIN_PRODUCCION }}>Sin producción</b>,
+                    sin importar lo que digan las tasas de abajo (son informativas, con el último dato real que tuvo el pozo).
+                  </p>
+                </Seccion>
+              ) : (
+                <Seccion n={2} titulo="Clasificación (umbrales fijos, iguales para todos los pozos)">
+                  <p>Se compara suma_6m contra los mismos umbrales para todos los pozos:</p>
+                  <Formula>{`suma_6m < ${datos.umbral_critico}%  →  CRÍTICO\n${datos.umbral_critico}% a ${datos.umbral_declinando}%  →  DECLINANDO\n${datos.umbral_declinando}% a +${datos.umbral_creciendo}%  →  ESTABLE\nsuma_6m > +${datos.umbral_creciendo}%  →  CRECIENDO`}</Formula>
+                  <p>
+                    suma_6m = {fmtPct(datos.suma_6m)}
+                    {" → "}<b style={{ color: TENDENCIA_COLOR[datos.tendencia_final] }}>TENDENCIA = {tendenciaLabel(datos.tendencia_final)}</b>
+                  </p>
+                </Seccion>
+              )}
+
+              {datos.anual != null && (
+                <Seccion n={3} titulo="Tasa anual real (12 meses vs 12 meses previos) — informativa">
+                  <p>No clasifica la tendencia (eso lo hace suma_6m, arriba) — se muestra como referencia y es la base de la proyección de vida remanente:</p>
                   <Formula>{"anual = (promedio_actual_12m - promedio_previo_12m) / promedio_previo_12m × 100"}</Formula>
                   <p>
                     promedio_actual_12m = <b>{fmt(datos.prom_actual_12m)} {datos.unidad}</b><br />
@@ -124,46 +139,10 @@ export default function TendenciaDesgloseModal({ campo, pozo, metrica = "auto", 
                     <b>anual</b> = {fmtPct(datos.anual)}
                   </p>
                 </Seccion>
-              ) : (
-                <Seccion n={2} titulo="Tasa anual real (12 meses vs 12 meses previos)">
-                  <p>El pozo tiene menos de 24 meses de histórico — no hay suficiente dato para esta tasa; la clasificación usa solo la señal de 6 meses.</p>
-                </Seccion>
-              )}
-
-              <Seccion n={3} titulo="Clasificación base">
-                <p>Se compara la tasa {datos.anual != null ? "anual" : "de 6 meses"} contra umbrales de industria (Payne Institute / IEA):</p>
-                <Formula>{datos.anual != null
-                  ? "anual < -12%  →  CRÍTICO\n-12% a -5%   →  DECLINANDO\n-5% a +5%    →  ESTABLE\nanual > +5%   →  CRECIENDO"
-                  : "6m < -6.19%  →  CRÍTICO\n-6.19% a -2.53%  →  DECLINANDO\n-2.53% a +2.47%  →  ESTABLE\n6m > +2.47%  →  CRECIENDO"}</Formula>
-                <p>
-                  {datos.anual != null ? `anual = ${fmtPct(datos.anual)}` : `suma_6m = ${fmtPct(datos.suma_6m)}`}
-                  {" → "}<b style={{ color: TENDENCIA_COLOR[datos.base] }}>base = {datos.base}</b>
-                </p>
-              </Seccion>
-
-              {datos.equivalente_semestral != null && (
-                <Seccion n={4} titulo="Ajuste por momentum reciente (últimos 6 meses)">
-                  <p>La tasa anual se convierte a su equivalente semestral (interés compuesto) para poder comparar contra suma_6m:</p>
-                  <Formula>{"equivalente_semestral = ((1 + anual/100)^0.5 - 1) × 100\ndelta = suma_6m - equivalente_semestral"}</Formula>
-                  <p>
-                    equivalente_semestral = {fmtPct(datos.equivalente_semestral)}<br />
-                    delta = {fmtPct(datos.suma_6m)} − ({fmtPct(datos.equivalente_semestral)}) = <b>{fmt(datos.delta)} puntos</b>
-                  </p>
-                  <p className="mt-1.5">
-                    Si delta se desvía por más de ±{fmt(datos.umbral_momentum)} puntos (umbral crítico semestral), se sube o baja un nivel de severidad respecto a la base.
-                  </p>
-                  <p className="mt-1.5">
-                    delta = {fmt(datos.delta)} → <b>{AJUSTE_TEXTO[datos.ajuste] ?? "—"}</b>
-                  </p>
-                  <p className="mt-2 text-[13px]">
-                    <b>TENDENCIA FINAL = </b>
-                    <span className="font-bold" style={{ color: TENDENCIA_COLOR[datos.tendencia_final] }}>{datos.tendencia_final}</span>
-                  </p>
-                </Seccion>
               )}
 
               {datos.vida_remanente ? (
-                <Seccion n={5} titulo="Proyección estimada de vida útil (vida remanente)">
+                <Seccion n={4} titulo="Proyección estimada de vida útil (vida remanente)">
                   <p>Solo se calcula si la tasa anual es negativa y la producción actual es mayor a cero. Modelo de declinación exponencial simple hasta llegar al 10% de la producción actual:</p>
                   <Formula>{"k = |anual| / 100\nlímite = producción_actual × 0.10\nt_años = ln(producción_actual / límite) / k\nvida_remanente_meses = round(t_años × 12)"}</Formula>
                   <p>
@@ -175,13 +154,13 @@ export default function TendenciaDesgloseModal({ campo, pozo, metrica = "auto", 
                 </Seccion>
               ) : (
                 datos.anual != null && datos.anual >= 0 && (
-                  <Seccion n={5} titulo="Proyección estimada de vida útil (vida remanente)">
+                  <Seccion n={4} titulo="Proyección estimada de vida útil (vida remanente)">
                     <p>No aplica: la tasa anual no es negativa, así que no hay una declinación que proyectar.</p>
                   </Seccion>
                 )
               )}
 
-              <Seccion n={6} titulo="Nota sobre consistencia">
+              <Seccion n={5} titulo="Nota sobre consistencia">
                 <p>
                   Este cálculo siempre usa el histórico completo del pozo ({datos.n_meses} meses), sin importar el rango de años
                   seleccionado en el filtro de Periodo del tablero — así la Tendencia que ves aquí, en el detalle del pozo y en el

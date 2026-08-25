@@ -157,18 +157,19 @@ def get_produccion_pozos_resumen(
 
 # ── Analítica avanzada ──────────────────────────────────────────────────────
 
-_ORDEN_SEVERIDAD = ["CRITICO", "DECLINANDO", "ESTABLE", "CRECIENDO"]  # peor -> mejor
-# Ventana de momentum reciente: 6 meses (antes 3) — con pozos de producción
-# baja/marginal, un solo mes atípico dominaba la suma de 3 meses (ver caso
-# ÁRABE-1: +2,425% en un mes por ruido de medición). 6 meses diluye ese
-# ruido a costa de tardar un poco más en reflejar un cambio reciente real.
-# Mismos umbrales sourced (Payne Institute/IEA: -12%/-5%/+5% anual), pero
-# convertidos a su equivalente SEMESTRAL (interés compuesto, exponente 0.5
-# en vez de 0.25 de la versión trimestral anterior).
-_UMBRAL_MOMENTUM = abs(((1 - 0.12) ** 0.5 - 1) * 100)  # ≈ 6.1917
-_UMBRAL_CRITICO_6M = ((1 - 0.12) ** 0.5 - 1) * 100      # ≈ -6.1917
-_UMBRAL_DECLINANDO_6M = ((1 - 0.05) ** 0.5 - 1) * 100   # ≈ -2.5321
-_UMBRAL_CRECIENDO_6M = ((1 + 0.05) ** 0.5 - 1) * 100    # ≈ +2.4695
+# Umbrales FIJOS y uniformes para todos los pozos (pedido explícito del
+# usuario: antes cada pozo se comparaba contra su propia tasa anual —
+# ej. ÁRABE-10 terminaba con un umbral distinto al de otros pozos — lo que
+# hacía que "Crítico"/"Declinando"/etc. no significara lo mismo de un pozo a
+# otro). Se aplican directo sobre suma_6m (suma de tasas mensuales de los
+# últimos 6 meses):
+#   Crítico:    < -10%
+#   Declinando: -10% a -1%
+#   Estable:    -1% a +3%
+#   Creciendo:  > +3%
+_UMBRAL_CRITICO_6M = -10.0
+_UMBRAL_DECLINANDO_6M = -1.0
+_UMBRAL_CRECIENDO_6M = 3.0
 
 
 def _clasificar_declinacion(valor: float, u_critico: float, u_declinando: float, u_creciendo: float) -> str:
@@ -178,35 +179,19 @@ def _clasificar_declinacion(valor: float, u_critico: float, u_declinando: float,
     return "CRECIENDO"
 
 
-def _tendencia(suma_6m: float, anual: float | None = None) -> str:
-    """Clasificación BASE = la tasa de declinación anual propia del pozo (12m
-    vs 12m previos) contra rangos de industria con fuente real: convencional
-    general 5-10%/año, terminal percentil 20-80 = 2.9-9.4%/año (Payne
-    Institute), Mar del Norte 8-12%/año (IEA) → -12%/-5%/+5% anual.
+def _tendencia(suma_6m: float) -> str:
+    """Clasificación por umbrales fijos (mismos para todos los pozos, ver
+    arriba) sobre suma_6m — la suma de tasas mensuales de los últimos 6
+    meses. La tasa anual (12m vs 12m previos) sigue calculándose y
+    mostrándose como dato informativo y para la proyección de vida
+    remanente, pero ya NO afecta esta clasificación."""
+    return _clasificar_declinacion(suma_6m, _UMBRAL_CRITICO_6M, _UMBRAL_DECLINANDO_6M, _UMBRAL_CRECIENDO_6M)
 
-    Luego se compara suma_6m (los últimos 6 meses) contra el EQUIVALENTE
-    SEMESTRAL de esa MISMA tasa anual propia — no contra un umbral genérico
-    — usando interés compuesto: (1+anual/100)^0.5 - 1. Si el semestre
-    reciente se desvía de ese equivalente por más de ~6.19 puntos (el mismo
-    umbral crítico sourced, convertido a 6 meses), se sube o baja un nivel de
-    severidad respecto a la base: así una buena racha de 6 meses atenúa (pero
-    no borra) una declinación estructural real, y viceversa.
 
-    Sin `anual` (pozo con <24 meses de histórico), se usa solo suma_6m contra
-    los umbrales semestrales fijos (mismo origen)."""
-    if anual is None:
-        return _clasificar_declinacion(suma_6m, _UMBRAL_CRITICO_6M, _UMBRAL_DECLINANDO_6M, _UMBRAL_CRECIENDO_6M)
-
-    base = _clasificar_declinacion(anual, -12, -5, 5)
-    equivalente_propio = ((1 + anual / 100) ** 0.5 - 1) * 100
-    delta = suma_6m - equivalente_propio
-
-    idx = _ORDEN_SEVERIDAD.index(base)
-    if delta < -_UMBRAL_MOMENTUM and idx > 0:
-        idx -= 1  # el semestre reciente empeora respecto a su propia tendencia
-    elif delta > _UMBRAL_MOMENTUM and idx < len(_ORDEN_SEVERIDAD) - 1:
-        idx += 1  # el semestre reciente mejora respecto a su propia tendencia
-    return _ORDEN_SEVERIDAD[idx]
+def _cutoff_6m_calendario() -> "pd.Timestamp":
+    """Primer día del mes de hace 6 meses calendario (respecto a HOY, no al
+    último dato del pozo) — usado para detectar pozos "Sin producción"."""
+    return pd.Timestamp.now().normalize().replace(day=1) - pd.DateOffset(months=6)
 
 
 def _tasas_mensuales(valores: list[float]) -> list[float | None]:
@@ -233,18 +218,23 @@ def _tendencia_por_pozo(mensual: pd.DataFrame, group_cols: list[str], metric_col
     g["_tasa"] = ((g[metric_col] - prev) / prev_safe * 100).astype("float64")
     g["_suma6"] = g.groupby(group_cols)["_tasa"].transform(lambda s: s.rolling(6, min_periods=1).sum())
 
-    # Tasa anual real: promedio móvil de 12 meses, comparado contra el mismo
-    # promedio de hace 12 meses (shift del propio rolling), igual que en
-    # get_pozo_analisis — solo se obtiene donde hay >=24 meses de histórico.
-    g["_roll12"] = g.groupby(group_cols)[metric_col].transform(lambda s: s.rolling(12, min_periods=12).mean())
-    g["_roll12_prev"] = g.groupby(group_cols)["_roll12"].shift(12)
-    g["_anual"] = ((g["_roll12"] - g["_roll12_prev"]) / g["_roll12_prev"].replace(0, np.nan) * 100).astype("float64")
-
     ultimo = g.groupby(group_cols, as_index=False).tail(1).copy()
-    ultimo["tendencia"] = ultimo.apply(
-        lambda r: _tendencia(r["_suma6"], r["_anual"] if pd.notna(r["_anual"]) else None) if pd.notna(r["_suma6"]) else "SIN_DATOS",
-        axis=1,
-    )
+    ultimo["tendencia"] = ultimo["_suma6"].apply(lambda v: _tendencia(v) if pd.notna(v) else "SIN_DATOS")
+
+    # "Sin producción": pozo sin producción (>0) en ninguno de los últimos 6
+    # meses CALENDARIO (respecto a hoy, no al último dato disponible del pozo)
+    # — pedido explícito, distinto de SIN_DATOS (que es falta de histórico
+    # suficiente para calcular una tasa). Nota: `mensual` puede venir acotado
+    # al rango de años de la UI (igual que el resto de esta función); si ese
+    # rango no llega hasta el mes actual, esta detección es aproximada — el
+    # mismo trade-off ya documentado para la tendencia period-scoped.
+    cutoff = _cutoff_6m_calendario()
+    prod_reciente = g[g["fecha"] >= cutoff].groupby(group_cols)[metric_col].sum()
+    ultimo = ultimo.set_index(group_cols)
+    ultimo["_prod_reciente"] = prod_reciente.reindex(ultimo.index).fillna(0)
+    ultimo = ultimo.reset_index()
+    ultimo.loc[ultimo["_prod_reciente"] <= 0, "tendencia"] = "SIN_PRODUCCION"
+
     ultimo = ultimo.rename(columns={metric_col: "produccion_mbd", "_suma6": "tasa_6m"})
     ultimo["produccion_mbd"] = ultimo["produccion_mbd"].round(3)
     ultimo["tasa_6m"] = ultimo["tasa_6m"].round(3)
@@ -367,7 +357,16 @@ def get_pozo_analisis(engine: Engine, campo: str, pozo: str, metrica: str = "aut
         prom_previo = sum(valores[-24:-12]) / 12
         anual = round((prom_actual - prom_previo) / prom_previo * 100, 3) if prom_previo else None
 
-    tendencia = _tendencia(suma_6m, anual) if suma_6m is not None else "SIN_DATOS"
+    tendencia = _tendencia(suma_6m) if suma_6m is not None else "SIN_DATOS"
+
+    # "Sin producción": nada (>0) en los últimos 6 meses CALENDARIO respecto a
+    # hoy — distinto de SIN_DATOS (histórico insuficiente). Pisa la
+    # clasificación por tasa: un pozo cerrado no tiene una "tendencia"
+    # significativa, solo el hecho de que dejó de producir.
+    cutoff = _cutoff_6m_calendario()
+    sin_produccion = sum(v for f, v in zip(fechas, valores) if f >= cutoff) <= 0
+    if sin_produccion:
+        tendencia = "SIN_PRODUCCION"
 
     vida_remanente_meses = None
     if anual is not None and anual < 0 and actual > 0:
@@ -378,19 +377,13 @@ def get_pozo_analisis(engine: Engine, campo: str, pozo: str, metrica: str = "aut
             t_anios = math.log(actual / limite) / k
             vida_remanente_meses = max(0, round(t_anios * 12))
 
-    # La base de la clasificación es la tasa anual (cuando está disponible);
-    # el mensaje cita esa cifra, ya que es la más estable y representativa.
+    # La clasificación se basa en suma_6m (ver _tendencia) -- el mensaje cita
+    # esa misma cifra para ser consistente con lo que realmente se evaluó.
     alerta = None
     if tendencia == "CRITICO":
-        alerta = {"nivel": "CRITICA", "mensaje": (
-            f"Declinación acelerada: {abs(anual):.1f}% en el último año." if anual is not None
-            else f"Declinación acelerada: {abs(suma_6m):.1f}% en los últimos 6 meses."
-        )}
+        alerta = {"nivel": "CRITICA", "mensaje": f"Declinación acelerada: {abs(suma_6m):.1f}% en los últimos 6 meses."}
     elif tendencia == "DECLINANDO":
-        alerta = {"nivel": "MEDIA", "mensaje": (
-            f"Declinación moderada: {abs(anual):.1f}% en el último año." if anual is not None
-            else f"Declinación moderada: {abs(suma_6m):.1f}% en los últimos 6 meses."
-        )}
+        alerta = {"nivel": "MEDIA", "mensaje": f"Declinación moderada: {abs(suma_6m):.1f}% en los últimos 6 meses."}
 
     resultado = {
         "disponible": True,
@@ -459,6 +452,9 @@ def get_pozo_tendencia_desglose(engine: Engine, campo: str, pozo: str, metrica: 
     validas_6m = [p["tasa"] for p in pasos_6m if p["tasa"] is not None]
     suma_6m = round(sum(validas_6m), 3) if validas_6m else None
 
+    # Tasa anual (12m vs 12m previos): ya NO clasifica la tendencia (ver
+    # _tendencia) -- se muestra como dato informativo y sigue siendo la base
+    # de la proyección de vida remanente.
     anual = None
     prom_actual_12m = prom_previo_12m = None
     if n >= 24:
@@ -466,23 +462,9 @@ def get_pozo_tendencia_desglose(engine: Engine, campo: str, pozo: str, metrica: 
         prom_previo_12m = round(sum(valores[-24:-12]) / 12, 4)
         anual = round((prom_actual_12m - prom_previo_12m) / prom_previo_12m * 100, 3) if prom_previo_12m else None
 
-    base = _clasificar_declinacion(anual, -12, -5, 5) if anual is not None else (
-        _clasificar_declinacion(suma_6m, _UMBRAL_CRITICO_6M, _UMBRAL_DECLINANDO_6M, _UMBRAL_CRECIENDO_6M)
-        if suma_6m is not None else None
-    )
-
-    equivalente_semestral = delta = None
-    ajuste = None
-    tendencia_final = _tendencia(suma_6m, anual) if suma_6m is not None else "SIN_DATOS"
-    if anual is not None and suma_6m is not None:
-        equivalente_semestral = round(((1 + anual / 100) ** 0.5 - 1) * 100, 3)
-        delta = round(suma_6m - equivalente_semestral, 3)
-        if delta < -_UMBRAL_MOMENTUM and tendencia_final != base:
-            ajuste = "baja"
-        elif delta > _UMBRAL_MOMENTUM and tendencia_final != base:
-            ajuste = "sube"
-        else:
-            ajuste = "igual"
+    cutoff = _cutoff_6m_calendario()
+    sin_produccion = sum(v for f, v in zip(fechas, valores) if f >= cutoff) <= 0
+    tendencia_final = "SIN_PRODUCCION" if sin_produccion else (_tendencia(suma_6m) if suma_6m is not None else "SIN_DATOS")
 
     actual = valores[-1]
     vida = None
@@ -505,11 +487,10 @@ def get_pozo_tendencia_desglose(engine: Engine, campo: str, pozo: str, metrica: 
         "rango": f"{fechas[0].strftime('%Y-%m')} a {fechas[-1].strftime('%Y-%m')}",
         "ultimos_13": ultimos_13,
         "pasos_6m": pasos_6m, "suma_6m": suma_6m,
-        "prom_actual_12m": prom_actual_12m, "prom_previo_12m": prom_previo_12m, "anual": anual,
-        "base": base,
-        "equivalente_semestral": equivalente_semestral, "delta": delta,
-        "umbral_momentum": round(_UMBRAL_MOMENTUM, 3), "ajuste": ajuste,
+        "umbral_critico": _UMBRAL_CRITICO_6M, "umbral_declinando": _UMBRAL_DECLINANDO_6M, "umbral_creciendo": _UMBRAL_CRECIENDO_6M,
+        "sin_produccion": sin_produccion,
         "tendencia_final": tendencia_final,
+        "prom_actual_12m": prom_actual_12m, "prom_previo_12m": prom_previo_12m, "anual": anual,
         "produccion_actual": round(float(actual), 4),
         "vida_remanente": vida,
     }

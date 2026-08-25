@@ -2,16 +2,24 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ReactECharts from "echarts-for-react";
 import { fetchPozosComparar } from "../../api/client";
 import LoadingSpinner from "../UI/LoadingSpinner";
+import { tendenciaLabel } from "../../utils/tendenciaLabel";
+import { transponerAPivot } from "./DynamicTable";
 
-// Mismos tonos que el resto del tablero: líquidos verde, gas azul.
-const COLOR_LIQUIDOS = "#0d7a4a";
-const COLOR_GAS = "#1d6fa5";
-const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626" };
+const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626", SIN_PRODUCCION: "#94a3b8" };
 // Pozo sin producción actual: la tendencia no tiene sentido, se omite.
 const ESTADOS_SIN_TENDENCIA = ["Cerrado", "Inactivo", "Abandono permanente", "Abandono temporal"];
 
-function colorDe(unidad) {
-  return unidad === "MMpcd" ? COLOR_GAS : COLOR_LIQUIDOS;
+// Paleta por pozo (no por unidad, ver bug de abajo) — un color distinto por
+// serie, en el mismo orden en que ECharts las lista en la leyenda, para que
+// la línea de cada pozo coincida con el punto de color que la marca en la
+// leyenda/tooltip. Antes se pintaba TODA la gráfica de un solo color según
+// la unidad (verde=líquidos, azul=gas) — con 2+ pozos de la misma unidad
+// (el caso normal al comparar) todas las líneas salían idénticas y solo la
+// leyenda (con la paleta default de ECharts) mostraba colores distintos.
+const PALETA_POZOS = ["#5470c6", "#91cc75", "#fac858", "#ee6666"];
+
+function colorDe(index) {
+  return PALETA_POZOS[index % PALETA_POZOS.length];
 }
 
 // Multi-select de 2-4 pozos (checkboxes en el árbol, ver PozosExplorer):
@@ -48,20 +56,17 @@ export default function PozosComparar({ seleccionados, onQuitar, period, start_y
     try {
       const { exportarProduccionExcel } = await import("../../utils/exportExcel");
       const chartImageBase64 = echartsRef.current?.getEchartsInstance().getDataURL({ pixelRatio: 2, backgroundColor: "#fff" }) ?? null;
+      const filas = data.series.map(s => {
+        const idx = Object.fromEntries(data.categories.map((c, i) => [c, s.data[i]]));
+        const unidad = unidadPorPozo[s.name] ?? "Mbd";
+        const producto = unidad === "MMpcd" ? "Gas" : "Líquidos";
+        return { label: `${s.name} · ${producto} (${unidad})`, valores: visCats.map(c => idx[c] ?? 0) };
+      });
       await exportarProduccionExcel({
         titulo: "Comparación de pozos",
         subtitulo: data.tabla.map(t => t.pozo).join(" · "),
         periodoNota: `Rango: ${data.categories[0]} – ${data.categories[data.categories.length - 1]}`,
-        etiquetaFilaTabla: "Pozo",
-        tabla: {
-          columnas: visCats,
-          filas: data.series.map(s => {
-            const idx = Object.fromEntries(data.categories.map((c, i) => [c, s.data[i]]));
-            const unidad = unidadPorPozo[s.name] ?? "Mbd";
-            const producto = unidad === "MMpcd" ? "Gas" : "Líquidos";
-            return { label: `${s.name} · ${producto} (${unidad})`, valores: visCats.map(c => idx[c] ?? 0) };
-          }),
-        },
+        tablaPivot: transponerAPivot(visCats, filas),
         chartImageBase64,
         chartTitulo: "Producción comparada",
       });
@@ -87,9 +92,10 @@ export default function PozosComparar({ seleccionados, onQuitar, period, start_y
     grid: { top: 20, right: 20, bottom: 60, left: 50, containLabel: true },
     xAxis: { type: "category", data: data.categories, axisLabel: { fontSize: 9, rotate: 45 } },
     yAxis: { type: "value", axisLabel: { fontSize: 9 } },
-    series: data.series.map(s => ({
+    series: data.series.map((s, i) => ({
       name: s.name, type: "line", data: s.data, smooth: true, symbol: "none",
-      lineStyle: { width: 2, color: colorDe(unidadPorPozo[s.name]) },
+      lineStyle: { width: 2, color: colorDe(i) },
+      itemStyle: { color: colorDe(i) },
     })),
   };
 
@@ -114,7 +120,7 @@ export default function PozosComparar({ seleccionados, onQuitar, period, start_y
           </thead>
           <tbody>
             {data.tabla.map((row, ri) => {
-              const color = colorDe(row.unidad);
+              const color = colorDe(ri);
               return (
                 <tr key={row.pozo} className={ri % 2 ? "bg-slate-50/60" : "bg-white"}>
                   <td className="px-3 py-2 text-[12.5px] font-semibold whitespace-nowrap" style={{ borderLeft: `3px solid ${color}`, color: "#334155" }}>
@@ -132,7 +138,7 @@ export default function PozosComparar({ seleccionados, onQuitar, period, start_y
                   <td className="px-3 py-2 text-center">
                     {row.tendencia && !ESTADOS_SIN_TENDENCIA.includes(row.estado_operativo) ? (
                       <span className="px-2 py-0.5 rounded-full text-[10.5px] font-semibold text-white whitespace-nowrap" style={{ background: TENDENCIA_COLOR[row.tendencia] ?? "#94a3b8" }}>
-                        {row.tendencia}
+                        {tendenciaLabel(row.tendencia)}
                       </span>
                     ) : <span className="text-slate-300">—</span>}
                   </td>
@@ -201,7 +207,7 @@ export default function PozosComparar({ seleccionados, onQuitar, period, start_y
           </thead>
           <tbody>
             {data.series.map((s, ri) => {
-              const color = colorDe(unidadPorPozo[s.name]);
+              const color = colorDe(ri);
               const idx = Object.fromEntries(data.categories.map((c, i) => [c, s.data[i]]));
               const valores = visCats.map(c => idx[c]).filter(v => v);
               const max = Math.max(...valores, 0.0001);

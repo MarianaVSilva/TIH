@@ -13,6 +13,8 @@ import TendenciaDesgloseModal from "./TendenciaDesgloseModal";
 import PozoProyeccion from "./PozoProyeccion";
 import PozosFiltrosPanel from "./PozosFiltrosPanel";
 import PozosComparar from "./PozosComparar";
+import { transponerAPivot } from "./DynamicTable";
+import { tendenciaLabel } from "../../utils/tendenciaLabel";
 
 // Croma-key en vivo del video "pozo sin producción" — el archivo trae un
 // fondo gris claro sólido (rgb 242,242,242) horneado en los píxeles; en vez
@@ -90,7 +92,7 @@ function estadoColor(estado) {
   return "#94a3b8";
 }
 
-const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626" };
+const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626", SIN_PRODUCCION: "#94a3b8" };
 // Pozo sin producción actual: la tendencia no tiene sentido, se omite.
 const ESTADOS_SIN_TENDENCIA = ["Cerrado", "Inactivo", "Abandono permanente", "Abandono temporal"];
 
@@ -354,10 +356,7 @@ export default function PozosExplorer() {
           titulo: selected.pozo,
           subtitulo: selected.campo,
           periodoNota: `Rango: ${detalle.categories[0]} – ${detalle.categories[detalle.categories.length - 1]}`,
-          tabla: {
-            columnas: detalle.categories,
-            filas: visibleRows.map(r => ({ label: r.label, valores: r.data })),
-          },
+          tablaPivot: transponerAPivot(detalle.categories, visibleRows.map(r => ({ label: r.label, valores: r.data }))),
           chartImageBase64,
           chartTitulo: tendenciaRow
             ? `Producción observada (${tendenciaEsGas ? "gas" : "líquidos"}, ${tendenciaEsGas ? "MMpcd" : "Mbd"})`
@@ -376,7 +375,7 @@ export default function PozosExplorer() {
           tituloTablaSecundaria: "Ranking de pozos",
           tablaSecundaria: ranking?.pozos?.length ? {
             columnas: ["#", "Pozo", unidadRanking, "Tendencia", "Estado"],
-            filas: ranking.pozos.map(p => [p.ranking, p.pozo, p.produccion_mbd, p.tendencia ?? "—", p.estado_operativo ?? "—"]),
+            filas: ranking.pozos.map(p => [p.ranking, p.pozo, p.produccion_mbd, tendenciaLabel(p.tendencia) ?? "—", p.estado_operativo ?? "—"]),
           } : null,
         });
       }
@@ -556,7 +555,7 @@ export default function PozosExplorer() {
                       {analisis.tendencia && analisis.tendencia !== "SIN_DATOS" && !ESTADOS_SIN_TENDENCIA.includes(analisis.estado_operativo) && (
                         <span className="inline-flex items-center gap-1">
                           <span className="px-2 py-0.5 rounded-full text-[10.5px] font-semibold text-white" style={{ background: TENDENCIA_COLOR[analisis.tendencia] ?? "#94a3b8" }}>
-                            {analisis.tendencia}
+                            {tendenciaLabel(analisis.tendencia)}
                           </span>
                           <button
                             type="button"

@@ -1178,7 +1178,7 @@ export default function TopBar() {
         items={nombresGrupoInv}
         titulo={tema?.json_arg === "InvCuenca" ? "Cuenca"
           : tema?.json_arg === "EmpresasG" ? "País de origen"
-          : ["PozosLic", "EfectivoLic", "InvLic"].includes(tema?.json_arg) ? "Modalidad" : "Ronda / Farmouts / Migraciones"}
+          : ["PozosLic", "EfectivoLic", "InvLic"].includes(tema?.json_arg) ? "Modalidad" : "Ronda / Asociaciones / Migraciones"}
       />
     </header>
   );
