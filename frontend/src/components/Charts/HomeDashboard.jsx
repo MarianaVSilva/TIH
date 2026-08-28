@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import ReactECharts from "echarts-for-react";
 import { fetchResumen } from "../../api/client";
-import HomeExportModal from "./HomeExportModal";
+import ExportPDFTIH from "../ExportPDFTIH/ExportPDFTIH";
+import "../ExportPDFTIH/ExportPDFTIH.css";
+import { useExplorerNav } from "../../hooks/useExplorerNav";
 
 // Cada mini-sección vive en su propia card blanca con borde/sombra sutil,
 // con tamaños compactos para que todo el Panorama general quepa sin scroll.
@@ -226,112 +228,81 @@ function BarrelPartial({ fraction, color, size = 18 }) {
   );
 }
 
-// Tarjetas exportables del Panorama general — construidas NATIVAS a partir
-// de `data` (mismo JSON que pinta el dashboard), no capturadas como imagen
-// del DOM: una captura de pantalla de tarjetas CSS se ve mal en un PDF
-// (bordes/proporciones/tipografía no pensados para imprimir, se ve
-// "raro" — feedback explícito del usuario). Texto/tablas vectoriales via
-// jsPDF (bloques "kpis"/"tabla", ver exportPdf.js) se ven nítidos e
-// imprimen como el resto de los reportes del sitio. El orden aquí es el
-// orden en el PDF.
-const KPI_COLOR = {
-  verde:   { color: [13, 122, 74],  bg: [218, 240, 223] },
-  azul:    { color: [29, 111, 165], bg: [219, 234, 251] },
-  naranja: { color: [138, 44, 23],  bg: [251, 227, 216] },
-  gris:    { color: [100, 116, 139], bg: [241, 245, 249] },
-};
-
-function tablaRanking(items, colLabel) {
-  return {
-    columnas: ["#", colLabel, "Valor"],
-    filas: (items ?? []).map((c, i) => [i + 1, c.nombre, c.valor.toLocaleString("es-MX")]),
-  };
+// Adapta `data` (el mismo JSON de /resumen que pinta el Panorama general) a
+// la forma plana que espera <ExportPDFTIH> (components/ExportPDFTIH) —
+// reemplazo del export nativo anterior, pedido explícito del usuario.
+function pct(valor, base) {
+  if (valor == null || !base) return null;
+  return Math.round(((valor - base) / base) * 1000) / 10;
+}
+function fmtPct(p) {
+  return p == null ? null : `${Math.abs(p)}%`;
+}
+function buscarValor(arr, nombre) {
+  return arr?.find(x => x.nombre === nombre)?.valor;
 }
 
-function buildTarjetasExport({ data, tieneOperador, tieneReservas }) {
-  const items = [
-    {
-      key: "produccion", label: "Producción mensual",
-      bloques: () => {
-        const n = data?.nacional;
-        if (!n?.liquidos?.valor && !n?.gas?.valor) return [];
-        return [{ tipo: "kpis", items: [
-          n.liquidos?.valor != null && { label: "Hidrocarburos líquidos", valor: n.liquidos.valor, unidad: "Mbd", ...KPI_COLOR.verde },
-          n.gas?.valor != null && { label: "Gas natural", valor: n.gas.valor, unidad: "MMpcd", ...KPI_COLOR.azul },
-        ].filter(Boolean) }];
-      },
+function buildExportPDFData(data) {
+  const n = data?.nacional;
+  const ind = data?.indicadores_economicos;
+  const tc = data?.top_campos;
+  const r1p = data?.top5_reservas?.["1P"];
+  const po = data?.por_operador;
+  const p = data?.pozos_operando;
+
+  return {
+    // Etiqueta de periodo real de los datos (la misma que muestra el
+    // encabezado en pantalla), no la fecha de hoy.
+    periodoLabel: periodoLabelDe(n?.periodo),
+    periodoPozosLabel: periodoLabelDe(p?.periodo),
+    produccion: {
+      liquidos: n?.liquidos?.valor,
+      liquidosCambio: fmtPct(pct(n?.liquidos?.valor, n?.liquidos?.promedio)),
+      liquidosPromedio: n?.liquidos?.promedio,
+      liquidosAnioPromedio: n?.liquidos?.anio_promedio,
+      gas: n?.gas?.valor,
+      gasCambio: fmtPct(pct(n?.gas?.valor, n?.gas?.promedio)),
+      gasPromedio: n?.gas?.promedio,
+      gasAnioPromedio: n?.gas?.anio_promedio,
     },
-    {
-      key: "indicadores", label: "Indicadores económicos",
-      bloques: () => {
-        const ind = data?.indicadores_economicos;
-        if (!ind?.brent?.valor && !ind?.mezcla_mexicana?.valor) return [];
-        return [{ tipo: "kpis", items: [
-          ind.brent?.valor != null && { label: "Precio del petróleo (Brent)", valor: ind.brent.valor, unidad: "USD/barril", prefix: "$", ...KPI_COLOR.naranja },
-          ind.mezcla_mexicana?.valor != null && { label: "Mezcla Mexicana de Exportación", valor: ind.mezcla_mexicana.valor, unidad: "USD/barril", prefix: "$", ...KPI_COLOR.verde },
-        ].filter(Boolean) }];
-      },
+    mercado: {
+      brent: ind?.brent?.valor,
+      brentAnterior: ind?.brent?.anterior,
+      brentCambio: fmtPct(pct(ind?.brent?.valor, ind?.brent?.anterior)),
+      mezcla: ind?.mezcla_mexicana?.valor,
+      mezclaAnterior: ind?.mezcla_mexicana?.anterior,
+      mezclaCambio: fmtPct(pct(ind?.mezcla_mexicana?.valor, ind?.mezcla_mexicana?.anterior)),
     },
-    {
-      key: "campos-top8", label: "Top 8: Campos productores",
-      bloques: () => {
-        const tc = data?.top_campos;
-        const b = [];
-        if (tc?.liquidos?.length) { b.push({ tipo: "titulo", texto: "Líquidos (Mbd)" }); b.push({ tipo: "tabla", ...tablaRanking(tc.liquidos, "Campo") }); }
-        if (tc?.gas?.length) { b.push({ tipo: "titulo", texto: "Gas (MMpcd)" }); b.push({ tipo: "tabla", ...tablaRanking(tc.gas, "Campo") }); }
-        return b;
-      },
+    campos: {
+      liquidos: tc?.liquidos ?? [],
+      gas: tc?.gas ?? [],
     },
-  ];
-  if (tieneOperador) {
-    items.push({
-      key: "campos-operador", label: "Producción por Operador",
-      bloques: () => {
-        const po = data?.por_operador;
-        const b = [];
-        for (const [fuel, unidad, label] of [["liquidos", "Mbd", "Líquidos"], ["gas", "MMpcd", "Gas"]]) {
-          const bl = po?.[fuel];
-          if (!bl) continue;
-          b.push({ tipo: "titulo", texto: `${label} (${unidad})` });
-          b.push({ tipo: "kpis", items: [
-            { label: "PEMEX", valor: bl.pemex_total, unidad, ...KPI_COLOR.verde },
-            { label: "Privados", valor: bl.otros_total, unidad, ...KPI_COLOR.gris },
-          ] });
-          if (bl.pemex_contratos?.length) b.push({ tipo: "tabla", ...tablaRanking(bl.pemex_contratos, "PEMEX") });
-          if (bl.otros_contratos?.length) b.push({ tipo: "tabla", ...tablaRanking(bl.otros_contratos, "Privados") });
-        }
-        return b;
-      },
-    });
-  }
-  if (tieneReservas) {
-    for (const nivel of ["1P", "2P", "3P"]) {
-      items.push({
-        key: `reservas-${nivel.toLowerCase()}`, label: `Reservas ${nivel}`,
-        bloques: () => {
-          const r = data?.top5_reservas?.[nivel];
-          if (!r?.aceite?.length && !r?.gas?.length) return [];
-          const b = [];
-          if (r.aceite?.length) { b.push({ tipo: "titulo", texto: `Reservas de aceite ${nivel} (MMb)` }); b.push({ tipo: "tabla", ...tablaRanking(r.aceite, "Campo") }); }
-          if (r.gas?.length) { b.push({ tipo: "titulo", texto: `Reservas de gas natural ${nivel} (MMMpc)` }); b.push({ tipo: "tabla", ...tablaRanking(r.gas, "Campo") }); }
-          return b;
-        },
-      });
-    }
-  }
-  items.push({
-    key: "pozos", label: "Pozos operando",
-    bloques: () => {
-      const p = data?.pozos_operando;
-      if (!p?.total) return [];
-      return [{ tipo: "kpis", items: [
-        { label: "Total pozos operando", valor: p.total, ...KPI_COLOR.naranja },
-        { label: "Petróleo y gas asociado", valor: p.pozos_aceite, sub: `${p.pct_aceite}%`, ...KPI_COLOR.verde },
-        { label: "Gas no asociado y condensado", valor: p.pozos_gas, sub: `${p.pct_gas}%`, ...KPI_COLOR.azul },
-      ] }];
+    reservas: {
+      aceite: r1p?.aceite ?? [],
+      gas: r1p?.gas ?? [],
     },
-  });
-  return items;
+    operador: {
+      liquidosPemexPorcentaje: po?.liquidos?.pemex_pct,
+      liquidosPemex: po?.liquidos?.pemex_total,
+      pemexAsignacionesLiq: buscarValor(po?.liquidos?.pemex_contratos, "Asignaciones"),
+      pemexMigracionesLiq: buscarValor(po?.liquidos?.pemex_contratos, "Migraciones"),
+      privadosRondasLiq: buscarValor(po?.liquidos?.otros_contratos, "Rondas"),
+      privadosMigracionesLiq: buscarValor(po?.liquidos?.otros_contratos, "Migraciones"),
+      gasPemexPorcentaje: po?.gas?.pemex_pct,
+      gasPemex: po?.gas?.pemex_total,
+      pemexAsignacionesGas: buscarValor(po?.gas?.pemex_contratos, "Asignaciones"),
+      pemexMigracionesGas: buscarValor(po?.gas?.pemex_contratos, "Migraciones"),
+      privadosRondasGas: buscarValor(po?.gas?.otros_contratos, "Rondas"),
+      privadosMigracionesGas: buscarValor(po?.gas?.otros_contratos, "Migraciones"),
+    },
+    pozos: {
+      total: p?.total,
+      asociado: p?.pozos_aceite,
+      asociadoPorcentaje: p?.pct_aceite != null ? `${p.pct_aceite}%` : null,
+      noAsociado: p?.pozos_gas,
+      noAsociadoPorcentaje: p?.pct_gas != null ? `${p.pct_gas}%` : null,
+    },
+  };
 }
 
 const NOMBRE_FIXES = {
@@ -344,13 +315,19 @@ function nombreDisplay(nombre) {
 
 function CampoRow({ rank, nombre, valor, ratio, color }) {
   const nombreMostrado = nombreDisplay(nombre);
+  const { irACampo } = useExplorerNav();
   return (
     <div className="flex items-start gap-1.5 py-1 min-w-0">
       <div className="flex items-baseline gap-1 shrink-0 min-w-0" style={{ width: 68 }}>
         <span className="text-[13px] shrink-0" style={{ color: MUTED }}>{rank}.</span>
-        <span className="text-[12px] font-medium leading-tight truncate" style={{ color: INK }} title={nombreMostrado}>
+        <button
+          onClick={() => irACampo(nombreMostrado)}
+          title="Ver producción del campo"
+          className="text-[12px] font-medium leading-tight truncate text-left hover:underline decoration-teal-400 underline-offset-2"
+          style={{ color: INK }}
+        >
           {nombreMostrado}
-        </span>
+        </button>
       </div>
       <div className="flex gap-0.5 shrink-0 self-center">
         {Array.from({ length: 5 }).map((_, i) => (
@@ -539,10 +516,18 @@ function CamposCarousel({ topCampos, porOperador, slide, setSlide, count, onPaus
 }
 
 function ContratoBar({ nombre, valor, maxValor, color }) {
+  const { irAOperador } = useExplorerNav();
   return (
     <div className="mb-2.5">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-[13px]" style={{ color: INK }}>{nombre}</span>
+        <button
+          onClick={() => irAOperador(nombre)}
+          title="Ver producción del operador"
+          className="text-[13px] text-left hover:underline decoration-teal-400 underline-offset-2 truncate"
+          style={{ color: INK }}
+        >
+          {nombre}
+        </button>
         <span className="text-[13px] font-semibold tabular-nums whitespace-nowrap" style={{ color: INK }}>
           {valor.toLocaleString("es-MX")}
         </span>
@@ -712,31 +697,9 @@ export default function HomeDashboard() {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [reservasNivel, setReservasNivel] = useState("1P");
 
-  // Arma un PDF con las tarjetas elegidas, cada una construida NATIVA desde
-  // `data` (texto/tablas vectoriales vía jsPDF — ver buildTarjetasExport),
-  // no capturada del DOM. Vertical (portrait, pedido explícito): las
-  // tarjetas se apilan una tras otra en una hoja angosta. Sin título
-  // (pedido explícito: nada de "Panorama general").
-  async function handleExportHome(seleccion) {
-    const { exportarReportePdf } = await import("../../utils/exportPdf");
-    const bloques = [];
-    for (const item of seleccion) {
-      const bloquesItem = item.bloques();
-      if (!bloquesItem.length) continue;
-      bloques.push({ tipo: "titulo", texto: item.label });
-      bloques.push(...bloquesItem);
-    }
-    await exportarReportePdf({
-      periodoNota: periodoLabelDe(data?.nacional?.periodo) ? `Datos a ${periodoLabelDe(data.nacional.periodo)}` : undefined,
-      bloques,
-      nombreArchivo: "TIH_reporte.pdf",
-      orientation: "portrait",
-    });
-  }
-
   // Slide del carrusel de Campos (Top campos <-> Producción por Operador).
   const tieneOperador = !!(data?.por_operador?.liquidos || data?.por_operador?.gas);
-  const tieneReservas = ["1P", "2P", "3P"].some(n => data?.top5_reservas?.[n]?.aceite?.length || data?.top5_reservas?.[n]?.gas?.length);
+  const tieneReservas = !!(data?.top5_reservas?.["1P"]?.aceite?.length || data?.top5_reservas?.["1P"]?.gas?.length);
   const carouselCount = tieneOperador ? 2 : 1;
   const [carouselPaused, setCarouselPaused] = useState(false);
   const [carouselSlide, setCarouselSlide] = useAutoSlide(carouselCount, carouselPaused);
@@ -819,13 +782,11 @@ export default function HomeDashboard() {
         </div>
       </div>
 
-      {exportModalOpen && (
-        <HomeExportModal
-          tarjetas={buildTarjetasExport({ data, tieneOperador, tieneReservas })}
-          onClose={() => setExportModalOpen(false)}
-          onGenerar={handleExportHome}
-        />
-      )}
+      <ExportPDFTIH
+        data={buildExportPDFData(data)}
+        isOpen={exportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+      />
     </div>
   );
 }

@@ -700,17 +700,30 @@ def get_resumen_nacional(engine: Engine) -> dict:
     liquidos_prom = float(ref["liquidos_mbd"].mean()) if not ref.empty else None
     gas_prom = float(ref["gas_mmpcd"].mean()) if not ref.empty else None
 
+    # Serie mensual (ene-dic) del año en curso y del año de referencia, para
+    # la gráfica de línea "año actual vs año anterior" del reporte PDF del
+    # home (estilo CNH). None en los meses sin dato.
+    def _serie_mensual(anio: int, columna: str) -> list:
+        sub = df[df["fecha"].dt.year == anio].set_index(df[df["fecha"].dt.year == anio]["fecha"].dt.month)[columna]
+        return [round(float(sub[m])) if m in sub.index else None for m in range(1, 13)]
+
     return {
         "periodo": last["fecha"].strftime("%Y-%m"),
         "liquidos": {
             "valor": round(float(last["liquidos_mbd"])),
             "promedio": round(liquidos_prom) if liquidos_prom else None,
             "anio_promedio": anio_ref,
+            "serie_actual": _serie_mensual(last["fecha"].year, "liquidos_mbd"),
+            "serie_anterior": _serie_mensual(anio_ref, "liquidos_mbd"),
+            "anio_actual": int(last["fecha"].year),
         },
         "gas": {
             "valor": round(float(last["gas_mmpcd"])),
             "promedio": round(gas_prom) if gas_prom else None,
             "anio_promedio": anio_ref,
+            "serie_actual": _serie_mensual(last["fecha"].year, "gas_mmpcd"),
+            "serie_anterior": _serie_mensual(anio_ref, "gas_mmpcd"),
+            "anio_actual": int(last["fecha"].year),
         },
     }
 
@@ -1250,6 +1263,98 @@ def get_asignacion_detalle(
         "pozos_asociados": pozos,
         "num_pozos": len(pozos),
         "fecha_construccion": fecha_construccion,
+        "categories": categories,
+        "series": serie,
+    }
+
+
+def get_campo_detalle(
+    engine: Engine, campo: str, start_year: int, end_year: int, start_month: int, end_month: int, period: str,
+    years: str = "",
+) -> dict:
+    """Detalle de un campo para el panel flotante de la tabla de "Pozos
+    operando por campo"/"Campos": atributos geológicos/de yacimiento
+    ([cmde_public].[entitlements].[fields] — solo SQL Server, no espejada a
+    Postgres, degrada a lista vacía si no está disponible), asignaciones que
+    operan el campo y su propia serie de producción. Mismo patrón que
+    get_asignacion_detalle."""
+    where_fecha, period = _where_fecha(start_year, start_month, end_year, end_month, period, years)
+    sql = f"""
+        SELECT FECHA, ASIG_CONT, OPERADOR,
+               PETROLEO_MBD, CONDENSADO_MBD, GAS_MMPCD, GAS_ASOC_MMPCD, GAS_NASOC_MMPCD, AGUA_MBD, N2_MMPCD
+        FROM {_TABLA_PRODUCCION_CAMPOS}
+        WHERE {_FILTRO_ID_WHERE} AND CAMPO_PORTAL = :campo AND {where_fecha}
+    """
+    with engine.connect() as conn:
+        df = pd.read_sql(sqlalchemy_text(sql), conn, params={"campo": campo})
+    if df.empty:
+        return {"disponible": False}
+
+    df.columns = df.columns.str.lower()
+    df["fecha"] = pd.to_datetime(df["fecha"])
+    cols_prod = ["petroleo_mbd", "condensado_mbd", "gas_mmpcd", "gas_asoc_mmpcd", "gas_nasoc_mmpcd", "agua_mbd", "n2_mmpcd"]
+    df[cols_prod] = df[cols_prod].fillna(0)
+    df["liquidos_mbd"] = df["petroleo_mbd"] + df["condensado_mbd"]
+    df["periodo"] = (
+        df["fecha"].dt.strftime("%Y-%m") if period == "monthly" else df["fecha"].dt.strftime("%Y")
+    )
+
+    cols_serie = ["liquidos_mbd", "petroleo_mbd", "condensado_mbd", "gas_mmpcd", "gas_asoc_mmpcd", "gas_nasoc_mmpcd", "agua_mbd", "n2_mmpcd"]
+    rollup = _rollup_periodo(df, [], cols_serie).sort_values("periodo")
+    categories = rollup["periodo"].tolist()
+    etiquetas = {
+        "liquidos_mbd": "Hidrocarburos líquidos (Mbd)", "petroleo_mbd": "Petróleo (Mbd)",
+        "condensado_mbd": "Condensado (Mbd)", "gas_mmpcd": "Gas (MMpcd)",
+        "gas_asoc_mmpcd": "Gas asociado (MMpcd)", "gas_nasoc_mmpcd": "Gas no asociado (MMpcd)",
+        "agua_mbd": "Agua (Mbd)", "n2_mmpcd": "Nitrógeno (MMpcd)",
+    }
+    serie = [
+        {"label": etiquetas[col], "data": [round(float(v), 2) for v in rollup[col]]}
+        for col in cols_serie if rollup[col].any()
+    ]
+
+    # Asignaciones que operan el campo (código + operador + nombre real del
+    # bloque, reusando el mapa de _mapa_asig_a_block_name).
+    asignaciones_df = df[df["asig_cont"].notna()][["asig_cont", "operador"]].drop_duplicates().sort_values("asig_cont")
+    mapa_block_name = _mapa_asig_a_block_name(engine)
+    asignaciones = [
+        {"asignacion": r["asig_cont"], "block_name": mapa_block_name.get(r["asig_cont"]), "operador": r["operador"]}
+        for r in asignaciones_df.to_dict("records")
+    ]
+
+    # Atributos geológicos/de yacimiento — solo existen en
+    # [cmde_public].[entitlements].[fields] (SQL Server real, vía linked
+    # server; no espejada a Postgres) — best-effort, degrada a lista vacía.
+    atributos = []
+    if not _PG:
+        try:
+            sql_fields = """
+                SELECT BLOCK_ID, DISCOVERY_YEAR, AVERAGE_DEPTH_M, WATER_DEPTH_M, PLAY, TYPE
+                FROM [cmde_public].[entitlements].[fields]
+                WHERE FIELD = :campo
+            """
+            with engine.connect() as conn:
+                fields_df = pd.read_sql(sqlalchemy_text(sql_fields), conn, params={"campo": campo})
+            fields_df.columns = fields_df.columns.str.lower()
+            atributos = [
+                {
+                    "bloque": r["block_id"],
+                    "anio_descubrimiento": int(r["discovery_year"]) if pd.notna(r["discovery_year"]) else None,
+                    "profundidad_promedio_m": round(float(r["average_depth_m"]), 1) if pd.notna(r["average_depth_m"]) else None,
+                    "profundidad_agua_m": round(float(r["water_depth_m"]), 1) if pd.notna(r["water_depth_m"]) else None,
+                    "play": r["play"],
+                    "tipo": r["type"],
+                }
+                for r in fields_df.to_dict("records")
+            ]
+        except Exception:
+            atributos = []
+
+    return {
+        "disponible": True,
+        "campo": campo,
+        "atributos": atributos,
+        "asignaciones": asignaciones,
         "categories": categories,
         "series": serie,
     }

@@ -10,7 +10,9 @@ import HomeDashboard from "./HomeDashboard";
 import PozosExplorer from "./PozosExplorer";
 import AsignacionesRanking from "./AsignacionesRanking";
 import AsignacionDetallePanel from "./AsignacionDetallePanel";
+import CampoDetallePanel from "./CampoDetallePanel";
 import PerforacionPozosDetallePanel from "./PerforacionPozosDetallePanel";
+import PozosCampoDetallePanel from "./PozosCampoDetallePanel";
 import ReportBuilderModal from "./ReportBuilderModal";
 import { descargarCsvConHeader } from "../../utils/exportCsv";
 
@@ -199,7 +201,13 @@ function buildChartOption(categories, series, chartType, { zoomable = false } = 
           data: s.data,
           smooth: true,
           lineStyle: { width: 2 },
-          symbol: "none",
+          // Con una sola categoría no hay segmento de línea que dibujar —
+          // symbol:"none" dejaba la gráfica completamente en blanco aunque el
+          // dato sí estuviera ahí (el tooltip lo mostraba al pasar el cursor,
+          // pero nada visible sin eso). Con 2+ categorías el punto se sigue
+          // ocultando para no ensuciar la línea.
+          symbol: categories.length <= 1 ? "circle" : "none",
+          symbolSize: 8,
           barMaxWidth: 32,
           stack: isBar ? "total" : undefined,
           ...(isBar ? { itemStyle: { borderRadius: idx === series.length - 1 ? [6, 6, 0, 0] : 0 } } : {}),
@@ -535,10 +543,24 @@ function reservasTabs(esAsig) {
     ? [["ReservasAsigP", "Aceite"], ["ReservasAsigG", "Gas"], ["ReservasAsigPCE", "PCE"]]
     : [["ReservasP", "Aceite"], ["ReservasG", "Gas"], ["ReservasPCE", "PCE"]];
 }
-const RESERVAS_COLORS = ["#22c55e", "#3b82f6", "#f97316"];
 
-function buildReservasWaterfall(resultado, topN = 8, search = "") {
-  const campos = [];
+function ultimoValor(arr) {
+  return arr?.length ? arr[arr.length - 1] ?? 0 : 0;
+}
+
+function sumaArrays(...arrs) {
+  const len = Math.max(0, ...arrs.map(a => a?.length ?? 0));
+  const out = new Array(len).fill(0);
+  for (const a of arrs) (a ?? []).forEach((v, i) => { out[i] += v ?? 0; });
+  return out;
+}
+
+// Recorre resultado.groups -> subgroups -> rows UNA sola vez y regresa la lista
+// plana de items (campo o asignacion/contrato) con su cuenca y sus 3 series
+// COMPLETAS (1P/2P/3P, un valor por año) -- base de la que se derivan tanto
+// los rankings/snapshots (ultimo año) como las graficas de evolucion anual.
+function extraerReservasItems(resultado) {
+  const items = [];
   for (const g of resultado.groups ?? []) {
     if (g.cuenca === "Total general") continue;
     for (const sg of g.subgroups ?? []) {
@@ -546,18 +568,25 @@ function buildReservasWaterfall(resultado, topN = 8, search = "") {
       for (let i = 0; i < rows.length; i++) {
         if (rows[i].type !== "subtotal") continue;
         const [r1, r2, r3] = [rows[i + 1], rows[i + 2], rows[i + 3]];
-        // Reservas por asignación-contrato intercala un subtotal de Cuenca
-        // antes de cada item — solo es una hoja real si le siguen sus 3 filas
+        // Reservas por asignacion-contrato intercala un subtotal de Cuenca
+        // antes de cada item -- solo es una hoja real si le siguen sus 3 filas
         // 1P/2P/3P (type "operator"), si no, es solo un encabezado de Cuenca.
         if (!r1 || !r2 || !r3 || r1.type !== "operator" || r2.type !== "operator" || r3.type !== "operator") continue;
-        const last = arr => (arr?.length ? arr[arr.length - 1] : 0) ?? 0;
-        campos.push({ campo: rows[i].label, p1: last(r1.data), p2: last(r2.data), p3: last(r3.data) });
+        items.push({ nombre: rows[i].label, cuenca: g.cuenca, p1: r1.data ?? [], p2: r2.data ?? [], p3: r3.data ?? [] });
       }
     }
   }
-  const q = search.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const filtrados = q ? campos.filter(c => c.campo.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q)) : campos;
-  return filtrados.sort((a, b) => b.p3 - a.p3).slice(0, topN);
+  return items;
+}
+
+function buildReservasWaterfall(resultado, topN = 8, search = "") {
+  const items = extraerReservasItems(resultado);
+  const q = search.trim().normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  const filtrados = q ? items.filter(c => c.nombre.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().includes(q)) : items;
+  return filtrados
+    .map(c => ({ campo: c.nombre, p1: ultimoValor(c.p1), p2: ultimoValor(c.p2), p3: ultimoValor(c.p3), p1Serie: c.p1, p2Serie: c.p2, p3Serie: c.p3 }))
+    .sort((a, b) => b.p3 - a.p3)
+    .slice(0, topN);
 }
 
 // Tabla para "Generar reporte": una fila real por item (campo/asignación/
@@ -597,208 +626,100 @@ function buildReservasTabla(resultado, { esReservasAsig, entidadLabel, unidad })
   return { columnas, filas };
 }
 
-// Suma 1P/2P/3P por Cuenca (agrega todos los campos de cada cuenca) — para la
-// fila de sumatoria y la "Gráfica personalizada por cuenca".
-function buildReservasPorCuenca(resultado) {
-  const out = [];
-  for (const g of resultado.groups ?? []) {
-    if (g.cuenca === "Total general") continue;
-    let p1 = 0, p2 = 0, p3 = 0;
-    for (const sg of g.subgroups ?? []) {
-      const rows = sg.rows ?? [];
-      for (let i = 0; i < rows.length; i++) {
-        if (rows[i].type !== "subtotal") continue;
-        const [r1, r2, r3] = [rows[i + 1], rows[i + 2], rows[i + 3]];
-        if (!r1 || !r2 || !r3 || r1.type !== "operator" || r2.type !== "operator" || r3.type !== "operator") continue;
-        const last = arr => (arr?.length ? arr[arr.length - 1] : 0) ?? 0;
-        p1 += last(r1.data); p2 += last(r2.data); p3 += last(r3.data);
-      }
-    }
-    if (p3 > 0) out.push({ cuenca: g.cuenca, p1, p2, p3 });
-  }
-  return out.sort((a, b) => b.p3 - a.p3);
-}
+// Colores fijos del reporte de referencia (verde=1P, amarillo=2P, naranja=3P)
+// — deliberadamente distintos de RESERVAS_CIRCULOS_PALETAS, que varía por
+// tipo (Aceite/Gas/PCE); aquí siempre son los mismos 3 colores.
+const RESERVAS_CAMPO_GROUP_COLORS = { p1: "#9CCC65", p2: "#FBC02D", p3: "#FFA726" };
 
-// Barras apiladas 1P/2P/3P reutilizada por la cascada (top N campos) y por
-// las gráficas personalizadas (un solo campo o una sola cuenca) — mismo
-// bloque de opción de ECharts, solo cambia cuántas categorías trae. Las
-// cifras solo se ven al pasar el cursor (tooltip), no fijas sobre la barra.
-function buildReservasStackedOption(labels, p1, p2, p3, unidad) {
-  const round1 = v => Math.round(v * 10) / 10;
-  const inc2 = p2.map((v, i) => round1(v - p1[i]));
-  const inc3 = p3.map((v, i) => round1(v - p1[i] - inc2[i]));
-  // Categoría en orden manual (más grande arriba, ECharts pinta la primera
-  // categoría abajo por defecto).
+// Barras AGRUPADAS (no apiladas) con el valor real de 1P/2P/3P — cada barra
+// es el acumulado tal cual (2P y 3P no se convierten a incremento aquí, van
+// completas una junto a otra), con eje Y visible. Reemplaza el diseño previo
+// de barra apilada por incrementos, que el usuario pidió cambiar por este.
+function buildReservasCampoGroupedOption(categories, p1, p2, p3, unidad) {
+  const fmt = v => (v ?? 0).toLocaleString("es-MX", { maximumFractionDigits: 2 });
   return {
-    color: RESERVAS_COLORS,
-    tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
-    legend: { top: 0, textStyle: { fontSize: 11 }, data: ["1P probadas", "+2P probables", "+3P posibles"] },
-    // "containLabel" mide el ancho real de las etiquetas más largas y ajusta
-    // el margen izquierdo solo, en vez de un "left" fijo que las corta.
-    // Unidad debajo del eje X (nameLocation "middle" + nameGap), no al final
-    // de la última marca — ahí "right: 24" la recortaba a una sola letra.
-    grid: { left: 12, right: 24, top: 36, bottom: 46, containLabel: true },
-    xAxis: {
-      type: "value", name: unidad, nameLocation: "middle", nameGap: 28,
-      nameTextStyle: { fontSize: 11, fontWeight: 600 }, axisLabel: { fontSize: 10 },
+    backgroundColor: "#fff",
+    tooltip: {
+      trigger: "axis", axisPointer: { type: "shadow" },
+      valueFormatter: v => `${fmt(v)} ${unidad}`,
     },
-    yAxis: { type: "category", data: [...labels].reverse(), axisLabel: { fontSize: 11, overflow: "none" } },
+    legend: {
+      data: ["1P", "2P", "3P"],
+      top: 0, left: "center", itemGap: 24, icon: "circle",
+      textStyle: { fontSize: 12, color: "#475569" },
+    },
+    grid: { left: 12, right: 16, top: 44, bottom: 30, containLabel: true },
+    xAxis: {
+      type: "category", data: categories,
+      axisLabel: { fontSize: 11, fontWeight: 600, color: "#0f766e" },
+      axisLine: { lineStyle: { color: "#cbd5e1" } }, axisTick: { show: false },
+    },
+    yAxis: {
+      type: "value", name: unidad, nameLocation: "end", nameGap: 12,
+      nameTextStyle: { fontSize: 11, color: "#334155", align: "left" },
+      axisLabel: { fontSize: 10, color: "#64748b" },
+      splitLine: { lineStyle: { color: "#f1f5f9" } },
+    },
     series: [
-      { name: "1P probadas", type: "bar", stack: "total", data: [...p1.map(round1)].reverse() },
-      { name: "+2P probables", type: "bar", stack: "total", data: [...inc2].reverse() },
-      { name: "+3P posibles", type: "bar", stack: "total", data: [...inc3].reverse() },
+      { name: "1P", type: "bar", data: p1, itemStyle: { color: RESERVAS_CAMPO_GROUP_COLORS.p1 }, barMaxWidth: 16 },
+      { name: "2P", type: "bar", data: p2, itemStyle: { color: RESERVAS_CAMPO_GROUP_COLORS.p2 }, barMaxWidth: 16 },
+      { name: "3P", type: "bar", data: p3, itemStyle: { color: RESERVAS_CAMPO_GROUP_COLORS.p3 }, barMaxWidth: 16 },
     ],
   };
 }
 
-function ReservasWaterfallChart({ resultado, unidad, entidad = "campos", search = "" }) {
-  const buscando = search.trim().length > 0;
-  const datos = useMemo(() => buildReservasWaterfall(resultado, buscando ? Infinity : 8, search), [resultado, search, buscando]);
-  if (!datos.length) {
-    return buscando
-      ? <div className="text-sm text-slate-400 p-4">Sin {entidad} que coincidan con "{search}".</div>
-      : <div className="text-sm text-slate-400 p-4">Sin {entidad} con reservas 1P vigentes en el año seleccionado.</div>;
-  }
-  const option = buildReservasStackedOption(datos.map(d => d.campo), datos.map(d => d.p1), datos.map(d => d.p2), datos.map(d => d.p3), unidad);
-  return (
-    <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
-      <div className="flex items-baseline justify-between mb-3">
-        <span className="text-[11px] font-semibold text-teal-700">{buscando ? `${datos.length} ${entidad} encontrados` : `Top ${datos.length} ${entidad} por reserva`}</span>
-        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Cascada</span>
-      </div>
-      <ReactECharts option={option} style={{ height: Math.max(260, datos.length * 42) }} notMerge />
-    </div>
-  );
-}
-
-// Círculos con un tangente izquierdo común (1P⊂2P⊂3P, misma altura) — cada
-// etiqueta va al punto medio de la franja visible de su anillo sobre esa
-// línea central, así siempre cae dentro de su color sea cual sea la
-// proporción real entre 1P/2P/3P.
-// Paleta por tipo: Aceite=naranjas, Gas=azules, PCE=verdes (claro→oscuro, 1P→3P).
-const RESERVAS_CIRCULOS_PALETAS = {
-  ReservasP:       { r1: "#fdba74", r2: "#f97316", r3: "#9a3412" },
-  ReservasG:       { r1: "#0bafef", r2: "#0570bf", r3: "#022060" },
-  ReservasPCE:     { r1: "#86efac", r2: "#22c55e", r3: "#14532d" },
-  ReservasAsigP:   { r1: "#fdba74", r2: "#f97316", r3: "#9a3412" },
-  ReservasAsigG:   { r1: "#0bafef", r2: "#0570bf", r3: "#022060" },
-  ReservasAsigPCE: { r1: "#86efac", r2: "#22c55e", r3: "#14532d" },
-};
-
-function ReservasCirclesChart({ label, p1, p2, p3, unidad, tipo }) {
-  const paleta = RESERVAS_CIRCULOS_PALETAS[tipo] ?? RESERVAS_CIRCULOS_PALETAS.ReservasP;
-  const max = Math.max(p3, 1);
-  const rMax = 145;
-  const escala = v => Math.max(38, rMax * Math.sqrt(Math.max(v, 0) / max));
-  const r3 = rMax;
-  const r1raw = escala(p1), r2raw = escala(p2);
-  // El área real (raíz del valor) puede dejar una franja casi sin ancho para
-  // 2P o 3P si están muy cerca en magnitud — no cabe la cifra. Se fuerza un
-  // mínimo de ancho de banda (2P ≤ 72% de 3P, 1P ≤ 62% de 2P) a costa de la
-  // proporción exacta, para que el texto de las tres siempre entre.
-  const r2 = Math.min(Math.max(r2raw, r1raw * 1.15), r3 * 0.72);
-  const r1 = Math.min(r1raw, r2 * 0.62);
-  const tangenteX = 24, cy = r3 + 24;
-  const cx1 = tangenteX + r1, cx2 = tangenteX + r2, cx3 = tangenteX + r3;
-  const fmt = v => v.toLocaleString("es-MX", { maximumFractionDigits: 1 });
-  // Viewbox ajustado al contenido real (no un lienzo fijo de sobra) para que
-  // el diagrama quede centrado en la tarjeta, sin franja vacía a la derecha.
-  const anchoTotal = tangenteX + r2 + r3 + 90;
-  const altoTotal = cy + r3 + 20;
-
-  const Etiqueta = ({ x, tag, valor }) => (
-    <text x={x} y={cy} textAnchor="middle" dominantBaseline="middle">
-      <tspan x={x} dy="-19" fontSize="21" fontWeight="700" fill="rgba(255,255,255,0.97)">{tag}</tspan>
-      <tspan x={x} dy="30" fontSize="24" fontFamily="'Noto Sans', sans-serif" fontWeight="700" fill="rgba(255,255,255,0.96)">{fmt(valor)}</tspan>
-      <tspan x={x} dy="22" fontSize="14" fontFamily="'Noto Sans', sans-serif" fill="rgba(255,255,255,0.85)">{unidad}</tspan>
-    </text>
-  );
-
-  return (
-    <div className="flex flex-col items-center gap-2 py-4">
-      <svg viewBox={`0 0 ${anchoTotal} ${altoTotal}`} width={anchoTotal} height={altoTotal} style={{ maxWidth: "100%" }} role="img" aria-label={`Círculos de reservas 1P, 2P y 3P de ${label}: 1P ${fmt(p1)}, 2P ${fmt(p2)}, 3P ${fmt(p3)} ${unidad}`}>
-        <circle cx={cx3} cy={cy} r={r3} fill={paleta.r3} />
-        <circle cx={cx2} cy={cy} r={r2} fill={paleta.r2} />
-        <circle cx={cx1} cy={cy} r={r1} fill={paleta.r1} />
-        <Etiqueta x={tangenteX + r2 + r3} tag="3P" valor={p3} />
-        <Etiqueta x={tangenteX + r1 + r2} tag="2P" valor={p2} />
-        <Etiqueta x={cx1} tag="1P" valor={p1} />
-      </svg>
-      <span style={{
-        background: "#f0fdfa", color: "#0f766e", fontSize: 12.5, fontWeight: 600,
-        padding: "5px 14px", borderRadius: 6, border: "1px solid #99f6e4",
-      }}>
-        {label}
-      </span>
-    </div>
-  );
-}
-
-// "Gráfica personalizada por cuenca": fila con la sumatoria 1P/2P/3P de cada
-// cuenca + cascada con TODAS las cuencas (el buscador filtra cuáles se ven,
-// no selecciona una sola).
-function ReservasCuencaCustomChart({ resultado, unidad, entidadLabel = "cuenca", entidadLabelPlural = "cuencas" }) {
-  const cuencas = useMemo(() => buildReservasPorCuenca(resultado), [resultado]);
-  const [busqueda, setBusqueda] = useState("");
-
-  if (!cuencas.length) return <p className="text-sm text-slate-400 p-4">Sin {entidadLabelPlural} con reservas 1P vigentes en el año seleccionado.</p>;
-
-  const q = busqueda.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const visibles = q ? cuencas.filter(c => c.cuenca.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q)) : cuencas;
-  const option = visibles.length
-    ? buildReservasStackedOption(visibles.map(c => c.cuenca), visibles.map(c => c.p1), visibles.map(c => c.p2), visibles.map(c => c.p3), unidad)
-    : null;
-
-  return (
-    <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
-      <input
-        type="text"
-        value={busqueda}
-        onChange={e => setBusqueda(e.target.value)}
-        placeholder={`Buscar una ${entidadLabel}…`}
-        className="w-full text-[12px] border border-slate-200 rounded-lg px-2.5 py-1.5 mb-3 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-teal-400"
-        style={{ maxWidth: 280 }}
-      />
-      {option
-        ? <ReactECharts option={option} style={{ height: Math.max(200, visibles.length * 42) }} notMerge />
-        : <p className="text-sm text-slate-400 p-2">Sin {entidadLabelPlural} que coincidan con "{busqueda}".</p>}
-    </div>
-  );
-}
-
-// "Gráfica personalizada por campo": elegir UN campo y ver su desglose
-// 1P/2P/3P, en círculos concéntricos (por defecto) o en cascada.
-function ReservasCampoCustomChart({ resultado, unidad, tipo, entidad = "campos", selected, onSelectedChange }) {
+// "Gráfica personalizada por campo": elegir UN campo y ver su evolución anual
+// 1P/2P/3P en barras agrupadas.
+function ReservasCampoCustomChart({ resultado, unidad, entidad = "campos", selected, onSelectedChange }) {
   const campos = useMemo(
     () => buildReservasWaterfall(resultado, Infinity).sort((a, b) => a.campo.localeCompare(b.campo)),
     [resultado],
   );
-  const [estilo, setEstilo] = useState("circulos");
   const actual = campos.find(c => c.campo === selected) ?? campos[0];
 
-  if (!campos.length) return <p className="text-sm text-slate-400 p-4">Sin {entidad} con reservas 1P vigentes en el año seleccionado.</p>;
+  if (!campos.length) return <p className="text-sm text-slate-400 p-4">Sin {entidad} con reservas 1P vigentes en el rango seleccionado.</p>;
 
-  const option = actual ? buildReservasStackedOption([actual.campo], [actual.p1], [actual.p2], [actual.p3], unidad) : null;
+  const categories = resultado.categories ?? [];
+  const option = actual
+    ? buildReservasCampoGroupedOption(categories, actual.p1Serie, actual.p2Serie, actual.p3Serie, unidad)
+    : null;
 
   return (
     <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
-      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+      <div className="mb-3">
         <SearchableSelect options={campos.map(c => c.campo)} value={selected || campos[0]?.campo} onChange={onSelectedChange} />
-        <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-white">
-          {[["circulos", "Círculos"], ["cascada", "Cascada"]].map(([id, label]) => (
-            <button key={id} onClick={() => setEstilo(id)}
-              className={`px-3 py-1.5 text-[12px] font-medium ${estilo === id ? "bg-tih-dark text-white" : "text-slate-600 hover:bg-slate-50"}`}>
-              {label}
-            </button>
-          ))}
-        </div>
       </div>
-      {estilo === "circulos"
-        ? actual && <ReservasCirclesChart label={actual.campo} p1={actual.p1} p2={actual.p2} p3={actual.p3} unidad={unidad} tipo={tipo} />
-        : option && <ReactECharts option={option} style={{ height: 200 }} notMerge />}
+      {option && <ReactECharts option={option} style={{ height: 380 }} notMerge />}
     </div>
   );
 }
+
+// Vista por defecto de "Ver como gráficos" (sin modo personalizado elegido):
+// suma 1P/2P/3P de TODOS los campos/asignaciones del rango — mismas barras
+// agrupadas por año que "Gráfica personalizada por campo", pero a nivel
+// nacional en vez de un campo/asignación puntual.
+function ReservasNacionalChart({ resultado, unidad, entidad = "campos" }) {
+  const { p1, p2, p3 } = useMemo(() => {
+    let p1 = [], p2 = [], p3 = [];
+    for (const it of extraerReservasItems(resultado)) {
+      p1 = sumaArrays(p1, it.p1);
+      p2 = sumaArrays(p2, it.p2);
+      p3 = sumaArrays(p3, it.p3);
+    }
+    return { p1, p2, p3 };
+  }, [resultado]);
+
+  if (!p3.some(v => v > 0)) return <p className="text-sm text-slate-400 p-4">Sin {entidad} con reservas 1P vigentes en el rango seleccionado.</p>;
+
+  const categories = resultado.categories ?? [];
+  const option = buildReservasCampoGroupedOption(categories, p1, p2, p3, unidad);
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-4">
+      <ReactECharts option={option} style={{ height: 380 }} notMerge />
+    </div>
+  );
+}
+
 
 function PreciosDashboard({ categories, series }) {
   const petroleo = series.filter(s => s.name.includes("USD/bbl"));
@@ -1563,9 +1484,15 @@ export default function ChartArea() {
   // Panel flotante de detalle al hacer clic en una fila de asignación
   // (código ASIG_CONT) en la vista de tablas — solo aplica al tema Asignaciones.
   const [asignacionSeleccionada, setAsignacionSeleccionada] = useState(null);
+  // Panel flotante de detalle al hacer clic en una fila de campo (Campos /
+  // Pozos operando por campo).
+  const [campoSeleccionado, setCampoSeleccionado] = useState(null);
   // Panel de desglose por pozo al hacer clic en una celda de la tabla de
   // Pozos perforados/terminados (Actividad petrolera).
   const [perfPozosSeleccion, setPerfPozosSeleccion] = useState(null);
+  // Mismo desglose por pozo, pero al hacer clic en la celda numérica de
+  // "Pozos operando por campo" (campo + periodo, no cuenca/ubicación/categoría).
+  const [pozosCampoSeleccion, setPozosCampoSeleccion] = useState(null);
   // Vista general vs. "Gráfica personalizada" (una empresa en Operadores, un
   // Ambiente en "Producción por ubicación").
   const [operadorPersonalizada, setOperadorPersonalizada] = useState(false);
@@ -1716,22 +1643,13 @@ export default function ChartArea() {
           hideChartTypes
           onGenerarReporte={() => setReportModalOpen(true)}
           extra={esReservas ? (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setReservasModo(m => m === "cuenca" ? null : "cuenca")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-                  reservasModo === "cuenca" ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
-                }`}>
-                Gráfica personalizada por {esReservasAsig ? "modalidad" : "cuenca"}
-              </button>
-              <button
-                onClick={() => setReservasModo(m => m === "campo" ? null : "campo")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-                  reservasModo === "campo" ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
-                }`}>
-                Gráfica personalizada por {esReservasAsig ? "asignación/contrato" : "campo"}
-              </button>
-            </div>
+            <button
+              onClick={() => setReservasModo(m => m === "campo" ? null : "campo")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                reservasModo === "campo" ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
+              }`}>
+              Gráfica personalizada por {esReservasAsig ? "asignación/contrato" : "campo"}
+            </button>
           ) : contratosPersonalizada.length > 0 ? (
             <button
               onClick={() => setInvPersonalizada(v => !v)}
@@ -1757,28 +1675,10 @@ export default function ChartArea() {
         <div ref={contentRef} style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {viewMode === "graficos" ? (
           <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-            {esReservas && !reservasModo && (
-              <div className="relative mb-3 w-fit">
-                <input
-                  type="text"
-                  value={reservasSearch}
-                  onChange={e => setReservasSearch(e.target.value)}
-                  placeholder={searchPlaceholder}
-                  className="text-[12px] border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-teal-400"
-                  style={{ width: 280 }}
-                />
-                {reservasSearch && (
-                  <button className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
-                    onClick={() => setReservasSearch("")}>✕</button>
-                )}
-              </div>
-            )}
             {esReservas
-              ? reservasModo === "cuenca"
-                ? <ReservasCuencaCustomChart resultado={resultado} unidad={reservasUnidad} entidadLabel={esReservasAsig ? "modalidad" : "cuenca"} entidadLabelPlural={esReservasAsig ? "modalidades" : "cuencas"} />
-                : reservasModo === "campo"
-                ? <ReservasCampoCustomChart resultado={resultado} unidad={reservasUnidad} tipo={reservasTipo} entidad={esReservasAsig ? "asignaciones/contratos" : "campos"} selected={reservasCampoSel} onSelectedChange={setReservasCampoSel} />
-                : <ReservasWaterfallChart resultado={resultado} unidad={reservasUnidad} entidad={esReservasAsig ? "asignaciones/contratos" : "campos"} search={reservasSearch} />
+              ? reservasModo === "campo"
+                ? <ReservasCampoCustomChart resultado={resultado} unidad={reservasUnidad} entidad={esReservasAsig ? "asignaciones/contratos" : "campos"} selected={reservasCampoSel} onSelectedChange={setReservasCampoSel} />
+                : <ReservasNacionalChart resultado={resultado} unidad={reservasUnidad} entidad={esReservasAsig ? "asignaciones/contratos" : "campos"} />
               : esEmpresas
               ? <EmpresasClusterChart resultado={resultado} visibleSeries={visibleSeries}
                   onSelectEmpresa={(nombre) => { setEmpresaBuscar(nombre); setViewMode("tablas"); }} />
@@ -2054,13 +1954,19 @@ export default function ChartArea() {
                         : undefined)
                     : undefined
                 }
-                onRowClick={tema?.json_arg === "Asignaciones" ? (code) => setAsignacionSeleccionada(code) : undefined}
+                onRowClick={
+                  tema?.json_arg === "Asignaciones" ? (code) => setAsignacionSeleccionada(code)
+                    : tema?.json_arg === "PozosCampos" || tema?.json_arg === "Campos" ? (code) => setCampoSeleccionado(code)
+                    : undefined
+                }
                 onCellClick={
                   (tema?.json_arg === "PozPerf" || tema?.json_arg === "PozTerm")
                     ? (row, periodoCol, valor) => setPerfPozosSeleccion({
                         topic: tema.json_arg, periodo: periodoCol, operador: row.label, valor,
                         ...celdaAFiltroPerforacion(row, groupBy),
                       })
+                    : tema?.json_arg === "PozosCampos"
+                    ? (row, periodoCol, valor) => setPozosCampoSeleccion({ campo: row.label, periodo: periodoCol, valor })
                     : undefined
                 }
               />
@@ -2133,6 +2039,13 @@ export default function ChartArea() {
           onClose={() => setAsignacionSeleccionada(null)}
         />
       )}
+      {campoSeleccionado && (
+        <CampoDetallePanel
+          campo={campoSeleccionado}
+          period={period} start_year={start_year} end_year={end_year} start_month={start_month} end_month={end_month}
+          onClose={() => setCampoSeleccionado(null)}
+        />
+      )}
       {perfPozosSeleccion && (
         <PerforacionPozosDetallePanel
           topic={perfPozosSeleccion.topic}
@@ -2143,6 +2056,14 @@ export default function ChartArea() {
           categoriaPozo={perfPozosSeleccion.categoriaPozo}
           cifraEsperada={perfPozosSeleccion.valor}
           onClose={() => setPerfPozosSeleccion(null)}
+        />
+      )}
+      {pozosCampoSeleccion && (
+        <PozosCampoDetallePanel
+          campo={pozosCampoSeleccion.campo}
+          periodo={pozosCampoSeleccion.periodo}
+          cifraEsperada={pozosCampoSeleccion.valor}
+          onClose={() => setPozosCampoSeleccion(null)}
         />
       )}
       {reportModalOpen && (

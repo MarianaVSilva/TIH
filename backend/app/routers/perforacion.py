@@ -5,6 +5,7 @@ from sqlalchemy.engine import Engine
 from app.database import get_db_dep
 from app.services.perforacion_service import (
     get_perforacion, get_perforacion_filtros, get_perforacion_pozos_detalle, get_perforacion_historico,
+    get_pozos_campo_detalle,
 )
 
 router = APIRouter(prefix="/perforacion", tags=["perforacion"])
@@ -61,6 +62,20 @@ def perforacion_pozos_detalle(
 ):
     try:
         return get_perforacion_pozos_detalle(engine, topic, periodo, cuenca, ubicacion, operador, categoria_pozo)
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(tb)
+        return JSONResponse(status_code=500, content={"detail": str(e), "traceback": tb})
+
+
+@router.get("/pozos-campo-detalle")
+def perforacion_pozos_campo_detalle(
+    campo: str = Query(...),
+    periodo: str = Query(...),
+    engine: Engine = Depends(get_db_dep),
+):
+    try:
+        return get_pozos_campo_detalle(engine, campo, periodo)
     except Exception as e:
         tb = traceback.format_exc()
         print(tb)

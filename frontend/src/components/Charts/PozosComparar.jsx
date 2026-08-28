@@ -4,6 +4,7 @@ import { fetchPozosComparar } from "../../api/client";
 import LoadingSpinner from "../UI/LoadingSpinner";
 import { tendenciaLabel } from "../../utils/tendenciaLabel";
 import { transponerAPivot } from "./DynamicTable";
+import { useExplorerNav } from "../../hooks/useExplorerNav";
 
 const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626", SIN_PRODUCCION: "#94a3b8" };
 // Pozo sin producción actual: la tendencia no tiene sentido, se omite.
@@ -31,6 +32,7 @@ export default function PozosComparar({ seleccionados, onQuitar, period, start_y
   const [showCols, setShowCols] = useState(false);
   const [exportando, setExportando] = useState(false);
   const echartsRef = useRef(null);
+  const { irAPozo } = useExplorerNav();
 
   useEffect(() => {
     if (seleccionados.length < 2) { setData(null); return; }
@@ -124,10 +126,17 @@ export default function PozosComparar({ seleccionados, onQuitar, period, start_y
               return (
                 <tr key={row.pozo} className={ri % 2 ? "bg-slate-50/60" : "bg-white"}>
                   <td className="px-3 py-2 text-[12.5px] font-semibold whitespace-nowrap" style={{ borderLeft: `3px solid ${color}`, color: "#334155" }}>
-                    <span className="inline-flex items-center gap-1.5">
+                    <button
+                      onClick={() => {
+                        const s = seleccionados.find(s => s.pozo === row.pozo);
+                        if (s) irAPozo(s.pozo, s.campo);
+                      }}
+                      title="Ver detalle del pozo"
+                      className="inline-flex items-center gap-1.5 hover:underline decoration-teal-400 underline-offset-2"
+                    >
                       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
                       {row.pozo}
-                    </span>
+                    </button>
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-[12.5px] font-medium text-slate-700">
                     {row.produccion_actual_mbd != null ? `${row.produccion_actual_mbd} ${row.unidad ?? "Mbd"}` : "—"}

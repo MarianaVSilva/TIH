@@ -7,7 +7,11 @@ from app.services.cache_utils import cached
 SCHEMA = settings.db_schema + "."
 _PG = settings.db_engine == "postgres"
 _YEAR_FECHA = "EXTRACT(YEAR FROM FECHA)" if _PG else "YEAR(FECHA)"
+_MONTH_FECHA = "EXTRACT(MONTH FROM FECHA)" if _PG else "MONTH(FECHA)"
+_ISNULL = "COALESCE" if _PG else "ISNULL"
+_FILTRO_ID_WHERE = "1=1" if _PG else "ID <> 1"
 _TABLA_PRODUCCION_CAMPOS_POZOS = "api.v_produccion_campos_pozos" if _PG else f"{SCHEMA}PRODUCCION_CAMPOS_POZOS"
+_TABLA_PRODUCCION_CAMPOS = "api.v_produccion_campos" if _PG else f"{SCHEMA}PRODUCCION_CAMPOS"
 _TABLA_BD_POZOS_VALID = "api.v_bd_pozos_valid" if _PG else "cmde_valid.dbo.bd_pozos"
 
 TOPIC_MAP = {
@@ -409,6 +413,76 @@ def get_perforacion_pozos_detalle(
             "campo": campo_por_pozo.get(r["well_name"].upper()),
         }
         for r in df[["well_name", "fecha_evento", "categoria_pozo", "operator"]].to_dict("records")
+    ]
+    return {"pozos": pozos, "total": len(pozos)}
+
+
+def get_pozos_campo_detalle(engine: Engine, campo: str, periodo: str) -> dict:
+    """Desglose por nombre de pozo detrás de una celda de "Pozos operando por
+    campo" (PozosCampos): pozos con producción (>0) en PRODUCCION_POZOS,
+    dentro de las asignaciones que pertenecen a este campo (CAMPO_PORTAL) en
+    el periodo clickeado. Mismo espíritu que get_perforacion_pozos_detalle,
+    pero la fuente de "campo" es distinta (CAMPO_PORTAL de PRODUCCION_CAMPOS,
+    no ASIG_CONT) — se resuelven primero las asignaciones del campo y luego
+    se filtra PRODUCCION_POZOS por ellas (ASIG_CONT empieza con
+    "<asignacion>-", ver mismo patrón en get_asignacion_detalle)."""
+    sql_asig = f"""
+        SELECT DISTINCT ASIG_CONT FROM {_TABLA_PRODUCCION_CAMPOS}
+        WHERE {_FILTRO_ID_WHERE} AND CAMPO_PORTAL = :campo AND ASIG_CONT IS NOT NULL
+    """
+    with engine.connect() as conn:
+        asigs = pd.read_sql(sqlalchemy_text(sql_asig), conn, params={"campo": campo})
+    asig_list = asigs.iloc[:, 0].dropna().unique().tolist()
+    if not asig_list:
+        return {"pozos": [], "total": 0}
+
+    from app.services import pozos_service
+    source = pozos_service._source_table()
+
+    periodo = periodo.strip()
+    params = {}
+    if len(periodo) == 4:
+        where_fecha = f"{_YEAR_FECHA} = :anio"
+        params["anio"] = int(periodo)
+    else:
+        anio, mes = periodo.split("-")
+        where_fecha = f"{_YEAR_FECHA} = :anio AND {_MONTH_FECHA} = :mes"
+        params["anio"], params["mes"] = int(anio), int(mes)
+
+    like_clauses = " OR ".join(f"ASIG_CONT LIKE :p{i}" for i in range(len(asig_list)))
+    for i, a in enumerate(asig_list):
+        params[f"p{i}"] = f"{a}-%"
+
+    sql = f"""
+        SELECT WELL_NAME, ASIG_CONT, FECHA,
+               {_ISNULL}(PETROLEO_MBD,0)+{_ISNULL}(CONDENSADO_MBD,0) AS LIQUIDOS_MBD,
+               {_ISNULL}(GAS_MMPCD,0) AS GAS_MMPCD
+        FROM {source}
+        WHERE ({like_clauses}) AND {where_fecha}
+    """
+    with engine.connect() as conn:
+        df = pd.read_sql(sqlalchemy_text(sql), conn, params=params)
+    if df.empty:
+        return {"pozos": [], "total": 0}
+
+    df.columns = df.columns.str.lower()
+    df = df[(df["liquidos_mbd"] > 0) | (df["gas_mmpcd"] > 0)]
+    if df.empty:
+        return {"pozos": [], "total": 0}
+
+    df["fecha"] = pd.to_datetime(df["fecha"])
+    df = df.sort_values("fecha").drop_duplicates("well_name", keep="last")
+    df["tipo"] = df.apply(lambda r: "Petróleo y gas asociado" if r["liquidos_mbd"] > 0 else "Gas no asociado", axis=1)
+    df = df.dropna(subset=["well_name"]).sort_values("well_name")
+
+    pozos = [
+        {
+            "pozo": r["well_name"],
+            "campo": r["asig_cont"],
+            "tipo": r["tipo"],
+            "fecha": r["fecha"].isoformat() if pd.notna(r["fecha"]) else None,
+        }
+        for r in df[["well_name", "asig_cont", "tipo", "fecha"]].to_dict("records")
     ]
     return {"pozos": pozos, "total": len(pozos)}
 

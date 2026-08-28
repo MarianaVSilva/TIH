@@ -21,6 +21,8 @@ export const fetchPerforacionFiltros = (topic) =>
   api.get("/perforacion/filtros", { params: { topic } }).then(r => r.data);
 export const fetchPerforacionPozosDetalle = (p) =>
   api.get("/perforacion/pozos-detalle", { params: p }).then(r => r.data);
+export const fetchPozosCampoDetalle = (p) =>
+  api.get("/perforacion/pozos-campo-detalle", { params: p }).then(r => r.data);
 export const fetchPerforacionHistorico = (topic) =>
   api.get("/perforacion/historico", { params: { topic }, timeout: 60000 }).then(r => r.data);
 
@@ -48,6 +50,7 @@ export const fetchPozosCacheStatus  = () => api.get("/produccion/pozos/cache-sta
 
 export const fetchAsignacionesRanking = (p) => api.get("/produccion/asignaciones/ranking", { params: p }).then(r => r.data);
 export const fetchAsignacionDetalle   = (p) => api.get("/produccion/asignaciones/detalle",  { params: p }).then(r => r.data);
+export const fetchCampoDetalle        = (p) => api.get("/produccion/campos/detalle",  { params: p }).then(r => r.data);
 
 export const fetchResumen = () => api.get("/resumen/").then(r => r.data);
 

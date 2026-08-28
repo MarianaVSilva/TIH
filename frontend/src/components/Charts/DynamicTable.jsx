@@ -1331,38 +1331,45 @@ function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, tit
         )}
       </div>
 
-      <div className="relative">
-        <button
-          className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50"
-          onClick={() => setShowCols(v => !v)}>
-          <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="1" y="1" width="4" height="14" rx="1"/><rect x="6" y="1" width="4" height="14" rx="1"/><rect x="11" y="1" width="4" height="14" rx="1"/>
-          </svg>
-          Columnas
-        </button>
-        {showCols && (
-          <div className="absolute top-full mt-1 right-0 bg-white border border-slate-200 rounded-lg shadow-lg p-3 z-50 min-w-[130px]">
-            <p className="text-[10px] font-semibold text-slate-400 uppercase mb-2 tracking-wide">Visibles</p>
-            {!isMonthly && categories.map(c => (
-              <label key={c} className="flex items-center gap-2 py-0.5 cursor-pointer">
-                <input type="checkbox" checked={!hiddenCols.has(c)} className="accent-teal-600"
-                  onChange={() => setHiddenCols(s => { const n = new Set(s); n.has(c) ? n.delete(c) : n.add(c); return n; })} />
-                <span className="text-[12px] text-slate-700">{c}</span>
-              </label>
-            ))}
-            {sumaDisponible && (
-              <>
-                {!isMonthly && <div className="h-px bg-slate-100 my-1.5" />}
-                <label className="flex items-center gap-2 py-0.5 cursor-pointer">
-                  <input type="checkbox" checked={!sumaOculta} className="accent-teal-600"
-                    onChange={() => setSumaOculta(v => !v)} />
-                  <span className="text-[12px] text-slate-700">Suma</span>
+      {/* En vista mensual el listado de columnas (años) se oculta más abajo
+          (!isMonthly && categories.map...) — si además esta sección no tiene
+          columna Suma (sumaDisponible false), el menú quedaría vacío. Se
+          oculta el botón entero en ese caso en vez de abrir un panel sin nada
+          que mostrar. */}
+      {(!isMonthly || sumaDisponible) && (
+        <div className="relative">
+          <button
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50"
+            onClick={() => setShowCols(v => !v)}>
+            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="1" y="1" width="4" height="14" rx="1"/><rect x="6" y="1" width="4" height="14" rx="1"/><rect x="11" y="1" width="4" height="14" rx="1"/>
+            </svg>
+            Columnas
+          </button>
+          {showCols && (
+            <div className="absolute top-full mt-1 right-0 bg-white border border-slate-200 rounded-lg shadow-lg p-3 z-50 min-w-[130px]">
+              <p className="text-[10px] font-semibold text-slate-400 uppercase mb-2 tracking-wide">Visibles</p>
+              {!isMonthly && categories.map(c => (
+                <label key={c} className="flex items-center gap-2 py-0.5 cursor-pointer">
+                  <input type="checkbox" checked={!hiddenCols.has(c)} className="accent-teal-600"
+                    onChange={() => setHiddenCols(s => { const n = new Set(s); n.has(c) ? n.delete(c) : n.add(c); return n; })} />
+                  <span className="text-[12px] text-slate-700">{c}</span>
                 </label>
-              </>
-            )}
-          </div>
-        )}
-      </div>
+              ))}
+              {sumaDisponible && (
+                <>
+                  {!isMonthly && <div className="h-px bg-slate-100 my-1.5" />}
+                  <label className="flex items-center gap-2 py-0.5 cursor-pointer">
+                    <input type="checkbox" checked={!sumaOculta} className="accent-teal-600"
+                      onChange={() => setSumaOculta(v => !v)} />
+                    <span className="text-[12px] text-slate-700">Suma</span>
+                  </label>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <button onClick={handleExportExcel} disabled={exportando} className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 disabled:opacity-60">
         <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1970,7 +1977,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
 
                 return (
                   <tr key={row._id}
-                    className={`${bg ?? ""} ${isCollapse || row._code ? "cursor-pointer select-none" : ""} transition-colors duration-100`}
+                    className={`${bg ?? ""} ${isCollapse || ((row._type === "operator" || row._type === "planoperator") && onRowClick) ? "cursor-pointer select-none" : ""} transition-colors duration-100`}
                     style={{
                       ...(isDark ? { background: "linear-gradient(90deg,#10312B,#1a4a3a)" } : {}),
                       ...(tone && !isSelected && !isHovered ? { background: tone.bg + "60" } : {}),
@@ -1989,7 +1996,12 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                       if (row._type === "subtotalcuenca" || row._type === "ambienteheader") cycleCuenca(row._groupKey, row._groupKeyItems);
                       else if (isCollapse) toggleGroup(row._groupKey);
                       if (!isDark) setSelectedRow(selectedRow === row._id ? null : row._id);
-                      if (row._code && onRowClick) onRowClick(row._code, row.label);
+                      // "_code" solo viene del backend cuando el label mostrado no es
+                      // el identificador real (Asignaciones: label=BLOCK_NAME, code=
+                      // ASIG_CONT). Para el resto de temas (Campos, Cuenca, etc.) el
+                      // label ES el identificador — se usa como fallback para que el
+                      // clic siga funcionando sin necesitar un "code" redundante.
+                      if ((row._type === "operator" || row._type === "planoperator") && onRowClick) onRowClick(row._code ?? row.label, row.label);
                     }}
                   >
                     <td title={row.label} className={`px-4 py-[5px] whitespace-normal break-words static sm:sticky sm:left-0 ${cfg.label}`}

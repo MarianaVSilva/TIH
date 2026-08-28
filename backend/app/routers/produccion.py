@@ -4,7 +4,7 @@ from sqlalchemy.engine import Engine
 from app.database import get_db_dep
 from app.services.produccion_service import (
     get_produccion, get_produccion_cuenca, get_produccion_detalle, get_produccion_filtros,
-    get_asignaciones_ranking, get_asignacion_detalle, get_produccion_historico,
+    get_asignaciones_ranking, get_asignacion_detalle, get_produccion_historico, get_campo_detalle,
 )
 from app.services import pozos_cache, pozos_service
 
@@ -64,6 +64,20 @@ def produccion_asignacion_detalle(
     engine: Engine = Depends(get_db_dep),
 ):
     return get_asignacion_detalle(engine, asignacion, start_year, end_year, start_month, end_month, period, years)
+
+
+@router.get("/campos/detalle")
+def produccion_campo_detalle(
+    campo: str = Query(...),
+    start_year: int = Query(2019),
+    end_year: int = Query(2023),
+    start_month: int = Query(1),
+    end_month: int = Query(12),
+    period: str = Query("monthly"),
+    years: str = Query(""),
+    engine: Engine = Depends(get_db_dep),
+):
+    return get_campo_detalle(engine, campo, start_year, end_year, start_month, end_month, period, years)
 
 
 @router.get("/filtros")
