@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { fetchPozosCampoDetalle } from "../../api/client";
 import LoadingSpinner from "../UI/LoadingSpinner";
-import { useExplorer } from "../../store/useExplorer";
+import { nombreCampoDisplay } from "../../utils/nombreCampo";
+import { useAbrirFicha } from "../Fichas/FichaContext";
 
 const INK = "#1f2430";
 const MUTED = "#767b87";
@@ -25,18 +26,17 @@ function periodoLegible(periodo) {
 // (número de pozos aceite/gas de un campo en un periodo) — mismo espíritu
 // que PerforacionPozosDetallePanel (PozTerm/PozPerf), pero resuelto por
 // CAMPO_PORTAL en vez de cuenca/ubicación/categoría.
-export default function PozosCampoDetallePanel({ campo, periodo, cifraEsperada, onClose }) {
+export default function PozosCampoDetallePanel({ campo, periodo, onClose }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
-  const { temas, setSeccion, setTema, setPendingPozoSelection } = useExplorer();
+  const { abrirPozo } = useAbrirFicha();
 
+  // Abre la ficha del pozo (que a su vez encadena a su asignación/operador)
+  // en vez de sacar al usuario a otro tema. Se cierra este panel primero para
+  // no dejar dos modales encimados.
   function irAPozo(pozo, campoAsig) {
-    const temaPozos = temas.find(t => t.json_arg === "Pozos");
-    if (!temaPozos) return;
-    setSeccion(temaPozos.seccion);
-    setTema(temaPozos);
-    setPendingPozoSelection({ campo: campoAsig ?? null, pozo });
     onClose();
+    abrirPozo(pozo, campoAsig ?? null);
   }
 
   useEffect(() => {
@@ -46,8 +46,6 @@ export default function PozosCampoDetallePanel({ campo, periodo, cifraEsperada, 
       .then(setData)
       .catch(e => setError(e?.response?.data?.detail ?? e.message));
   }, [campo, periodo]);
-
-  const noCoincide = data && cifraEsperada != null && data.total !== cifraEsperada;
 
   return (
     <>
@@ -61,7 +59,7 @@ export default function PozosCampoDetallePanel({ campo, periodo, cifraEsperada, 
           <div className="flex items-center justify-between px-6 py-5 shrink-0 relative" style={{ background: "linear-gradient(90deg,#10312B,#1a4a3a)" }}>
             <div className="min-w-0 pr-8">
               <p className="text-white text-[16px] font-bold truncate">Pozos operando</p>
-              <p className="text-teal-200/80 text-[11px] mt-0.5 truncate">{campo} · {periodoLegible(periodo)}</p>
+              <p className="text-teal-200/80 text-[11px] mt-0.5 truncate">{nombreCampoDisplay(campo)} · {periodoLegible(periodo)}</p>
             </div>
             <button
               onClick={onClose}
@@ -87,11 +85,6 @@ export default function PozosCampoDetallePanel({ campo, periodo, cifraEsperada, 
                 <p className="text-[13px] text-slate-500">
                   <span className="font-bold text-[16px]" style={{ color: INK }}>{data.total}</span> pozo{data.total === 1 ? "" : "s"}
                 </p>
-                {noCoincide && (
-                  <div className="text-[11.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    La cifra de la tabla era {cifraEsperada} — en vista anual esa cifra es un promedio mensual, mientras esta lista son todos los pozos distintos que operaron en algún mes del periodo.
-                  </div>
-                )}
                 <div className="flex flex-col gap-1.5">
                   {data.pozos.map(p => (
                     <button

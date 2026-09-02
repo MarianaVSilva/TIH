@@ -4,6 +4,8 @@ import { fetchResumen } from "../../api/client";
 import ExportPDFTIH from "../ExportPDFTIH/ExportPDFTIH";
 import "../ExportPDFTIH/ExportPDFTIH.css";
 import { useExplorerNav } from "../../hooks/useExplorerNav";
+import { nombreCampoDisplay } from "../../utils/nombreCampo";
+import { useAbrirFicha } from "../Fichas/FichaContext";
 
 // Cada mini-sección vive en su propia card blanca con borde/sombra sutil,
 // con tamaños compactos para que todo el Panorama general quepa sin scroll.
@@ -305,24 +307,18 @@ function buildExportPDFData(data) {
   };
 }
 
-const NOMBRE_FIXES = {
-  TUPILCOPROFUNDO: "TUPILCO PROFUNDO",
-};
-
-function nombreDisplay(nombre) {
-  return NOMBRE_FIXES[nombre] ?? nombre;
-}
-
 function CampoRow({ rank, nombre, valor, ratio, color }) {
-  const nombreMostrado = nombreDisplay(nombre);
-  const { irACampo } = useExplorerNav();
+  const nombreMostrado = nombreCampoDisplay(nombre);
+  const { abrirCampo } = useAbrirFicha();
   return (
     <div className="flex items-start gap-1.5 py-1 min-w-0">
       <div className="flex items-baseline gap-1 shrink-0 min-w-0" style={{ width: 68 }}>
         <span className="text-[13px] shrink-0" style={{ color: MUTED }}>{rank}.</span>
         <button
-          onClick={() => irACampo(nombreMostrado)}
-          title="Ver producción del campo"
+          // Se abre la ficha con el nombre CRUDO (identificador real), no con
+          // el nombre "bonito" que se muestra.
+          onClick={() => abrirCampo(nombre)}
+          title="Ver ficha del campo"
           className="text-[12px] font-medium leading-tight truncate text-left hover:underline decoration-teal-400 underline-offset-2"
           style={{ color: INK }}
         >

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
+import { nombreCampoDisplay } from '../../utils/nombreCampo';
 
 /**
  * COMPONENTE: Exportar PDF del TIH (Tablero de Información de Hidrocarburos)
@@ -235,16 +236,6 @@ function cardTitleHTML(chip, chipColor, chipBg, titulo) {
   `;
 }
 
-// Algunos nombres vienen pegados desde la base (mismo arreglo que aplica el
-// dashboard en pantalla).
-const NOMBRE_FIXES = {
-  TUPILCOPROFUNDO: 'TUPILCO PROFUNDO',
-};
-
-function nombreDisplay(nombre) {
-  return NOMBRE_FIXES[nombre] ?? nombre;
-}
-
 // Nombre y cifra en una línea, barra completa debajo — igual que ContratoBar
 // del dashboard. Antes el nombre vivía en una columna fija de 98px con
 // overflow:hidden, y html2canvas recortaba el texto a media altura además de
@@ -256,7 +247,7 @@ function barListHTML(items, color, maxValor) {
       <div style="display:flex; align-items:baseline; justify-content:space-between; gap:10px; line-height:1.4;">
         <span style="font-size:11.5px; font-weight:600; color:${INK}; min-width:0;">
           <span style="color:${MUTED}; font-weight:400;">${i + 1}.</span>
-          ${nombreDisplay(item.nombre ?? 'Campo ' + (i + 1))}
+          ${nombreCampoDisplay(item.nombre ?? 'Campo ' + (i + 1))}
         </span>
         <span style="font-size:12.5px; font-weight:700; color:${INK}; white-space:nowrap;">
           ${(item.valor ?? 0).toLocaleString('es-MX')}

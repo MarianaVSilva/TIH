@@ -212,7 +212,17 @@ def get_pozos_comprometidos(engine: Engine) -> dict:
     df["ubicacion"] = df["ubicacion"].fillna("Sin clasificar")
     df["grupo"] = df.apply(lambda r: _label_grupo_pozos(r["ronda"], r["licitacion"]), axis=1)
 
-    categories = AMBIENTES_ORDEN + sorted(set(df["ubicacion"]) - set(AMBIENTES_ORDEN))
+    # "Sin clasificar" aparece cuando el contrato no empata con
+    # INVERSIONES_APROBADAS (de ahí salen MODALIDAD/UBICACION). Hoy no arrastra
+    # ningún pozo, así que solo agregaba una columna vacía; se omiten los
+    # ambientes extra sin datos, pero se conservan si alguna vez traen pozos
+    # (esconderlos entonces sí perdería información).
+    total_por_ambiente = df.groupby("ubicacion")["pozosplanes"].sum()
+    extras = [
+        a for a in sorted(set(df["ubicacion"]) - set(AMBIENTES_ORDEN))
+        if total_por_ambiente.get(a, 0) > 0
+    ]
+    categories = AMBIENTES_ORDEN + extras
 
     def serie_por_ambiente(sub: pd.DataFrame) -> list:
         por_amb = sub.groupby("ubicacion")["pozosplanes"].sum()
@@ -415,3 +425,131 @@ def get_contratos_adjudicados(engine: Engine) -> dict:
         groups.append({"cuenca": pais, "data": serie(sub_pais), "subgroups": [{"ubicacion": "Nacional", "rows": rows}]})
 
     return {"type": "hierarchical", "categories": categories, "groups": groups}
+
+
+def get_pozos_comprometidos_detalle(engine: Engine, contrato: str) -> dict:
+    """Desglose detrás de una celda de "Pozos comprometidos": en qué estado va
+    el compromiso de ese contrato (del plan, terminados, en perforación, por
+    perforar, PMT y descubrimientos).
+
+    T_21_PozosComprometidos guarda CONTEOS por contrato, NO la lista de pozos:
+    el "3" de la tabla no tiene tres nombres guardados detrás. Se intentó
+    nombrarlos cruzando con el catálogo bd_pozos por BLOCK_ID_*, pero eso
+    devuelve TODOS los pozos del bloque (exploratorios previos al contrato y
+    los de desarrollo planeados: 16 para Trión frente a 3 comprometidos), que
+    no son los comprometidos — se descartó por engañoso. Si algún día hace
+    falta la lista, tiene que venir de una fuente que la tenga de verdad.
+    """
+    pozos_planes_col = "pozos_planes" if _PG else "pozosPlanes"
+    pmt_col = "pmt_ea_pozos" if _PG else "PMTeaPozos"
+    sql_conteos = f"""
+        SELECT contrato, ronda, licitacion, areaContractual AS area,
+               {pmt_col} AS pmt, {pozos_planes_col} AS planes,
+               terminados, enPerforacion, porPerforar, descubrimientos
+        FROM {_TABLA_POZOS_COMPROMETIDOS}
+        WHERE contrato = :contrato
+    """
+    from sqlalchemy import text as sqlalchemy_text
+    with engine.connect() as conn:
+        conteos = pd.read_sql(sqlalchemy_text(sql_conteos), conn, params={"contrato": contrato})
+
+    def _num(v):
+        return None if pd.isna(v) else int(float(v))
+
+    resumen = {}
+    if not conteos.empty:
+        r = conteos.iloc[0]
+        resumen = {
+            "ronda": r["ronda"], "licitacion": r["licitacion"], "area": r["area"],
+            "pmt": _num(r["pmt"]), "planes": _num(r["planes"]),
+            "terminados": _num(r["terminados"]), "en_perforacion": _num(r["enPerforacion"]),
+            "por_perforar": _num(r["porPerforar"]), "descubrimientos": _num(r["descubrimientos"]),
+        }
+
+    return {"contrato": contrato, "resumen": resumen}
+
+
+def get_contratos_adjudicados_detalle(engine: Engine, empresa: str, columna: str) -> dict:
+    """Desglose detrás de una celda de "Contratos adjudicados".
+
+    La celda cruza EMPRESA × ronda-licitación y su número es cuántos contratos
+    ganó esa empresa ahí, así que el desglose son esos contratos y, por cada
+    uno, quién participa.
+
+    Se cruzan dos fuentes que dicen cosas distintas y complementarias:
+      - PRODUCCION_OPERADOR_IP: las partes del contrato con su rol
+        (FACTOR_O = 1 es el operador) y su interés de participación
+        (FACTOR_IP). Es lo que se ve como "Operador / Socio" y el "%".
+      - licitaciones_bloques_ofertas: las empresas que licitaron y su país.
+        Ojo, NO son las mismas: para CNH-A3.CÁRDENAS-MORA/2018 el licitante es
+        "Cheiron Holdings Limited" (Egipto) mientras que las partes del
+        contrato son Pemex y Petrolera Cárdenas Mora. Por eso van en dos
+        bloques separados y no se mezclan.
+    """
+    from sqlalchemy import text as sqlalchemy_text
+    from app.services.produccion_service import _catalogo_asig_cont, _norm_codigo_asig
+
+    sql_contratos = f"""
+        SELECT DISTINCT ronda, licitacion, contrato_nombre
+        FROM {_TABLA_LICITACIONES_OFERTAS}
+        WHERE contrato_nombre IS NOT NULL AND id_licitante = id_licitante_adj
+          AND empresa = :empresa
+    """
+    with engine.connect() as conn:
+        df = pd.read_sql(sqlalchemy_text(sql_contratos), conn, params={"empresa": empresa})
+    if df.empty:
+        return {"empresa": empresa, "columna": columna, "contratos": []}
+
+    df.columns = df.columns.str.lower()
+    df = df[df.apply(lambda r: _col_contrato(r["ronda"], r["licitacion"], r["contrato_nombre"]), axis=1) == columna]
+    if df.empty:
+        return {"empresa": empresa, "columna": columna, "contratos": []}
+
+    nombres = sorted(df["contrato_nombre"].dropna().unique().tolist())
+    try:
+        catalogo = _catalogo_asig_cont(engine)
+    except Exception:
+        catalogo = {}
+
+    sql_ip = """
+        SELECT DISTINCT EMPRESA, FACTOR_IP, FACTOR_O
+        FROM PRODUCCION_OPERADOR_IP WHERE ASIG_CONT = :asig
+    """
+    sql_lic = f"""
+        SELECT DISTINCT empresa, pais FROM {_TABLA_LICITACIONES_OFERTAS}
+        WHERE contrato_nombre = :c AND id_licitante = id_licitante_adj
+    """
+    contratos = []
+    with engine.connect() as conn:
+        for nombre in nombres:
+            # El código canónico: licitaciones lo escribe con otra grafía
+            # (guion vs punto, ceros a la izquierda) que PRODUCCION_OPERADOR_IP.
+            canonico = catalogo.get(_norm_codigo_asig(nombre), nombre)
+            participantes = []
+            try:
+                ip = pd.read_sql(sqlalchemy_text(sql_ip), conn, params={"asig": canonico})
+                if not ip.empty:
+                    ip.columns = ip.columns.str.lower()
+                    ip = ip.sort_values("factor_o", ascending=False)
+                    participantes = [
+                        {
+                            "empresa": r["empresa"],
+                            "operador": bool(r["factor_o"]),
+                            "interes": round(float(r["factor_ip"]) * 100, 2) if pd.notna(r["factor_ip"]) else None,
+                        }
+                        for r in ip.to_dict("records")
+                    ]
+            except Exception:
+                pass
+            lic = pd.read_sql(sqlalchemy_text(sql_lic), conn, params={"c": nombre})
+            lic.columns = lic.columns.str.lower()
+            licitantes = [
+                {"empresa": r["empresa"], "pais": r["pais"]}
+                for r in lic.dropna(subset=["empresa"]).sort_values("empresa").to_dict("records")
+            ]
+            contratos.append({
+                "contrato": nombre, "codigo": canonico,
+                "participantes": participantes, "licitantes": licitantes,
+            })
+
+    return {"empresa": empresa, "columna": columna, "contratos": contratos}

@@ -9,12 +9,14 @@ import HeatmapChart from "./HeatmapChart";
 import HomeDashboard from "./HomeDashboard";
 import PozosExplorer from "./PozosExplorer";
 import AsignacionesRanking from "./AsignacionesRanking";
-import AsignacionDetallePanel from "./AsignacionDetallePanel";
-import CampoDetallePanel from "./CampoDetallePanel";
+import { useAbrirFicha } from "../Fichas/FichaContext";
 import PerforacionPozosDetallePanel from "./PerforacionPozosDetallePanel";
 import PozosCampoDetallePanel from "./PozosCampoDetallePanel";
+import PozosComprometidosDetallePanel from "./PozosComprometidosDetallePanel";
+import ContratosAdjudicadosDetallePanel from "./ContratosAdjudicadosDetallePanel";
 import ReportBuilderModal from "./ReportBuilderModal";
 import { descargarCsvConHeader } from "../../utils/exportCsv";
+import { AGUA_COLOR, AGUA_AREA, AGUA_LINEA, esAgua, ejeAgua } from "../../utils/estiloAgua";
 
 const PALETTE = [
   "#0db4be","#6366f1","#f59e0b","#ef4444",
@@ -130,16 +132,22 @@ function DataTable({ title, categories, series, periodoNota }) {
 const CHART_TYPE_LABEL = Object.fromEntries(CHART_TYPES.map(t => [t.id, t.label]));
 
 // Extraído de SingleChart para poder reusarlo con un ref propio (necesario
-// para exportar a PNG en "Gráfica personalizada").
+// para exportar a PNG en "Gráfica individual").
 function buildChartOption(categories, series, chartType, { zoomable = false } = {}) {
   const isPie = chartType === "pie";
   const isBar = chartType === "bar";
   const showZoom = zoomable && !isPie && categories.length > 12;
 
+  // El agua se grafica junto a los hidrocarburos pero en un eje propio a la
+  // derecha (ver utils/estiloAgua.js). En pastel no aplica: ahi no hay ejes y
+  // meterla al reparto la haria leerse como produccion.
+  const hayAgua = !isPie && series.length > 1 && series.some(s => esAgua(s.name));
+
   const pieData = isPie
     ? series.map(s => ({
         name: s.name,
         value: (s.data ?? []).reduce((a, b) => a + (b ?? 0), 0),
+        itemStyle: { color: colorDeSerie(s.name) },
       })).filter(d => d.value > 0)
     : [];
 
@@ -174,19 +182,35 @@ function buildChartOption(categories, series, chartType, { zoomable = false } = 
           textStyle: { color: "#1f2430", fontSize: 11 },
         },
         legend: { type: "plain", bottom: showZoom ? 26 : 0, left: "center", width: "92%", itemGap: 14, textStyle: { color: "#767b87", fontSize: 10 } },
-        grid: { top: 30, right: 24, bottom: (series.length > 6 ? 90 : 50) + (showZoom ? 26 : 0), left: 20, containLabel: true },
+        grid: { top: 30, right: hayAgua ? 56 : 24, bottom: (series.length > 6 ? 90 : 50) + (showZoom ? 26 : 0), left: 20, containLabel: true },
         xAxis: {
           type: "category",
           data: categories,
-          axisLabel: { color: "#767b87", fontSize: 10, fontWeight: 600, rotate: categories.length > 24 ? 45 : 0 },
+          axisLabel: {
+            color: "#767b87", fontSize: 10, fontWeight: 600,
+            // interval 0 = no ocultar ninguna. Por defecto ECharts esconde las
+            // que se encimarían, y con pocas categorías de nombre largo
+            // (Aguas profundas / Aguas someras / Terrestre) desaparecía la de
+            // en medio: quedaba una barra sin etiqueta, imposible de leer.
+            // Con muchas categorías sí conviene que ECharts decida.
+            ...(categories.length <= 12 ? { interval: 0 } : {}),
+            // Al forzarlas todas hay que darles espacio: varias etiquetas
+            // largas seguidas (cuencas) se encimarían en horizontal.
+            rotate: categories.length > 24 ? 45
+              : (categories.length > 3 && categories.length <= 12
+                 && categories.some(c => String(c).length > 10) ? 30 : 0),
+          },
           axisLine: { lineStyle: { color: "#e7e5e0" } },
           axisTick: { show: false },
         },
-        yAxis: {
-          type: "value",
-          axisLabel: { color: "#767b87", fontSize: 10, formatter: v => v.toLocaleString("es-MX") },
-          splitLine: { show: false },
-        },
+        yAxis: [
+          {
+            type: "value",
+            axisLabel: { color: "#767b87", fontSize: 10, formatter: v => v.toLocaleString("es-MX") },
+            splitLine: { show: false },
+          },
+          ...(hayAgua ? [ejeAgua()] : []),
+        ],
         ...(showZoom ? {
           dataZoom: [
             { type: "inside", start: 100 - Math.min(100, (12 / categories.length) * 100 * 3), end: 100 },
@@ -195,12 +219,27 @@ function buildChartOption(categories, series, chartType, { zoomable = false } = 
               textStyle: { color: "#767b87", fontSize: 9 } },
           ],
         } : {}),
-        series: series.map((s, idx) => ({
+        series: series.map((s, idx) => (esAgua(s.name) && hayAgua ? {
+          // Siempre linea con area tenue, aunque el resto sean barras: el agua
+          // es contexto al fondo, no una barra mas que se compare de altura.
           name: s.name,
-          type: isBar ? "bar" : "line",
+          type: "line",
           data: s.data,
           smooth: true,
-          lineStyle: { width: 2 },
+          symbol: categories.length <= 1 ? "circle" : "none",
+          symbolSize: 8,
+          yAxisIndex: 1,
+          z: 2,
+          lineStyle: AGUA_LINEA,
+          itemStyle: { color: AGUA_COLOR },
+          areaStyle: { color: AGUA_AREA },
+        } : {
+          name: s.name,
+          type: isBar ? "bar" : "line",
+          ...(hayAgua ? { yAxisIndex: 0, z: 3 } : {}),
+          data: s.data,
+          smooth: true,
+          lineStyle: { width: 2, color: colorDeSerie(s.name) },
           // Con una sola categoría no hay segmento de línea que dibujar —
           // symbol:"none" dejaba la gráfica completamente en blanco aunque el
           // dato sí estuviera ahí (el tooltip lo mostraba al pasar el cursor,
@@ -210,7 +249,7 @@ function buildChartOption(categories, series, chartType, { zoomable = false } = 
           symbolSize: 8,
           barMaxWidth: 32,
           stack: isBar ? "total" : undefined,
-          ...(isBar ? { itemStyle: { borderRadius: idx === series.length - 1 ? [6, 6, 0, 0] : 0 } } : {}),
+          itemStyle: { color: colorDeSerie(s.name), ...(isBar ? { borderRadius: idx === series.length - 1 ? [6, 6, 0, 0] : 0 } : {}) },
         })),
       };
 }
@@ -223,8 +262,13 @@ function SingleChart({ title, categories, series, chartType, subtitle, zoomable 
   // Con pocas categorías y series, limitar y centrar el ancho del gráfico
   // (si no, las barras se ven sueltas). Con muchas series se desactiva para
   // dejarle espacio a la leyenda.
+  // El ancho por categoría tiene que crecer con el número de SERIES: son
+  // barras agrupadas, así que 3 categorías × 2 series son 6 barras. Con el
+  // ancho fijo anterior (130 por categoría) se apretaban y las etiquetas del
+  // eje se encimaban hasta desaparecer.
+  const anchoPorCategoria = Math.max(130, 60 * Math.max(1, series.length));
   const chartMaxWidth = isBar && categories.length > 0 && categories.length <= 8 && series.length <= 4
-    ? Math.max(220, categories.length * 130)
+    ? Math.max(220, categories.length * anchoPorCategoria)
     : null;
 
   const chartHeight = !isPie && series.length > 6 ? 380 : 320;
@@ -668,7 +712,7 @@ function buildReservasCampoGroupedOption(categories, p1, p2, p3, unidad) {
   };
 }
 
-// "Gráfica personalizada por campo": elegir UN campo y ver su evolución anual
+// "Gráfica individual por campo": elegir UN campo y ver su evolución anual
 // 1P/2P/3P en barras agrupadas.
 function ReservasCampoCustomChart({ resultado, unidad, entidad = "campos", selected, onSelectedChange }) {
   const campos = useMemo(
@@ -696,7 +740,7 @@ function ReservasCampoCustomChart({ resultado, unidad, entidad = "campos", selec
 
 // Vista por defecto de "Ver como gráficos" (sin modo personalizado elegido):
 // suma 1P/2P/3P de TODOS los campos/asignaciones del rango — mismas barras
-// agrupadas por año que "Gráfica personalizada por campo", pero a nivel
+// agrupadas por año que "Gráfica individual por campo", pero a nivel
 // nacional en vez de un campo/asignación puntual.
 function ReservasNacionalChart({ resultado, unidad, entidad = "campos" }) {
   const { p1, p2, p3 } = useMemo(() => {
@@ -806,6 +850,72 @@ function ViewBar({ viewMode, setViewMode, chartType, setChartType, hideGraphics 
 
 function filterSeries(series, visibleSeries) {
   return series.filter(s => visibleSeries[s.name] !== false);
+}
+
+// Series que son la SUMA de otras series de la misma lista. Graficarlas junto
+// a sus componentes no agrega informacion —"Hidrocarburos liquidos" es
+// petroleo + condensado, "Gas" es asociado + no asociado— y si duplica la
+// escala del eje, que tiene que llegar al total y deja a los componentes
+// aplastados abajo. Se quitan de la GRAFICA (y por lo tanto de las chips, que
+// son su control); en la TABLA se quedan, ahi el subtotal si se lee.
+const PARTES_DEL_SUBTOTAL = {
+  "Hidrocarburos líquidos": ["Petróleo", "Condensado", "Súper-ligero", "Ligero", "Mediano", "Pesado", "Extra-pesado"],
+  "Gas": ["Gas asociado", "Gas no asociado", "Metano", "Etano", "Propano", "Butano", "Isobutano", "Pentano +", "Ácido sulfhídrico", "Dióxido de carbono"],
+  "Producción": ["Petróleo", "Condensado", "Gas", "Gas asociado", "Gas no asociado"],
+};
+const _base = n => String(n ?? "").split(" (")[0].trim();
+
+function sinSubtotales(series) {
+  const presentes = new Set((series ?? []).map(s => _base(s.name)));
+  const sobran = new Set();
+  for (const [total, partes] of Object.entries(PARTES_DEL_SUBTOTAL)) {
+    // Solo se quita el total si algun componente suyo esta de verdad en la
+    // grafica: hay temas que traen "Gas" sin desglose, y ahi el total ES el
+    // dato. Con UN componente ya sobra: una asignacion que solo produce gas
+    // asociado dibujaba "Gas" exactamente encima de "Gas asociado".
+    if (presentes.has(total) && partes.some(p => presentes.has(p))) sobran.add(total);
+  }
+  const restantes = (series ?? []).filter(s => !sobran.has(_base(s.name)));
+  return restantes.length > 0 ? restantes : series ?? [];
+}
+
+// Los paneles de una vista "por producto": se separan por UNIDAD (Mbd vs
+// MMpcd), que es lo que no se puede mezclar en un mismo eje.
+//
+// El agua comparte unidad con petróleo y condensado pero no es un
+// hidrocarburo: viaja con las series de Mbd (pedido explícito: "que el agua se
+// vea en todos los gráficos de Mbd"), pero dibujada aparte —eje propio a la
+// derecha y área azul muy tenue, ver utils/estiloAgua.js— para que no se lea
+// como producción. Solo cae en su propio panel si no hay ningún líquido con
+// que acompañarla, o en pastel (que no tiene ejes).
+function partirSeriesPorUnidad(series, { aguaAparte = false } = {}) {
+  const esMMpcd = s => s.name.includes("MMpcd");
+  const mbdTodo = series.filter(s => !esMMpcd(s));
+  const liquidos = mbdTodo.filter(s => !esAgua(s.name));
+  const agua = mbdTodo.filter(s => esAgua(s.name));
+  const sola = aguaAparte || liquidos.length === 0;
+  return {
+    mbd: sola ? liquidos : mbdTodo,
+    agua: sola ? agua : [],
+    mmpcd: series.filter(esMMpcd),
+  };
+}
+
+function GraficasPorUnidad({ series, categories, titulo, chartType, zoomable = false }) {
+  const { mbd, agua, mmpcd } = partirSeriesPorUnidad(series, { aguaAparte: chartType === "pie" });
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {mbd.length > 0 && (
+        <SingleChart title={titulo} categories={categories} series={mbd} chartType={chartType} subtitle="Mbd" zoomable={zoomable} />
+      )}
+      {mmpcd.length > 0 && (
+        <SingleChart title={titulo} categories={categories} series={mmpcd} chartType={chartType} subtitle="MMpcd" zoomable={zoomable} />
+      )}
+      {agua.length > 0 && (
+        <SingleChart title={titulo} categories={categories} series={agua} chartType={chartType} subtitle="Agua · Mbd" zoomable={zoomable} />
+      )}
+    </div>
+  );
 }
 
 const GROUP_TABS = [
@@ -1060,7 +1170,7 @@ function buildProdCuencaSeries(resultado) {
   return [...merged].map(([name, data]) => ({ name, data }));
 }
 
-// "Gráfica personalizada" de "Producción por ubicación": para un Ambiente
+// "Gráfica individual" de "Producción por ubicación": para un Ambiente
 // elegido, suma a través de todas las cuencas la fila de cada producto (todas
 // sus categorías/leaf rows con ese label exacto) — una serie por producto,
 // toda la producción de ese ambiente junta en una sola gráfica.
@@ -1130,7 +1240,7 @@ async function generarReporteDesdeBloques(seleccion, { tabla, filtrosLineas, tit
 
 // Exportación a PNG con branding institucional — banner con degradado verde,
 // logo de Energía (el mismo del header) y título, en formato apaisado fijo
-// (no depende del ancho del panel en pantalla). Toda "Gráfica personalizada"
+// (no depende del ancho del panel en pantalla). Toda "Gráfica individual"
 // (Operadores, Producción por ubicación, y las que se agreguen después) usa
 // esta misma función para que el PNG resultante tenga siempre el mismo estilo.
 function exportChartPng(chartRef, { titulo, filename }) {
@@ -1174,7 +1284,7 @@ function exportChartPng(chartRef, { titulo, filename }) {
   logo.src = "/logosener-blanco.png";
 }
 
-// Selector buscable: en todas las "Gráfica personalizada" (Operador, Cuenca/
+// Selector buscable: en todas las "Gráfica individual" (Operador, Cuenca/
 // Ambiente, Contrato…) la lista puede tener decenas de opciones — un <select>
 // nativo no deja escribir para filtrar, así que se reemplaza por un combobox
 // con input de texto + lista filtrada en vivo.
@@ -1260,15 +1370,58 @@ function SearchableSelect({ options, value, onChange }) {
   );
 }
 
-// "Gráfica personalizada": el usuario elige UNA empresa y ve toda su
-// producción (todos los productos con datos) en una sola gráfica,
-// exportable como PNG con un banner de título superpuesto.
+// Las "Gráfica individual" muestran TODOS los productos de la entidad
+// elegida, y esos productos no comparten unidad: petróleo/condensado/agua van
+// en Mbd y el gas en MMpcd. En un solo eje el gas (miles de MMpcd) aplastaba a
+// los líquidos hasta dejarlos pegados al cero. Se parten en un panel por
+// unidad, igual que la vista general (GraficasPorUnidad). El agua viaja con
+// los líquidos, en su eje tenue a la derecha (ver utils/estiloAgua.js).
+// Cada panel exporta su propio PNG: son gráficas distintas, no una sola.
+function PanelUnidadPersonalizada({ unidad, series, categories, chartType, titulo, filenameBase, zoomable, altura }) {
+  const chartRef = useRef(null);
+  const option = useMemo(
+    () => buildChartOption(categories, series, chartType, { zoomable }),
+    [categories, series, chartType, zoomable],
+  );
+  return (
+    <div className="mb-2">
+      <div className="flex items-baseline justify-between mb-2">
+        <span className="text-[11px] font-semibold text-teal-700">{unidad}</span>
+        <button
+          onClick={() => exportChartPng(chartRef, {
+            titulo: `${titulo} — ${unidad}`,
+            filename: `${filenameBase}_${unidad}.png`,
+          })}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50"
+        >
+          Exportar PNG
+        </button>
+      </div>
+      <ReactECharts ref={chartRef} option={option} style={{ height: altura }} notMerge />
+    </div>
+  );
+}
+
+function GraficasPersonalizadasPorUnidad({ series, categories, chartType, titulo, filenameBase, zoomable = false, altura = 380 }) {
+  const { mbd, mmpcd } = partirSeriesPorUnidad(sinSubtotales(series ?? []));
+  const paneles = [["Mbd", mbd], ["MMpcd", mmpcd]].filter(([, ss]) => ss.length > 0);
+  if (!paneles.length) return <p className="text-sm text-slate-400 p-4">Sin datos para graficar.</p>;
+  return paneles.map(([unidad, ss]) => (
+    <PanelUnidadPersonalizada
+      key={unidad} unidad={unidad} series={ss} categories={categories}
+      chartType={chartType} titulo={titulo} filenameBase={filenameBase}
+      zoomable={zoomable} altura={paneles.length > 1 ? Math.round(altura * 0.8) : altura}
+    />
+  ));
+}
+
+// "Gráfica individual": el usuario elige UNA empresa y ve toda su
+// producción (todos los productos con datos), en un panel por unidad,
+// cada uno exportable como PNG con un banner de título superpuesto.
 function OperadorCustomChart({ empresas, categories, chartType, tituloTema, visibleSeries = {} }) {
   const [selected, setSelected] = useState(empresas[0]?.empresa ?? "");
-  const chartRef = useRef(null);
   const emp = empresas.find(e => e.empresa === selected) ?? empresas[0];
   const series = filterSeries(emp?.series ?? [], visibleSeries);
-  const option = useMemo(() => buildChartOption(categories, series, chartType, { zoomable: true }), [categories, series, chartType]);
 
   if (!empresas.length) return <p className="text-sm text-slate-400 p-4">Sin empresas disponibles para graficar.</p>;
 
@@ -1280,30 +1433,23 @@ function OperadorCustomChart({ empresas, categories, chartType, tituloTema, visi
           value={selected || empresas[0]?.empresa}
           onChange={setSelected}
         />
-        <button
-          onClick={() => exportChartPng(chartRef, {
-            titulo: `${tituloTema} — ${emp?.empresa ?? ""}`,
-            filename: `produccion_${(emp?.empresa ?? "operador").replace(/\s+/g, "_")}.png`,
-          })}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50"
-        >
-          Exportar PNG
-        </button>
       </div>
-      <ReactECharts ref={chartRef} option={option} style={{ height: 380 }} notMerge />
+      <GraficasPersonalizadasPorUnidad
+        series={series} categories={categories} chartType={chartType} zoomable
+        titulo={`${tituloTema} — ${emp?.empresa ?? ""}`}
+        filenameBase={`produccion_${(emp?.empresa ?? "operador").replace(/\s+/g, "_")}`}
+      />
     </div>
   );
 }
 
-// "Gráfica personalizada" de "Producción por contrato": el usuario elige UN
-// contrato y ve toda su producción (todos los productos con datos) en una
-// sola gráfica, exportable a PNG — mismo patrón que OperadorCustomChart.
+// "Gráfica individual" de "Producción por contrato": el usuario elige UN
+// contrato y ve toda su producción (todos los productos con datos), en un
+// panel por unidad — mismo patrón que OperadorCustomChart.
 function ContratoCustomChart({ contratos, categories, chartType, tituloTema, badgeFor }) {
   const [selected, setSelected] = useState(contratos[0]?.nombre ?? "");
-  const chartRef = useRef(null);
   const contrato = contratos.find(c => c.nombre === selected) ?? contratos[0];
   const series = contrato?.series ?? [];
-  const option = useMemo(() => buildChartOption(categories, series, chartType), [categories, series, chartType]);
 
   if (!contratos.length) return <p className="text-sm text-slate-400 p-4">Sin contratos disponibles para graficar.</p>;
 
@@ -1322,30 +1468,23 @@ function ContratoCustomChart({ contratos, categories, chartType, tituloTema, bad
             </span>
           )}
         </div>
-        <button
-          onClick={() => exportChartPng(chartRef, {
-            titulo: `${tituloTema} — ${contrato?.nombre ?? ""}`,
-            filename: `produccion_${(contrato?.nombre ?? "contrato").replace(/\s+/g, "_")}.png`,
-          })}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50"
-        >
-          Exportar PNG
-        </button>
       </div>
-      <ReactECharts ref={chartRef} option={option} style={{ height: 380 }} notMerge />
+      <GraficasPersonalizadasPorUnidad
+        series={series} categories={categories} chartType={chartType}
+        titulo={`${tituloTema} — ${contrato?.nombre ?? ""}`}
+        filenameBase={`produccion_${(contrato?.nombre ?? "contrato").replace(/\s+/g, "_")}`}
+      />
     </div>
   );
 }
 
-// "Gráfica personalizada" de "Producción por ubicación": el usuario elige UN
+// "Gráfica individual" de "Producción por ubicación": el usuario elige UN
 // Ambiente y ve toda su producción (los 8 productos con datos, sumados a
-// través de todas las cuencas) en una sola gráfica, exportable a PNG.
+// través de todas las cuencas), en un panel por unidad, exportables a PNG.
 function CuencaCustomChart({ ubicaciones, resultado, categories, chartType, tituloTema }) {
   const [selected, setSelected] = useState(ubicaciones[0] ?? "");
-  const chartRef = useRef(null);
   const ubicacion = selected || ubicaciones[0];
   const series = useMemo(() => buildUbicacionSeries(resultado, ubicacion), [resultado, ubicacion]);
-  const option = useMemo(() => buildChartOption(categories, series, chartType), [categories, series, chartType]);
 
   if (!ubicaciones.length) return <p className="text-sm text-slate-400 p-4">Sin ambientes disponibles para graficar.</p>;
 
@@ -1357,17 +1496,12 @@ function CuencaCustomChart({ ubicaciones, resultado, categories, chartType, titu
           value={ubicacion}
           onChange={setSelected}
         />
-        <button
-          onClick={() => exportChartPng(chartRef, {
-            titulo: `${tituloTema} — ${ubicacion}`,
-            filename: `produccion_${ubicacion.replace(/\s+/g, "_")}.png`,
-          })}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50"
-        >
-          Exportar PNG
-        </button>
       </div>
-      <ReactECharts ref={chartRef} option={option} style={{ height: 380 }} notMerge />
+      <GraficasPersonalizadasPorUnidad
+        series={series} categories={categories} chartType={chartType}
+        titulo={`${tituloTema} — ${ubicacion}`}
+        filenameBase={`produccion_${ubicacion.replace(/\s+/g, "_")}`}
+      />
     </div>
   );
 }
@@ -1378,6 +1512,34 @@ const CHIP_COLORS = [
   "#60a5fa","#e879f9","#84cc16","#38bdf8",
 ];
 
+// El color tiene que seguir a la SERIE, no a su posicion en la lista. Antes
+// chips y graficas indexaban su paleta por orden, y como cada panel (Mbd /
+// MMpcd) reinicia el indice, "Gas asociado" salia del color de "Petroleo" y
+// el chip decia otra cosa que la linea. Al colgar el color del nombre, chips,
+// leyendas y lineas coinciden siempre, y prender o apagar una serie ya no
+// repinta a las demas.
+const COLOR_POR_SERIE = {
+  "Petróleo": "#0db4be",
+  "Condensado": "#4f46e5",
+  "Hidrocarburos líquidos": "#0f766e",
+  "Gas": "#0891b2",
+  "Gas asociado": "#f59e0b",
+  "Gas no asociado": "#10b981",
+  "Nitrógeno": "#f43f5e",
+  "Agua": AGUA_COLOR,
+};
+
+function colorDeSerie(nombre) {
+  const base = String(nombre ?? "").split(" (")[0].trim();
+  if (COLOR_POR_SERIE[base]) return COLOR_POR_SERIE[base];
+  // Series sin color asignado (clases de API, componentes del gas, empresas,
+  // cuencas…): un indice estable derivado del nombre, para que la serie
+  // conserve su color aunque cambie el filtro o el orden.
+  let h = 0;
+  for (let i = 0; i < base.length; i++) h = (h * 31 + base.charCodeAt(i)) >>> 0;
+  return CHIP_COLORS[h % CHIP_COLORS.length];
+}
+
 function SeriesChips({ items, visibleSeries, toggleSerie, setAllVisible }) {
   if (!items.length) return null;
   const allNames = items.map(s => s.name);
@@ -1386,9 +1548,9 @@ function SeriesChips({ items, visibleSeries, toggleSerie, setAllVisible }) {
   return (
     <div className="flex items-center gap-2 flex-wrap mb-5">
       <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest shrink-0 self-center">Series</span>
-      {items.map((s, idx) => {
+      {items.map((s) => {
         const visible = visibleSeries[s.name] !== false;
-        const color = CHIP_COLORS[idx % CHIP_COLORS.length];
+        const color = colorDeSerie(s.name);
         return (
           <button
             key={s.name}
@@ -1420,7 +1582,7 @@ function SeriesChips({ items, visibleSeries, toggleSerie, setAllVisible }) {
 const PERIOD_LABEL = { annually: "Anual", monthly: "Mensual", daily: "Diario" };
 
 // Contratos con su Ronda/Farmouts/Migraciones y Licitación, para el selector
-// de "Gráfica personalizada" de Inversiones por contrato — recorre
+// de "Gráfica individual" de Inversiones por contrato — recorre
 // resultado.groups (ya viene Ronda → Licitación (subtotal) → Contrato).
 function buildContratosInvCont(resultado) {
   const contratos = [];
@@ -1458,9 +1620,18 @@ function DataTitle({ titulo, period, start_year, end_year }) {
 }
 
 export default function ChartArea() {
-  const { resultado, loading, error, tema, visibleSeries, toggleSerie, setAllVisible, groupBy, setGroupBy, period, start_year, end_year, start_month, end_month, perfFiltros, prodFiltros, prodOpciones, compareMode, reservasTipo, setReservasTipo, reservasSearch, setReservasSearch, reservasCampoSel, setReservasCampoSel } = useExplorer();
+  const { resultado, loading, error, tema, visibleSeries, toggleSerie, setAllVisible, groupBy, setGroupBy, period, start_year, end_year, start_month, end_month, perfFiltros, prodFiltros, prodOpciones, compareMode, reservasTipo, setReservasTipo, reservasSearch, setReservasSearch, reservasCampoSel, setReservasCampoSel, pendingBusqueda } = useExplorer();
   const [viewMode, setViewMode]   = useState("tablas");
   const [chartType, setChartType] = useState("line");
+
+  // Al llegar desde una ficha con una búsqueda dirigida a otra vista del tema
+  // (hoy: el Ranking de Asignaciones, única vista donde aparece una asignación
+  // individual), se cambia a esa vista para que su buscador pueda recibirla.
+  useEffect(() => {
+    if (!pendingBusqueda?.vista) return;
+    if (pendingBusqueda.tema !== tema?.json_arg) return;
+    setViewMode(pendingBusqueda.vista);
+  }, [pendingBusqueda, tema?.json_arg]);
   // "Precios de petróleo y gas": arranca en gráficos (el diseño propio,
   // PreciosDashboard, es lo útil aquí) en vez de la tabla por defecto.
   useEffect(() => {
@@ -1481,22 +1652,24 @@ export default function ChartArea() {
   useEffect(() => {
     if (tema?.seccion === "Licitaciones y Contratos") setViewMode("tablas");
   }, [tema?.json_arg]);
-  // Panel flotante de detalle al hacer clic en una fila de asignación
-  // (código ASIG_CONT) en la vista de tablas — solo aplica al tema Asignaciones.
-  const [asignacionSeleccionada, setAsignacionSeleccionada] = useState(null);
-  // Panel flotante de detalle al hacer clic en una fila de campo (Campos /
-  // Pozos operando por campo).
-  const [campoSeleccionado, setCampoSeleccionado] = useState(null);
+  // Fichas de entidad (campo/asignación/pozo/operador): la pila vive en
+  // FichaProvider (App.jsx) y el modal se monta una sola vez ahí, así que
+  // aquí solo se dispara la apertura.
+  const { abrirCampo, abrirAsignacion, abrirOperador } = useAbrirFicha();
   // Panel de desglose por pozo al hacer clic en una celda de la tabla de
   // Pozos perforados/terminados (Actividad petrolera).
   const [perfPozosSeleccion, setPerfPozosSeleccion] = useState(null);
+  // Contrato cuyo desglose de "Pozos comprometidos" está abierto.
+  const [pozosComprometidosSel, setPozosComprometidosSel] = useState(null);
+  // {empresa, columna} de la celda abierta en "Contratos adjudicados".
+  const [empresasSel, setEmpresasSel] = useState(null);
   // Mismo desglose por pozo, pero al hacer clic en la celda numérica de
   // "Pozos operando por campo" (campo + periodo, no cuenca/ubicación/categoría).
   const [pozosCampoSeleccion, setPozosCampoSeleccion] = useState(null);
-  // Vista general vs. "Gráfica personalizada" (una empresa en Operadores, un
+  // Vista general vs. "Gráfica individual" (una empresa en Operadores, un
   // Ambiente en "Producción por ubicación").
   const [operadorPersonalizada, setOperadorPersonalizada] = useState(false);
-  // Inversiones por contrato: gráfica personalizada por contrato (el botón
+  // Inversiones por contrato: gráfica individual por contrato (el botón
   // de Filtros vive en TopBar, igual que Perforación/Producción).
   const [invPersonalizada, setInvPersonalizada] = useState(false);
   // Contratos adjudicados: clic en el punto de una empresa en el mapa de
@@ -1504,7 +1677,26 @@ export default function ChartArea() {
   // de texto de la tabla, controlado desde aquí para poder empujarle un
   // valor desde el mapa).
   const [empresaBuscar, setEmpresaBuscar] = useState("");
-  // Reservas por campo: "Gráfica personalizada" tiene dos variantes propias
+  // Buscador de la tabla general, controlado desde aquí (mismo motivo que
+  // empresaBuscar/reservas): al saltar de tema desde una ficha —"Ver … en el
+  // Explorador"— la DynamicTable se desmonta y remonta cuando llegan los datos
+  // del tema nuevo, y una búsqueda guardada solo en su estado local se perdía.
+  // Viviendo en ChartArea, que no se desmonta, sobrevive a ese remonte.
+  const [busquedaTabla, setBusquedaTabla] = useState("");
+  // Ídem para el buscador del Ranking de Asignaciones: también se remonta al
+  // llegar sus datos y perdía la búsqueda traída desde la ficha.
+  const [busquedaRanking, setBusquedaRanking] = useState("");
+  // Se limpia al cambiar de tema DURANTE EL RENDER (no en un efecto): los
+  // efectos de los hijos corren antes que los del padre, así que limpiarla en
+  // un efecto borraría la búsqueda que la tabla acaba de aplicar al llegar
+  // desde una ficha. Patrón de "reiniciar estado cuando cambia una prop".
+  const [temaDeBusqueda, setTemaDeBusqueda] = useState(tema?.json_arg);
+  if (temaDeBusqueda !== tema?.json_arg) {
+    setTemaDeBusqueda(tema?.json_arg);
+    setBusquedaTabla("");
+    setBusquedaRanking("");
+  }
+  // Reservas por campo: "Gráfica individual" tiene dos variantes propias
   // (por cuenca / por campo) en vez del botón simple de Inversiones/Contratos.
   const [reservasModo, setReservasModo] = useState(null);
   // "Generar reporte" desde la vista de gráficas (tabs/simple/gráfico
@@ -1648,7 +1840,7 @@ export default function ChartArea() {
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
                 reservasModo === "campo" ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
               }`}>
-              Gráfica personalizada por {esReservasAsig ? "asignación/contrato" : "campo"}
+              Gráfica individual por {esReservasAsig ? "asignación/contrato" : "campo"}
             </button>
           ) : contratosPersonalizada.length > 0 ? (
             <button
@@ -1656,7 +1848,7 @@ export default function ChartArea() {
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
                 invPersonalizada ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
               }`}>
-              Gráfica personalizada
+              Gráfica individual
             </button>
           ) : null}
         />
@@ -1703,6 +1895,36 @@ export default function ChartArea() {
                 preserveColumnOrder={esModalidad || esEmpresas}
                 sinResumen={esReservasAsig}
                 flatAlfabetico={esEmpresas}
+                temaJsonArg={tema?.json_arg}
+                // "Inversiones aprobadas por contrato": las hojas son contratos
+                // (CNH-…) con el mismo código que usa PRODUCCION_CAMPOS, así que
+                // abren la misma ficha que en Producción y desde ahí se llega a
+                // su operador, campos y pozos. Los contratos sin producción
+                // existen (inversión aprobada pero aún sin producir) y la ficha
+                // lo dice explícitamente en vez de fallar.
+                // Todos estos temas tienen el contrato como fila hoja. El código
+                // se escribe distinto según la tabla de origen
+                // ("CNH-A3.CÁRDENAS-MORA/2018" en producción vs
+                // "CNH-A3-CÁRDENAS-MORA/2018" en licitaciones), pero la ficha
+                // compara normalizado, así que basta con mandar la etiqueta.
+                onRowClick={
+                  ["InvCont", "PozosLic", "EfectivoLic", "InvLic"].includes(tema.json_arg)
+                    ? (code) => abrirAsignacion(code)
+                    : undefined
+                }
+                // El número es un conteo del plan (sin lista detrás): el panel
+                // lo desglosa por estado y nombra los pozos que el catálogo sí
+                // tiene registrados para ese contrato.
+                onCellClick={
+                  tema.json_arg === "PozosLic"
+                    ? (row) => setPozosComprometidosSel(row._code ?? row.label)
+                    // "Contratos adjudicados": la celda cruza empresa (fila) ×
+                    // ronda-licitación (columna); el panel abre los contratos
+                    // de ese cruce con sus empresas participantes.
+                    : tema.json_arg === "EmpresasG"
+                    ? (row, columna) => setEmpresasSel({ empresa: row.label, columna })
+                    : undefined
+                }
                 {...(esReservas ? { search: reservasSearch, onSearchChange: setReservasSearch }
                   : esEmpresas ? { search: empresaBuscar, onSearchChange: setEmpresaBuscar } : {})}
               />
@@ -1722,6 +1944,19 @@ export default function ChartArea() {
               periodoNota: `${PERIOD_LABEL[period] ?? period} — ${start_year} — ${end_year}`,
               contentRef,
             })}
+          />
+        )}
+        {pozosComprometidosSel && (
+          <PozosComprometidosDetallePanel
+            contrato={pozosComprometidosSel}
+            onClose={() => setPozosComprometidosSel(null)}
+          />
+        )}
+        {empresasSel && (
+          <ContratosAdjudicadosDetallePanel
+            empresa={empresasSel.empresa}
+            columna={empresasSel.columna}
+            onClose={() => setEmpresasSel(null)}
           />
         )}
       </div>
@@ -1763,19 +1998,44 @@ export default function ChartArea() {
     // resultado.series (ya viene un item por producto desde el backend),
     // igual que Operadores/Estado.
     const esDrilldownForzado = esProductoNivelForzado && hayFiltroCuencaUbic;
-    const hierSeries = esOperadores || esEstado || esDrilldownForzado ? (resultado.series ?? [])
+    // Contratos: sus subtotales son los CONTRATOS (jerarquía Contrato →
+    // componente), así que derivar las chips de los subtotales las convertía en
+    // una lista de contratos. Las chips deben seguir siendo los productos, que
+    // es lo que trae resultado.series.
+    // Gcompo por el mismo motivo: sus filas hoja son los componentes más la
+    // fila de convención "Todos los operadores", que se colaba como chip.
+    // Campos entra por el mismo motivo desde que su jerarquía es
+    // Campo → componentes: derivar las chips de los subtotales las convertía
+    // en una lista de 400 campos.
+    const esContratos = tema?.json_arg === "Contratos" || tema?.json_arg === "Gcompo"
+      || tema?.json_arg === "Campos";
+    const hierSeries = esOperadores || esEstado || esDrilldownForzado || esContratos ? (resultado.series ?? [])
       : esProdCuenca ? buildProdCuencaSeries(resultado)
       : buildHierSeries(resultado, groupBy);
     const cuencaCount = (resultado.groups ?? []).filter(g => g.cuenca !== "Nacional").length;
-    const chartHierSeries = hierSeries;
-    // "Gráfica personalizada": en Operadores elige una empresa; en "Producción
+    const chartHierSeries = sinSubtotales(hierSeries);
+    // "Gráfica individual": en Operadores elige una empresa; en "Producción
     // por ubicación" (Cuenca) elige un Ambiente; en "Producción por contrato"
     // elige un contrato — reemplaza al viejo toggle "Por cuenca" (se quitó).
     const esCuencaTopic = tema?.json_arg === "Cuenca";
     const esContratosTopic = tema?.json_arg === "Contratos";
+    // Asignaciones: mismo patrón que Contratos, elegir UNA asignación y ver
+    // todos sus productos. El backend manda resultado.asignaciones aparte
+    // porque la jerarquía del tema se agrupa por cuenca, no por asignación.
+    const esAsignacionesTopic = tema?.json_arg === "Asignaciones";
+    const esCamposTopic = tema?.json_arg === "Campos";
+    // Gcompo elige por CUENCA, no por entidad: es la unidad de analisis del
+    // tema, igual que en el SIH.
+    const esGcompoTopic = tema?.json_arg === "Gcompo";
+    const esApiTopic = tema?.json_arg === "API";
     const puedeVerPersonalizada = (esOperadores && (resultado.empresas?.length ?? 0) > 0)
       || (esCuencaTopic && (prodOpciones?.ubicaciones?.length ?? 0) > 0 && cuencaCount >= 1)
-      || (esContratosTopic && (resultado.contratos?.length ?? 0) > 0);
+      || (esContratosTopic && (resultado.contratos?.length ?? 0) > 0)
+      || (esAsignacionesTopic && (resultado.asignaciones?.length ?? 0) > 0)
+      || (esCamposTopic && (resultado.campos?.length ?? 0) > 0)
+      || (esEstado && (resultado.entidades?.length ?? 0) > 0)
+      || (esGcompoTopic && (resultado.cuencas_gas?.length ?? 0) > 0)
+      || (esApiTopic && (resultado.cuencas_api?.length ?? 0) > 0);
     const verPersonalizada = puedeVerPersonalizada && operadorPersonalizada;
     // Estado no tiene filtro de Cuenca/Ambiente (su groupBy="cuenca" es fijo,
     // ver TopBar.jsx) — usar prodFiltros aquí filtraría con lo que haya
@@ -1833,7 +2093,11 @@ export default function ChartArea() {
     // Sin gráficos si el rango tiene un solo punto (nada que trazar).
     const unaCategoria  = (resultado.categories?.length ?? 0) <= 1;
     const hideGraphics  = unaCategoria;
-    const vistaEfectiva = hideGraphics ? "tablas" : viewMode;
+    // Solo se desvía a "tablas" la vista de GRÁFICOS, que es la que no tiene
+    // nada que dibujar. Antes se forzaba cualquier vista, así que con un único
+    // año seleccionado el "Ranking" de Asignaciones era inalcanzable: el botón
+    // se mostraba pero la vista nunca cambiaba.
+    const vistaEfectiva = hideGraphics && viewMode === "graficos" ? "tablas" : viewMode;
 
     // Subtítulo: cuenca(s)/ambiente(s) representados. Si la selección cubre
     // todo el universo de opciones se resume como "Nacional". Cuencas en
@@ -1889,26 +2153,39 @@ export default function ChartArea() {
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
                 operadorPersonalizada ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
               }`}>
-              Gráfica personalizada
+              Gráfica individual
             </button>
           ) : null}
         />
         <div ref={contentRef} style={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: "auto" }}>
           {vistaEfectiva === "ranking"
-            ? <AsignacionesRanking period={period} start_year={start_year} end_year={end_year} start_month={start_month} end_month={end_month} />
+            ? <AsignacionesRanking period={period} start_year={start_year} end_year={end_year} start_month={start_month} end_month={end_month}
+                busqueda={busquedaRanking} onBusquedaChange={setBusquedaRanking} />
             : vistaEfectiva === "tablas"
-            ? <DynamicTable resultado={resultado} visibleSeries={visibleSeries} groupBy={groupBy}
+            ? <DynamicTable resultado={resultado} visibleSeries={visibleSeries}
+                // API sin filtros: la tabla se queda en Nacional porque el
+                // camino plano solo dibuja ese grupo. Su jerarquía es
+                // Cuenca→Ambiente→clase, así que se pide explícitamente la
+                // división por cuenca (con filtros entra el multinivel, que ya
+                // la hace por su cuenta).
+                groupBy={tema?.json_arg === "API" && !hayFiltroCuencaUbic ? "cuenca" : groupBy}
                 titulo={tituloTema} period={period} start_year={start_year} end_year={end_year}
                 compareMode={compareMode}
                 // Campos/API usan groupBy (una dimensión a la vez), no el multinivel
                 // AND de Cuenca: sus filas no tienen marca "subtotal" por categoría.
-                filtros={esProdCuenca ? filtrosActivos : undefined}
+                // API también: su jerarquía es Cuenca→Ambiente→clase, y sin
+                // pasar filtros la tabla se quedaba solo en Nacional aunque
+                // se prendieran las cuencas en el cajón de filtros.
+                filtros={esProdCuenca || tema?.json_arg === "API" ? filtrosActivos : undefined}
                 // Operadores también mezcla unidades (Mbd/MMpcd) en su vista
                 // Nacional por producto — forceDivisions oculta el total que
                 // las sumaría sin sentido, igual que en "Producción por ubicación".
                 forceDivisions={esProdCuenca || esOperadores}
                 ocultarSuma={tema?.json_arg === "PozosCampos"}
                 entityLabel={entityLabelValue}
+                temaJsonArg={tema?.json_arg}
+                search={busquedaTabla}
+                onSearchChange={setBusquedaTabla}
                 searchPlaceholder={
                   tema?.json_arg === "PozosCampos" || tema?.json_arg === "Campos" ? "Buscar Campo"
                     : tema?.json_arg === "API" ? "Buscar Clase API"
@@ -1954,9 +2231,34 @@ export default function ChartArea() {
                         : undefined)
                     : undefined
                 }
+                // Asignaciones y Contratos NO van aquí: desde que su jerarquía
+                // es Contrato → componentes, las filas hoja son productos
+                // (Petróleo, Gas…) y el clic abría la ficha de un producto.
+                // Su ficha se abre con clic derecho sobre el contrato, ver
+                // onRowFicha más abajo.
                 onRowClick={
-                  tema?.json_arg === "Asignaciones" ? (code) => setAsignacionSeleccionada(code)
-                    : tema?.json_arg === "PozosCampos" || tema?.json_arg === "Campos" ? (code) => setCampoSeleccionado(code)
+                  tema?.json_arg === "PozosCampos" ? (code) => abrirCampo(code)
+                    // En Perforación las filas hoja también son operadores: el
+                    // número abre el desglose de pozos (onCellClick, que hace
+                    // stopPropagation) y el nombre abre la ficha del operador.
+                    : tema?.json_arg === "Operadores" || tema?.json_arg === "PozPerf" || tema?.json_arg === "PozTerm"
+                      ? (code) => abrirOperador(code)
+                    : undefined
+                }
+                // Solo cuando el subtotal ES la entidad. En Contratos siempre lo
+                // es (Contrato → componentes), pero en Asignaciones eso ocurre
+                // únicamente con filtro de cuenca/ambiente: sin filtros la tabla
+                // vuelve a Producto → Cuenca y el subtotal es un producto, así
+                // que habilitarlo ahí abriría la ficha de "Petróleo (Mbd)".
+                onRowFicha={
+                  // Campos: desde que la jerarquía es Campo → componentes, las
+                  // filas hoja son productos y el clic izquierdo abría la ficha
+                  // de un producto. La ficha del campo va con clic derecho
+                  // sobre su fila, igual que contratos y asignaciones.
+                  tema?.json_arg === "Campos" ? (code) => abrirCampo(code)
+                    : tema?.json_arg === "Contratos"
+                    || (tema?.json_arg === "Asignaciones" && hayFiltroCuencaUbic)
+                    ? (code) => abrirAsignacion(code)
                     : undefined
                 }
                 onCellClick={
@@ -1967,6 +2269,16 @@ export default function ChartArea() {
                       })
                     : tema?.json_arg === "PozosCampos"
                     ? (row, periodoCol, valor) => setPozosCampoSeleccion({ campo: row.label, periodo: periodoCol, valor })
+                    : undefined
+                }
+                // Los umbrales de la clasificación no se deducen de la tabla y
+                // sin ellos las clases no significan nada — el SIH los trae al
+                // pie por la misma razón.
+                notaPie={
+                  tema?.json_arg === "API"
+                    ? "Hidrocarburos líquidos (Mbd) = petróleo + condensado. Clasificación por grados API (DOF 16/02/2015): Súper-ligero 39 < API · Ligero 31.1 < API ≤ 39 · Mediano 22.3 < API ≤ 31.1 · Pesado 10 < API ≤ 22.3 · Extra-pesado API < 10."
+                    : tema?.json_arg === "Gcompo"
+                    ? "Cifras en millones de pies cúbicos diarios (MMpcd). Los componentes suman aproximadamente el gas total; la diferencia proviene del redondeo de cada componente en la fuente."
                     : undefined
                 }
               />
@@ -1991,40 +2303,36 @@ export default function ChartArea() {
                         // (el backend devuelve resultado.series ya acotado a esa selección).
                         // Reemplaza la rejilla anterior de un gráfico por contrato, que
                         // salía vacía: los subtotales de contrato no traen data.
-                        const visible = filterSeries(chartHierSeries, visibleSeries);
-                        const mbdSeries = visible.filter(s => !s.name.includes("MMpcd"));
-                        const mmpcdSeries = visible.filter(s => s.name.includes("MMpcd"));
                         return (
-                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                            {mbdSeries.length > 0 && (
-                              <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={mbdSeries} chartType={chartType} subtitle="Mbd" zoomable />
-                            )}
-                            {mmpcdSeries.length > 0 && (
-                              <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={mmpcdSeries} chartType={chartType} subtitle="MMpcd" zoomable />
-                            )}
-                          </div>
+                          <GraficasPorUnidad
+                            series={filterSeries(chartHierSeries, visibleSeries)}
+                            categories={resultado.categories ?? []}
+                            titulo={tituloTema} chartType={chartType} zoomable
+                          />
                         );
                       })()
                 )
               : esCuencaTopic && verPersonalizada
                 ? <CuencaCustomChart ubicaciones={prodOpciones?.ubicaciones ?? []} resultado={resultado} categories={resultado.categories ?? []} chartType={chartType} tituloTema={tituloTema} />
-                : esContratosTopic && verPersonalizada
-                  ? <ContratoCustomChart contratos={resultado.contratos ?? []} categories={resultado.categories ?? []} chartType={chartType} tituloTema={tituloTema} />
+                : (esContratosTopic || esAsignacionesTopic || esCamposTopic || esEstado || esGcompoTopic || esApiTopic) && verPersonalizada
+                  ? <ContratoCustomChart
+                      contratos={(esAsignacionesTopic ? resultado.asignaciones
+                                  : esCamposTopic ? resultado.campos
+                                  : esEstado ? resultado.entidades
+                                  : esGcompoTopic ? resultado.cuencas_gas
+                                  : esApiTopic ? resultado.cuencas_api
+                                  : resultado.contratos) ?? []}
+                      categories={resultado.categories ?? []} chartType={chartType} tituloTema={tituloTema} />
                   : esProdCuenca
                   ? (() => {
-                      // "Por producto": dos gráficos separados por unidad (Mbd vs MMpcd).
-                      const visible = filterSeries(chartHierSeries, visibleSeries);
-                      const mbdSeries = visible.filter(s => !s.name.includes("MMpcd"));
-                      const mmpcdSeries = visible.filter(s => s.name.includes("MMpcd"));
+                      // "Por producto": un panel por unidad (Mbd, MMpcd) más el
+                      // de agua, que va aparte por no ser hidrocarburo.
                       return (
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                          {mbdSeries.length > 0 && (
-                            <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={mbdSeries} chartType={chartType} subtitle="Mbd" />
-                          )}
-                          {mmpcdSeries.length > 0 && (
-                            <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={mmpcdSeries} chartType={chartType} subtitle="MMpcd" />
-                          )}
-                        </div>
+                        <GraficasPorUnidad
+                          series={filterSeries(chartHierSeries, visibleSeries)}
+                          categories={resultado.categories ?? []}
+                          titulo={tituloTema} chartType={chartType}
+                        />
                       );
                     })()
                   : <SingleChart title={tituloTema} categories={resultado.categories ?? []} series={filterSeries(chartHierSeries, visibleSeries)} chartType={chartType}
@@ -2032,20 +2340,6 @@ export default function ChartArea() {
           }
         </div>
       </div>
-      {asignacionSeleccionada && (
-        <AsignacionDetallePanel
-          asignacion={asignacionSeleccionada}
-          period={period} start_year={start_year} end_year={end_year} start_month={start_month} end_month={end_month}
-          onClose={() => setAsignacionSeleccionada(null)}
-        />
-      )}
-      {campoSeleccionado && (
-        <CampoDetallePanel
-          campo={campoSeleccionado}
-          period={period} start_year={start_year} end_year={end_year} start_month={start_month} end_month={end_month}
-          onClose={() => setCampoSeleccionado(null)}
-        />
-      )}
       {perfPozosSeleccion && (
         <PerforacionPozosDetallePanel
           topic={perfPozosSeleccion.topic}
@@ -2062,7 +2356,6 @@ export default function ChartArea() {
         <PozosCampoDetallePanel
           campo={pozosCampoSeleccion.campo}
           periodo={pozosCampoSeleccion.periodo}
-          cifraEsperada={pozosCampoSeleccion.valor}
           onClose={() => setPozosCampoSeleccion(null)}
         />
       )}

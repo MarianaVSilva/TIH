@@ -343,6 +343,11 @@ function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisio
         rows.push({
           _id: `r|${gk}|${row.label}|${i0}`, _type: forceDivisions ? "subtotalcol" : row.type,
           _cuenca: cuenca, _ub: ubicacion, label: row.label,
+          // El subtotal puede ser una entidad (una asignación/contrato, desde
+          // que su jerarquía es Contrato → componentes): se conserva su código
+          // para poder abrir su ficha con clic derecho, ya que el clic normal
+          // lo ocupa expandir/colapsar el grupo.
+          _code: row.code,
           ...(forceDivisions ? { _groupKey: subgk, _open: isOpenSub } : {}),
           ...(dentroDeCuenca ? { _indent: 44 } : {}),
           ...Object.fromEntries(cats.map((c, ci) => [c, soloUnHijo ? null : (row.data[ci] ?? 0)])),
@@ -472,12 +477,17 @@ function extractLeaves(resultado) {
     if (g.cuenca === "Nacional") continue;
     for (const sg of g.subgroups ?? []) {
       let cat = null;
+      // El subtotal puede ser una entidad con ficha (una asignación, desde que
+      // su jerarquía es Asignación → componentes) y su código no viaja en las
+      // hojas: se arrastra aparte para poder abrir su ficha desde el
+      // encabezado del nivel "categoria".
+      let catCode = null;
       for (const row of sg.rows) {
-        if (row.type === "subtotal") { cat = row.label; continue; }
-        if (row.type === "total")    { cat = null; continue; }
+        if (row.type === "subtotal") { cat = row.label; catCode = row.code ?? null; continue; }
+        if (row.type === "total")    { cat = null; catCode = null; continue; }
         if (row.type === "operator") {
           if (row.label === "Todos los operadores" || cat == null) continue;
-          leaves.push({ cuenca: g.cuenca, ubicacion: sg.ubicacion, categoria: cat, operator: row.label, code: row.code, data: row.data });
+          leaves.push({ cuenca: g.cuenca, ubicacion: sg.ubicacion, categoria: cat, categoriaCode: catCode, operator: row.label, code: row.code, data: row.data });
         }
       }
     }
@@ -762,18 +772,22 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
   function renderOperators(bucket, key, indentDepth, qLocal, dims = {}) {
     const merged = new Map();
     for (const lf of bucket) {
-      if (!merged.has(lf.operator)) merged.set(lf.operator, { data: cats.map(() => 0), code: lf.code });
+      // `orden` = posición en que el backend mandó la hoja. Se conserva para no
+      // reordenar alfabéticamente lo que ya viene con un orden con significado
+      // (componentes del gas por número de carbonos, clases API por ligereza,
+      // productos). Donde el backend ya manda alfabético, no cambia nada.
+      if (!merged.has(lf.operator)) merged.set(lf.operator, { data: cats.map(() => 0), code: lf.code, orden: merged.size });
       const acc = merged.get(lf.operator);
       lf.data.forEach((v, i) => { acc.data[i] += v ?? 0; });
     }
-    let ops = [...merged].map(([label, v]) => ({ label, data: v.data, code: v.code }));
+    let ops = [...merged].map(([label, v]) => ({ label, data: v.data, code: v.code, orden: v.orden }));
     // El nombre de operador aquí ES el producto (Gas, Gas asociado…) cuando
     // "categoria" no quedó como nivel explícito del árbol (Producción por
     // cuenca y ubicación sin drill-down forzado) — antes los chips de serie
     // no se aplicaban en este nivel hoja, así que apagar uno solo lo
     // ocultaba de la gráfica, no de la tabla.
     ops = ops.filter(o => hasData(o.data) && (!qLocal || o.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(qLocal)) && vis[o.label] !== false);
-    ops.sort((a, b) => a.label.localeCompare(b.label));
+    ops.sort((a, b) => a.orden - b.orden);
     for (const op of ops) {
       rows.push({
         _id: `o|${key}|${op.label}`, _type: "planoperator", _indent: 12 + indentDepth * 18 + 6,
@@ -860,6 +874,10 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
           rows.push({
             _id: `h|${key}`, _type: "planheader", _groupKey: key, _open: isOpen, _indent: 12 + depth * 18, _depth: depth,
             label: nextPending.join(" · "), ...dataObj(cats, esRedundante ? cats.map(() => null) : bucketTotalMostrado),
+            // Último nivel: este encabezado ES la entidad (p. ej. la
+            // asignación), aunque su rótulo venga fusionado con los niveles de
+            // arriba. Se le pasa el código real para poder abrir su ficha.
+            ...(bucket[0]?.categoriaCode ? { _code: bucket[0].categoriaCode, _esEntidad: true } : {}),
           });
           if (!isOpen) continue;
           renderOperators(bucket, key, depth + 1, qEfectiva, nextDims);
@@ -869,9 +887,13 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
 
       const label = pendingLabels.length ? [...pendingLabels, name].join(" · ") : name;
       const isOpen = !openGroups.has(key);
+      const esUltimoNivel = levelIdx + 1 >= levels.length;
       rows.push({
         _id: `h|${key}`, _type: "planheader", _groupKey: key, _open: isOpen, _indent: 12 + depth * 18, _depth: depth,
         label, ...dataObj(cats, bucketTotalMostrado),
+        // Ídem que arriba: solo el último nivel es la entidad con ficha.
+        ...(esUltimoNivel && bucket[0]?.categoriaCode
+          ? { _code: bucket[0].categoriaCode, _esEntidad: true } : {}),
       });
       if (!isOpen) continue;
 
@@ -1408,7 +1430,7 @@ function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, tit
 }
 
 // ── Componente principal ──────────────────────────────────────────────────────
-export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick, onCellClick, flatExportEntidad, historicoTopic, historicoFetch, preserveColumnOrder, search: searchControlada, onSearchChange, sinResumen, exportOperadorTabla, flatAlfabetico, ocultarSuma }) {
+export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick, onCellClick, flatExportEntidad, historicoTopic, historicoFetch, preserveColumnOrder, search: searchControlada, onSearchChange, sinResumen, exportOperadorTabla, flatAlfabetico, ocultarSuma, temaJsonArg, onRowFicha, notaPie }) {
   const { pendingBusqueda, setPendingBusqueda } = useExplorer();
   const [searchLocal, setSearchLocal] = useState("");
   // Búsqueda controlada desde afuera (Reservas, ver ChartArea): sobrevive al
@@ -1416,13 +1438,20 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   const search    = searchControlada ?? searchLocal;
   const setSearch = onSearchChange ?? setSearchLocal;
 
-  // Búsqueda pendiente al saltar desde otro tema (p. ej. Asignaciones →
-  // Producción por campo con el campo ya elegido) — se aplica una sola vez.
+  // Búsqueda pendiente al saltar desde otro tema (p. ej. ficha de un campo →
+  // "Ver producción completa en el Explorador" con el campo ya filtrado) — se
+  // aplica una sola vez, y SOLO en la tabla del tema al que iba dirigida: si no
+  // se comprueba el tema, la tabla del tema anterior (que sigue montada durante
+  // el cambio) se la queda y la destino aparece sin filtrar.
   useEffect(() => {
     if (pendingBusqueda == null) return;
-    setSearch(pendingBusqueda);
+    if (pendingBusqueda.tema !== temaJsonArg) return;
+    // Dirigida a otra vista del mismo tema (p. ej. el Ranking de Asignaciones,
+    // que tiene su propio buscador): no es de esta tabla, se deja pasar.
+    if (pendingBusqueda.vista && pendingBusqueda.vista !== "tablas") return;
+    setSearch(pendingBusqueda.texto);
     setPendingBusqueda(null);
-  }, [pendingBusqueda, setPendingBusqueda]);
+  }, [pendingBusqueda, setPendingBusqueda, temaJsonArg]);
   const [hiddenCols, setHiddenCols] = useState(new Set());
   const [openGroups, setOpenGroups] = useState(() => initOpenGroups(resultado, groupBy, preserveColumnOrder));
   const [hoveredRow,  setHoveredRow]  = useState(null);
@@ -1974,6 +2003,12 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                 // Celdas con desglose por pozo (Perforación): solo filas hoja de
                 // operador, ver onCellClick en ChartArea.
                 const celdaClickeable = !!onCellClick && (row._type === "operator" || row._type === "planoperator");
+                // Filas que representan una entidad con ficha propia y que a la
+                // vez son encabezado de grupo (clic izquierdo = expandir).
+                // En la vista multinivel la entidad es un "planheader" con el
+                // rótulo fusionado (Ambiente · Cuenca · Asignación) y se marca
+                // con _esEntidad al construirla.
+                const esFilaConFicha = row._type === "subtotal" || row._type === "subtotalcol" || row._esEntidad;
 
                 return (
                   <tr key={row._id}
@@ -2003,8 +2038,19 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                       // clic siga funcionando sin necesitar un "code" redundante.
                       if ((row._type === "operator" || row._type === "planoperator") && onRowClick) onRowClick(row._code ?? row.label, row.label);
                     }}
+                    // Clic derecho = ficha de la entidad. En las tablas donde la
+                    // entidad es un encabezado colapsable (Contratos/Asignaciones,
+                    // que ahora van Contrato → componentes) el clic izquierdo ya
+                    // está ocupado expandiendo, así que la ficha necesita otro
+                    // gesto; sin esto la ficha se abría al clicar un componente.
+                    onContextMenu={
+                      onRowFicha && esFilaConFicha
+                        ? (e) => { e.preventDefault(); onRowFicha(row._code ?? row.label, row.label); }
+                        : undefined
+                    }
                   >
-                    <td title={row.label} className={`px-4 py-[5px] whitespace-normal break-words static sm:sticky sm:left-0 ${cfg.label}`}
+                    <td title={onRowFicha && esFilaConFicha ? `${row.label} — clic derecho para ver su ficha` : row.label}
+                      className={`px-4 py-[5px] whitespace-normal break-words static sm:sticky sm:left-0 ${cfg.label}`}
                       style={{
                         zIndex: isDark ? 25 : 10,
                         paddingLeft: row._indent != null ? row._indent : (isAmbienteHeader ? 28 : undefined),
@@ -2138,6 +2184,9 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
             </tbody>
           </table>
       </div>
+      {notaPie && (
+        <p className="text-[10.5px] text-slate-400 mt-2 leading-relaxed shrink-0">{notaPie}</p>
+      )}
     </div>
   );
 }

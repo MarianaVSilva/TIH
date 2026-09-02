@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.gzip import GZipMiddleware
 from app.config import settings
-from app.routers import temas, produccion, reservas, contratos, precios, inversiones, estado, perforacion, chat, resumen
+from app.routers import temas, produccion, reservas, contratos, precios, inversiones, estado, perforacion, chat, resumen, buscador
 from app.services import pozos_cache
 
 
@@ -70,6 +70,7 @@ async def security_headers(request: Request, call_next):
 
 PREFIX = "/api/v1"
 app.include_router(temas.router,      prefix=PREFIX)
+app.include_router(buscador.router,   prefix=PREFIX)
 app.include_router(produccion.router, prefix=PREFIX)
 app.include_router(reservas.router,   prefix=PREFIX)
 app.include_router(contratos.router,  prefix=PREFIX)
@@ -91,3 +92,8 @@ def _startup():
     # Refresca el caché de Pozos solo si nunca se sincronizó o ya pasó más
     # de un día — no requiere que el usuario haga nada.
     pozos_cache.maybe_auto_refresh()
+    # Arma el catalogo del buscador global en segundo plano: sin esto la
+    # primera busqueda paga el barrido completo de pozos (~5 s).
+    from app.database import engine as _engine
+    from app.services import buscador_service
+    buscador_service.precalentar(_engine)

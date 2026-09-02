@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchAsignacionesRanking } from "../../api/client";
 import LoadingSpinner from "../UI/LoadingSpinner";
+import { useExplorer } from "../../store/useExplorer";
 
 const INK = "#1f2430";
 const MUTED = "#767b87";
@@ -109,12 +110,18 @@ function PodioCard({ a, rank, unidad, colorValor }) {
   );
 }
 
-export default function AsignacionesRanking({ period, start_year, end_year, start_month, end_month }) {
+export default function AsignacionesRanking({ period, start_year, end_year, start_month, end_month, busqueda: busquedaControlada, onBusquedaChange }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
-  const [busqueda, setBusqueda] = useState("");
+  // Búsqueda controlada desde ChartArea (mismo motivo que en DynamicTable):
+  // este componente se remonta al llegar sus datos, y una búsqueda guardada
+  // solo aquí se perdía al venir desde la ficha de una asignación.
+  const [busquedaLocal, setBusquedaLocal] = useState("");
+  const busqueda = busquedaControlada ?? busquedaLocal;
+  const setBusqueda = onBusquedaChange ?? setBusquedaLocal;
   const [soloVigentes, setSoloVigentes] = useState(false);
   const [metrica, setMetrica] = useState("liquidos");
+  const { pendingBusqueda, setPendingBusqueda } = useExplorer();
 
   useEffect(() => {
     setData(null);
@@ -123,6 +130,15 @@ export default function AsignacionesRanking({ period, start_year, end_year, star
       .then(setData)
       .catch(e => setError(e?.response?.data?.detail ?? e.message));
   }, [period, start_year, end_year, start_month, end_month]);
+
+  // Búsqueda dirigida explícitamente a esta vista (pendingBusqueda.vista ===
+  // "ranking"); la tabla la deja pasar. Hoy la ficha de asignación va a la
+  // tabla, no aquí, pero el mecanismo queda disponible.
+  useEffect(() => {
+    if (pendingBusqueda?.vista !== "ranking") return;
+    setBusqueda(pendingBusqueda.texto);
+    setPendingBusqueda(null);
+  }, [pendingBusqueda, setPendingBusqueda]);
 
   if (error) return <div className="text-sm text-rose-500 p-4">No se pudo cargar la analítica de asignaciones: {error}</div>;
   if (!data) return (
