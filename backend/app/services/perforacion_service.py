@@ -1,3 +1,4 @@
+import unicodedata
 import pandas as pd
 from sqlalchemy import text as sqlalchemy_text
 from sqlalchemy.engine import Engine
@@ -13,6 +14,16 @@ _FILTRO_ID_WHERE = "1=1" if _PG else "ID <> 1"
 _TABLA_PRODUCCION_CAMPOS_POZOS = "api.v_produccion_campos_pozos" if _PG else f"{SCHEMA}PRODUCCION_CAMPOS_POZOS"
 _TABLA_PRODUCCION_CAMPOS = "api.v_produccion_campos" if _PG else f"{SCHEMA}PRODUCCION_CAMPOS"
 _TABLA_BD_POZOS_VALID = "api.v_bd_pozos_valid" if _PG else "cmde_valid.dbo.bd_pozos"
+# Catálogo pozo→campo (columna FIELD), para saber a qué campo pertenece cada
+# pozo sin pasar por su asignación (un contrato puede cubrir varios campos).
+# En Postgres FIELD hoy solo existe en staging: ni core.dim_pozo ni
+# api.v_pozos_meta / api.v_bd_pozos_valid la exponen todavía — vale la pena
+# subirla a una vista de `api` cuando se retome la migración, y entonces
+# cambiar esta constante.
+_TABLA_BD_POZOS_CAMPO = "staging.stg_bd_pozos" if _PG else "cmde_raw.dbo.bd_pozos"
+_COL_FIELD = "field" if _PG else "FIELD"
+_COL_WELL_ID = "well_id" if _PG else "WELL_ID"
+_COL_WELL_NAME_CATALOGO = "well_name" if _PG else "WELL_NAME"
 
 TOPIC_MAP = {
     "PozPerf": ("api.v_perforacion_pozos_perf" if _PG else f"{SCHEMA}PERFORACION_POZOS_PERF", "pozos_perforados" if _PG else "POZOS_PERFORADOS"),
@@ -419,49 +430,116 @@ def get_perforacion_pozos_detalle(
 
 def get_pozos_campo_detalle(engine: Engine, campo: str, periodo: str) -> dict:
     """Desglose por nombre de pozo detrás de una celda de "Pozos operando por
-    campo" (PozosCampos): pozos con producción (>0) en PRODUCCION_POZOS,
-    dentro de las asignaciones que pertenecen a este campo (CAMPO_PORTAL) en
-    el periodo clickeado. Mismo espíritu que get_perforacion_pozos_detalle,
-    pero la fuente de "campo" es distinta (CAMPO_PORTAL de PRODUCCION_CAMPOS,
-    no ASIG_CONT) — se resuelven primero las asignaciones del campo y luego
-    se filtra PRODUCCION_POZOS por ellas (ASIG_CONT empieza con
-    "<asignacion>-", ver mismo patrón en get_asignacion_detalle)."""
-    sql_asig = f"""
-        SELECT DISTINCT ASIG_CONT FROM {_TABLA_PRODUCCION_CAMPOS}
-        WHERE {_FILTRO_ID_WHERE} AND CAMPO_PORTAL = :campo AND ASIG_CONT IS NOT NULL
-    """
-    with engine.connect() as conn:
-        asigs = pd.read_sql(sqlalchemy_text(sql_asig), conn, params={"campo": campo})
-    asig_list = asigs.iloc[:, 0].dropna().unique().tolist()
-    if not asig_list:
-        return {"pozos": [], "total": 0}
+    campo" (PozosCampos): pozos con producción (>0) en PRODUCCION_POZOS que
+    pertenecen a ESTE campo, en el periodo clickeado.
 
+    El campo del pozo se resuelve por bd_pozos.FIELD, no por su asignación:
+    un contrato puede cubrir VARIOS campos (p.ej. CNH-R01-L02-A1/2015 = Eni
+    Área 1 cubre Amoca, Miztón y Tecoalli), así que filtrar por asignación
+    mezclaba pozos de campos vecinos en la lista de un campo. Verificado
+    contra PRODUCCION_CAMPOS_POZOS (la cifra que muestra la tabla): con
+    bd_pozos.FIELD los conteos coinciden en la gran mayoría de campos
+    (Culebra 241=241, Nejo 171=171, Arcabuz 156=156…).
+
+    Si el cruce por FIELD no devuelve nada (algunos campos no empatan de
+    nombre con bd_pozos), se cae al método anterior por asignación para no
+    dejar la lista vacía — es preferible una lista aproximada a ninguna.
+    """
     from app.services import pozos_service
     source = pozos_service._source_table()
 
     periodo = periodo.strip()
-    params = {}
+    params_fecha = {}
     if len(periodo) == 4:
         where_fecha = f"{_YEAR_FECHA} = :anio"
-        params["anio"] = int(periodo)
+        params_fecha["anio"] = int(periodo)
     else:
         anio, mes = periodo.split("-")
         where_fecha = f"{_YEAR_FECHA} = :anio AND {_MONTH_FECHA} = :mes"
-        params["anio"], params["mes"] = int(anio), int(mes)
+        params_fecha["anio"], params_fecha["mes"] = int(anio), int(mes)
 
-    like_clauses = " OR ".join(f"ASIG_CONT LIKE :p{i}" for i in range(len(asig_list)))
-    for i, a in enumerate(asig_list):
-        params[f"p{i}"] = f"{a}-%"
-
-    sql = f"""
-        SELECT WELL_NAME, ASIG_CONT, FECHA,
-               {_ISNULL}(PETROLEO_MBD,0)+{_ISNULL}(CONDENSADO_MBD,0) AS LIQUIDOS_MBD,
-               {_ISNULL}(GAS_MMPCD,0) AS GAS_MMPCD
-        FROM {source}
-        WHERE ({like_clauses}) AND {where_fecha}
+    select_cols = f"""
+        SELECT p.WELL_NAME, p.ASIG_CONT, p.FECHA,
+               {_ISNULL}(p.PETROLEO_MBD,0)+{_ISNULL}(p.CONDENSADO_MBD,0) AS LIQUIDOS_MBD,
+               {_ISNULL}(p.GAS_MMPCD,0) AS GAS_MMPCD
     """
-    with engine.connect() as conn:
-        df = pd.read_sql(sqlalchemy_text(sql), conn, params=params)
+
+    # 1) Camino principal: el campo real del pozo (bd_pozos.FIELD).
+    df = pd.DataFrame()
+    try:
+        from app.services.produccion_service import _norm_texto_sql
+        # Algunos pozos no tienen WELL_ID en ninguna de las dos tablas (ej.
+        # AMOCA-10DES/23DES/25DES/27DES/29DES/31DES) — NULL = NULL nunca es
+        # verdadero en SQL, así que esos pozos se caían del join aunque sí
+        # tuvieran producción. Fallback: si el WELL_ID es nulo en ambos lados,
+        # empatar por nombre normalizado en vez de perder la fila.
+        # El catálogo se deduplica con MIN(FIELD) — exactamente igual que en la
+        # tabla (ver _pozos_campos_conteo_real). Hay un pozo (WELL_ID 236763)
+        # catalogado a la vez como "Ku" y como "Maloob"; sin deduplicar, la
+        # tabla lo asignaba a un solo campo y esta lista lo contaba en los dos,
+        # y Maloob salía con un pozo de más que la celda que se clickeó.
+        sql_field = f"""
+            WITH cat_id AS (
+                SELECT {_COL_WELL_ID} AS WID, MIN({_COL_FIELD}) AS FIELD
+                FROM {_TABLA_BD_POZOS_CAMPO}
+                WHERE {_COL_WELL_ID} IS NOT NULL AND {_COL_FIELD} IS NOT NULL
+                GROUP BY {_COL_WELL_ID}
+            ),
+            cat_nom AS (
+                SELECT {_norm_texto_sql(_COL_WELL_NAME_CATALOGO)} AS NOMBRE_NORM, MIN({_COL_FIELD}) AS FIELD
+                FROM {_TABLA_BD_POZOS_CAMPO}
+                WHERE {_COL_WELL_ID} IS NULL AND {_COL_FIELD} IS NOT NULL
+                GROUP BY {_norm_texto_sql(_COL_WELL_NAME_CATALOGO)}
+            )
+            {select_cols}
+            FROM {source} p
+            JOIN cat_id b ON p.WELL_ID = b.WID
+            WHERE {_norm_texto_sql('b.FIELD')} = {_norm_texto_sql(':campo')}
+              AND {where_fecha.replace('FECHA', 'p.FECHA')}
+            UNION ALL
+            {select_cols}
+            FROM {source} p
+            JOIN cat_nom b ON {_norm_texto_sql('p.WELL_NAME')} = b.NOMBRE_NORM
+            WHERE p.WELL_ID IS NULL
+              AND {_norm_texto_sql('b.FIELD')} = {_norm_texto_sql(':campo')}
+              AND {where_fecha.replace('FECHA', 'p.FECHA')}
+        """
+        with engine.connect() as conn:
+            df = pd.read_sql(sqlalchemy_text(sql_field), conn, params={**params_fecha, "campo": campo})
+    except Exception:
+        df = pd.DataFrame()
+
+    # 2) Respaldo: por asignación (como antes), solo si lo anterior no dio nada.
+    if df.empty:
+        sql_asig = f"""
+            SELECT DISTINCT ASIG_CONT FROM {_TABLA_PRODUCCION_CAMPOS}
+            WHERE {_FILTRO_ID_WHERE} AND CAMPO_PORTAL = :campo AND ASIG_CONT IS NOT NULL
+        """
+        with engine.connect() as conn:
+            asigs = pd.read_sql(sqlalchemy_text(sql_asig), conn, params={"campo": campo})
+        asig_list = asigs.iloc[:, 0].dropna().unique().tolist()
+        if not asig_list:
+            return {"pozos": [], "total": 0}
+
+        # ASIG_CONT se escribe distinto en PRODUCCION_POZOS según el tipo:
+        #   - Asignaciones: "A-0001-5M - CAMPO ABKATUN" (código + sufijo +
+        #     campo), por eso hace falta el LIKE "<código>-%".
+        #   - Contratos: "CNH-R01-L02-A1/2015" tal cual — ahí el LIKE no
+        #     encuentra NADA (le sobra el "-"), de ahí también la igualdad.
+        params = dict(params_fecha)
+        clausulas = []
+        for i, a in enumerate(asig_list):
+            clausulas.append(f"p.ASIG_CONT = :e{i} OR p.ASIG_CONT LIKE :p{i}")
+            params[f"e{i}"] = a
+            params[f"p{i}"] = f"{a}-%"
+        sql = f"""
+            {select_cols}
+            FROM {source} p
+            WHERE ({' OR '.join(clausulas)}) AND {where_fecha.replace('FECHA', 'p.FECHA')}
+        """
+        with engine.connect() as conn:
+            df = pd.read_sql(sqlalchemy_text(sql), conn, params=params)
+
     if df.empty:
         return {"pozos": [], "total": 0}
 
@@ -523,6 +601,154 @@ _POZOS_CAMPOS_TIPOS = [
 ]
 
 
+def _norm_py(s):
+    """Normalización en pandas equivalente a _norm_texto_sql: mayúsculas, sin
+    acentos, sin espacios ni guiones — para cruzar CAMPO_PORTAL
+    (PRODUCCION_CAMPOS) con FIELD (bd_pozos), que se escriben distinto
+    ("AMOCA" vs "Amoca", "TAMAULIPAS CONSTITUCIONES" vs
+    "Tamaulipas-Constituciones")."""
+    if pd.isna(s):
+        return None
+    s = unicodedata.normalize("NFKD", str(s).upper().strip())
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return s.replace(" ", "").replace("-", "").replace(".", "")
+
+
+def _periodo_sql(expr: str, period: str) -> str:
+    """Etiqueta de periodo ("2026" anual / "2026-06" mensual) calculada en SQL."""
+    if period == "monthly":
+        return f"TO_CHAR({expr}, 'YYYY-MM')" if _PG else f"CONVERT(varchar(7), {expr}, 126)"
+    return f"TO_CHAR({expr}, 'YYYY')" if _PG else f"CAST({_YEAR_FECHA.replace('FECHA', expr)} AS varchar(4))"
+
+
+def _pozos_campos_conteo_real(engine: Engine, where_fecha: str, period: str) -> pd.DataFrame:
+    """Conteo de pozos DISTINTOS con producción (>0) en PRODUCCION_POZOS por
+    periodo y campo, resolviendo el campo real del pozo vía bd_pozos.FIELD — la
+    misma fuente y lógica que get_pozos_campo_detalle, para que la cifra de la
+    tabla y la lista de pozos detrás de cada celda SIEMPRE coincidan.
+
+    Contar distintos dentro del periodo es lo que hace que el número anual
+    coincida con la lista (AMOCA 2026 = 20; promediar los meses daba 19).
+
+    Sustituye a POZOS_ACEITE/POZOS_GAS de PRODUCCION_CAMPOS_POZOS, que es un
+    agregado calculado aparte y no derivado de estos pozos individuales.
+
+    TODO el trabajo pesado se hace en SQL a propósito: a nivel pozo son ~2
+    millones de filas para un rango de 20 años, y traerlas a pandas tardaba
+    más de 30 s (la petición moría por timeout). Agregando en el servidor
+    vuelven solo unos miles de filas ya contadas.
+    """
+    from app.services import pozos_service
+    source = pozos_service._source_table()
+    from app.services.produccion_service import _norm_texto_sql
+
+    periodo = _periodo_sql("p.FECHA", period)
+    liquidos = f"{_ISNULL}(p.PETROLEO_MBD,0)+{_ISNULL}(p.CONDENSADO_MBD,0)"
+    gas = f"{_ISNULL}(p.GAS_MMPCD,0)"
+
+    # Catálogo pozo→campo, deduplicado en SQL (MIN(FIELD)) para que un WELL_ID
+    # repetido no multiplique las filas de producción al unir.
+    cat_por_id = f"""
+        SELECT {_COL_WELL_ID} AS WELL_ID, MIN({_COL_FIELD}) AS FIELD
+        FROM {_TABLA_BD_POZOS_CAMPO}
+        WHERE {_COL_WELL_ID} IS NOT NULL AND {_COL_FIELD} IS NOT NULL
+        GROUP BY {_COL_WELL_ID}
+    """
+    # Pozos sin WELL_ID en el catálogo: se emparejan por nombre normalizado
+    # (NULL = NULL nunca es cierto en SQL, si no se perderían — ver AMOCA).
+    cat_por_nombre = f"""
+        SELECT {_norm_texto_sql(_COL_WELL_NAME_CATALOGO)} AS NOMBRE_NORM, MIN({_COL_FIELD}) AS FIELD
+        FROM {_TABLA_BD_POZOS_CAMPO}
+        WHERE {_COL_WELL_ID} IS NULL AND {_COL_FIELD} IS NOT NULL
+        GROUP BY {_norm_texto_sql(_COL_WELL_NAME_CATALOGO)}
+    """
+
+    where_p = where_fecha.replace("FECHA", "p.FECHA")
+    select_pozo = f"""
+        SELECT p.WELL_NAME, p.FECHA, c.FIELD,
+               CASE WHEN {liquidos} > 0 THEN 'pozos_aceite' ELSE 'pozos_gas' END AS TIPO_COL
+    """
+    # Dos uniones limpias en vez de un JOIN con OR (un OR impide usar el índice
+    # por WELL_ID y hace la consulta mucho más lenta).
+    sql = f"""
+        WITH cat_id AS ({cat_por_id}),
+             cat_nom AS ({cat_por_nombre}),
+             emparejado AS (
+                {select_pozo}
+                FROM {source} p
+                JOIN cat_id c ON p.WELL_ID = c.WELL_ID
+                WHERE {where_p} AND ({liquidos} > 0 OR {gas} > 0)
+                UNION ALL
+                {select_pozo}
+                FROM {source} p
+                JOIN cat_nom c ON {_norm_texto_sql('p.WELL_NAME')} = c.NOMBRE_NORM
+                WHERE p.WELL_ID IS NULL AND {where_p} AND ({liquidos} > 0 OR {gas} > 0)
+             ),
+             -- Un mismo pozo puede ser de aceite un mes y de gas otro dentro del
+             -- mismo periodo: se queda con el tipo de su registro más reciente
+             -- (igual que get_pozos_campo_detalle) para no contarlo dos veces.
+             por_periodo AS (
+                SELECT WELL_NAME, FIELD, TIPO_COL, PERIODO,
+                       ROW_NUMBER() OVER (PARTITION BY FIELD, WELL_NAME, PERIODO ORDER BY FECHA DESC) AS RN
+                FROM (SELECT WELL_NAME, FIELD, TIPO_COL, FECHA, {_periodo_sql('FECHA', period)} AS PERIODO
+                      FROM emparejado) e
+             )
+        -- RN = 1 ya deja una sola fila por (campo, pozo, periodo), así que
+        -- COUNT(*) cuenta pozos distintos sin pagar el DISTINCT.
+        SELECT PERIODO, FIELD, TIPO_COL, COUNT(*) AS POZOS
+        FROM por_periodo
+        WHERE RN = 1
+        GROUP BY PERIODO, FIELD, TIPO_COL
+    """
+    sql_meta = f"""
+        SELECT DISTINCT CAMPO_PORTAL AS CAMPO, CUENCA, UBICACION
+        FROM {_TABLA_PRODUCCION_CAMPOS}
+        WHERE {_FILTRO_ID_WHERE} AND CAMPO_PORTAL IS NOT NULL
+    """
+    vacio = pd.DataFrame(columns=["periodo", "cuenca", "campo", "ubicacion", "pozos_aceite", "pozos_gas"])
+    with engine.connect() as conn:
+        conteos = pd.read_sql(sql, conn)
+        meta = pd.read_sql(sql_meta, conn)
+
+    if conteos.empty:
+        return vacio
+
+    conteos.columns = conteos.columns.str.lower()
+    meta.columns = meta.columns.str.lower()
+
+    # FIELD (bd_pozos) → CAMPO_PORTAL de PRODUCCION_CAMPOS, para que la etiqueta
+    # coincida con el resto del tablero (misma grafía en mayúsculas).
+    meta = meta.dropna(subset=["campo"]).copy()
+    meta["campo_norm"] = meta["campo"].map(_norm_py)
+    meta = meta.drop_duplicates("campo_norm")
+
+    conteos["campo_norm"] = conteos["field"].map(_norm_py)
+    conteos = conteos.merge(meta[["campo_norm", "campo", "cuenca", "ubicacion"]], on="campo_norm", how="left")
+
+    # Se rellenan ANTES del pivote: pivot_table descarta las filas cuya clave de
+    # índice es NaN, así que los pozos cuyo campo no empata con ningún
+    # CAMPO_PORTAL desaparecerían del desglose (y del total) en silencio.
+    conteos["campo"] = conteos["campo"].fillna("Sin campo asignado")
+    conteos["cuenca"] = conteos["cuenca"].fillna("Sin cuenca asignada")
+    conteos["ubicacion"] = conteos["ubicacion"].fillna("Sin ambiente asignado")
+
+    # groupby+unstack, no pivot_table(dropna=False): este último rellena TODAS
+    # las combinaciones posibles de índice (22 periodos × 825 campos × cuenca ×
+    # ambiente = cientos de miles de filas vacías), lo que disparaba el tiempo
+    # de respuesta. Los nulos ya se rellenaron arriba, así que groupby no pierde
+    # ninguna fila.
+    df = (
+        conteos.groupby(["periodo", "cuenca", "ubicacion", "campo", "tipo_col"])["pozos"]
+        .sum()
+        .unstack("tipo_col", fill_value=0)
+        .reset_index()
+    )
+    for col in ("pozos_aceite", "pozos_gas"):
+        if col not in df.columns:
+            df[col] = 0
+    return df[["periodo", "cuenca", "campo", "ubicacion", "pozos_aceite", "pozos_gas"]]
+
+
 def _get_pozos_campos(
     engine: Engine, start_year: int, end_year: int, start_month: int, end_month: int,
     period: str, cuencas: str = "", ubicaciones: str = "", campos: str = "", years: str = "",
@@ -538,30 +764,12 @@ def _get_pozos_campos(
         end  = f"{end_year}-{end_month:02d}-01"
         where_fecha = f"FECHA BETWEEN '{init}' AND '{end}'"
 
-    sql = f"""
-        SELECT FECHA, CUENCA, CAMPO_PORTAL AS CAMPO, UBICACION, POZOS_ACEITE, POZOS_GAS
-        FROM {_TABLA_PRODUCCION_CAMPOS_POZOS}
-        WHERE {where_fecha}
-    """
-    with engine.connect() as conn:
-        df = pd.read_sql(sql, conn)
+    # Ya viene contado por periodo/campo desde SQL (pozos DISTINTOS, no promedio
+    # de meses) — ver _pozos_campos_conteo_real.
+    df = _pozos_campos_conteo_real(engine, where_fecha, period)
 
     if df.empty:
         return {"type": "hierarchical", "categories": [], "groups": []}
-
-    df.columns = df.columns.str.lower()
-    df["fecha"] = pd.to_datetime(df["fecha"])
-    df[["pozos_aceite", "pozos_gas"]] = df[["pozos_aceite", "pozos_gas"]].apply(
-        pd.to_numeric, errors="coerce"
-    ).fillna(0)
-    # groupby descarta filas con clave NaN por defecto — un CAMPO_PORTAL (o
-    # cuenca/ubicacion) nulo se perdía silenciosamente del desglose por campo,
-    # aunque sí contaba en el total nacional de "Pozos operando" (Panorama
-    # general), que no agrupa por campo. Sin este fillna los dos totales no
-    # cuadraban entre sí.
-    df["campo"] = df["campo"].fillna("Sin campo asignado")
-    df["cuenca"] = df["cuenca"].fillna("Sin cuenca asignada")
-    df["ubicacion"] = df["ubicacion"].fillna("Sin ambiente asignado")
 
     def _parse(s):
         return [x.strip() for x in s.split("|") if x.strip()]
@@ -584,19 +792,6 @@ def _get_pozos_campos(
         lst = _parse(tipos)
         if lst:
             tipos_activos = [t for t in _POZOS_CAMPOS_TIPOS if t[0] in lst]
-
-    # Anual: promedio de los meses del año (foto de pozos activos, no acumulado).
-    # Mensual: cada mes ya es único por cuenca/ubicacion/campo, sum() es solo dedupe.
-    if period == "monthly":
-        df["periodo"] = df["fecha"].dt.strftime("%Y-%m")
-        agg = "sum"
-    else:
-        df["periodo"] = df["fecha"].dt.strftime("%Y")
-        agg = "mean"
-
-    df = df.groupby(["periodo", "cuenca", "ubicacion", "campo"], as_index=False).agg(
-        {"pozos_aceite": agg, "pozos_gas": agg}
-    )
 
     categories = sorted(df["periodo"].unique().tolist())
 

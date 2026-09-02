@@ -3,6 +3,7 @@ import { useExplorer } from "../../store/useExplorer";
 import { useChartData } from "../../hooks/useChartData";
 import { fetchTemas, fetchPerforacionFiltros, fetchProduccionFiltros } from "../../api/client";
 import { acentuarTema } from "../../utils/acentuarTema";
+import BuscadorGlobal from "./BuscadorGlobal";
 import "../../styles/header.css";
 
 // ── Custom Select ─────────────────────────────────────────────────────────────
@@ -639,10 +640,11 @@ export default function TopBar() {
     start_month, end_month,
     start_date, end_date,
     setFiltro,
+    pendingPeriodo, setPendingPeriodo,
     setResultado,
     perfFiltros, setPerfFiltros,
     perfOpciones, setPerfOpciones,
-    prodFiltros, setProdFiltros,
+    prodFiltros, setProdFiltros, pendingProdFiltros, setPendingProdFiltros,
     prodOpciones, setProdOpciones,
     setGroupBy,
     compareMode, setCompareMode, compareYearA, compareYearB, setCompareYears,
@@ -659,6 +661,14 @@ export default function TopBar() {
     const periodos = tema?.periodicidad ? JSON.parse(tema.periodicidad) : null;
     soloAnual = !!periodos && !("Mensual" in periodos);
   } catch { /* periodicidad mal formada: se asume que sí hay mensual */ }
+
+  // Mensual sobre un rango largo pide una columna por mes (>60 columnas) y hace
+  // que el backend agregue millones de registros: la consulta se vuelve
+  // impracticable y muere por timeout. Se ofrece solo hasta 5 años.
+  const MAX_ANIOS_MENSUAL = 5;
+  const aniosSeleccionados =
+    start_year != null && end_year != null ? end_year - start_year + 1 : 1;
+  const rangoLargo = aniosSeleccionados > MAX_ANIOS_MENSUAL;
 
   const isPerf = PERFORACION_TOPICS.has(tema?.json_arg);
   const isProd = PRODUCCION_SECCIONES.has(tema?.seccion);
@@ -727,6 +737,15 @@ export default function TopBar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soloAnual, tema?.json_arg]);
 
+  // Si el rango se amplía a más de MAX_ANIOS_MENSUAL estando en Mensual, se
+  // vuelve a Anual solo: deshabilitar el radio no basta, porque el rango puede
+  // crecer desde los selectores de año (o al cambiar de tema) con Mensual ya
+  // seleccionado, y se dispararía igual la consulta que queremos evitar.
+  useEffect(() => {
+    if (rangoLargo && period === "monthly") setPeriod("annually");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangoLargo, period]);
+
   // "Precios de petróleo y gas": al entrar al tema arranca en "Diario" con
   // los últimos 7 días (la semana), en vez de heredar Mensual/Anual de otro
   // tema — es el filtro que de verdad se usa para ver el precio del día.
@@ -751,26 +770,69 @@ export default function TopBar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tema?.json_arg]);
 
-  // El rango de años arranca en el año en curso, que casi nunca tiene dato
-  // todavía (CUBOS.END_YEAR viene NULL en varios temas, entre ellos Reservas
-  // por campo, así que no sirve para fijar el default de antemano). Al elegir
-  // un tema se amplía el rango a todo su histórico (init_year del tema hasta
-  // hoy) para asegurar una respuesta con datos, y en cuanto llega se fija el
-  // filtro en el último año real que trajo esa respuesta — una sola vez por
-  // tema, para no pelearse con un rango que el usuario elija después a mano.
+  // El año en curso casi nunca tiene dato todavía, y CUBOS.END_YEAR viene NULL
+  // en varios temas (Reservas por campo entre ellos), así que no se puede saber
+  // de antemano cuál es el último año con datos: hay que sondearlo pidiendo un
+  // rango y quedándose con el último año que devuelva.
+  //
+  // La sonda son los últimos SONDA_ANIOS años, NO todo el histórico. Antes se
+  // pedía desde init_year (1960 en Campos, 2005 en Pozos operando) hasta hoy,
+  // y esa consulta —la más cara del tema, y desechada enseguida— se ejecutaba
+  // completa cada vez que se entraba al tema. Si la sonda corta no encuentra
+  // nada (tema cuyos datos terminaron hace años), se amplía al histórico
+  // completo una sola vez, abajo.
+  const SONDA_ANIOS = 3;
+  // Tema cuyos filtros de Cuenca/Ambiente llegaron dirigidos desde una ficha
+  // (no deben limpiarse mientras se siga en él).
+  const prodFiltrosDirigidosRef = useRef(null);
   const anioAjustadoRef = useRef(null);
+  const sondaAmpliadaRef = useRef(null);
   useEffect(() => {
     anioAjustadoRef.current = null;
+    sondaAmpliadaRef.current = null;
     if (!tema) return;
+    const anioActual = new Date().getFullYear();
     const initYear = tema.init_year ? Number(tema.init_year) : 2000;
-    setFiltro({ start_year: initYear, end_year: new Date().getFullYear() });
+    setFiltro({
+      start_year: Math.max(initYear, anioActual - (SONDA_ANIOS - 1)),
+      end_year: anioActual,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tema?.json_arg]);
+
+  // Periodo dirigido (buscador global → una entidad que dejó de producir hace
+  // años): manda sobre la sonda de arriba, y marca el año como ya ajustado
+  // para que el efecto de abajo tampoco lo mueva al último año del TEMA.
+  //
+  // Va en su PROPIO efecto a propósito. Metido en el de arriba, limpiar la
+  // bandera volvía a dispararlo —la bandera es una de sus dependencias— y esa
+  // segunda pasada reponía el rango de la sonda, borrando el año dirigido.
+  // Aquí se declara después, así que en el mismo commit corre al final y su
+  // valor es el que queda.
+  useEffect(() => {
+    if (!tema || !pendingPeriodo || pendingPeriodo.tema !== tema.json_arg) return;
+    anioAjustadoRef.current = tema.json_arg;
+    sondaAmpliadaRef.current = tema.json_arg;
+    setFiltro({ start_year: pendingPeriodo.anio, end_year: pendingPeriodo.anio });
+    setPendingPeriodo(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tema?.json_arg, pendingPeriodo]);
 
   useEffect(() => {
     if (period !== "annually" || !tema || anioAjustadoRef.current === tema.json_arg) return;
     const cats = resultado?.categories;
-    if (!cats?.length) return;
+    if (!cats?.length) {
+      // Llegó respuesta pero vacía: la sonda corta se quedó corta para este
+      // tema. Se reintenta con todo el histórico, una sola vez por tema, para
+      // no dejarlo en blanco.
+      const initYear = tema.init_year ? Number(tema.init_year) : 2000;
+      const anioActual = new Date().getFullYear();
+      if (resultado && sondaAmpliadaRef.current !== tema.json_arg && start_year > initYear) {
+        sondaAmpliadaRef.current = tema.json_arg;
+        setFiltro({ start_year: initYear, end_year: anioActual });
+      }
+      return;
+    }
     const maxCat = Number(cats[cats.length - 1]);
     if (!Number.isNaN(maxCat)) {
       anioAjustadoRef.current = tema.json_arg;
@@ -800,12 +862,26 @@ export default function TopBar() {
   // default de todas prendidas, hay que limpiar para no contaminar el
   // siguiente tema con una selección que no le pertenece.
   useEffect(() => {
+    // Excepción: filtros traídos a propósito para ESTE tema al llegar desde una
+    // ficha ("Ver producción completa…"). Sin esto la limpieza de abajo los
+    // borraba en cuanto cambiaba el tema y la tabla volvía al agregado.
+    // Se comprueba que exista: sin tema seleccionado, `null?.tema` y
+    // `tema?.json_arg` son ambos undefined y la comparación daría verdadera.
+    if (pendingProdFiltros && tema?.json_arg && pendingProdFiltros.tema === tema.json_arg) {
+      prodFiltrosDirigidosRef.current = tema.json_arg;
+      setProdFiltros(pendingProdFiltros.filtros);
+      setPendingProdFiltros(null);
+      return;
+    }
+    // Al vaciar la pendiente el efecto se vuelve a ejecutar; sin esta marca
+    // caía en la limpieza de abajo y borraba los filtros recién puestos.
+    if (prodFiltrosDirigidosRef.current === tema?.json_arg) return;
     if (tema?.json_arg === "Cuenca") return;
     if (prodFiltros.cuencas.length || prodFiltros.ubicaciones.length) {
       setProdFiltros({ cuencas: [], ubicaciones: [] });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tema?.json_arg]);
+  }, [tema?.json_arg, pendingProdFiltros]);
 
   // groupBy para Producción (Campos/API), igual patrón que perforación pero en
   // base a prodFiltros. "Cuenca" arma su propia jerarquía producto-primero en
@@ -946,6 +1022,7 @@ export default function TopBar() {
               {s === "Indicadores Economicos" ? "Indicadores Económicos" : acentuarTema(s)}
             </button>
           ))}
+          <BuscadorGlobal />
         </div>
 
         {/* ── Fila de filtros ── */}
@@ -994,18 +1071,32 @@ export default function TopBar() {
                       // un registro por día) — en el resto de los temas no hay
                       // datos a ese nivel de detalle.
                       ...(tema?.json_arg === "Precios" ? [["daily", "Diario"]] : []),
-                    ].map(([val, lbl]) => (
-                      <label key={val} className="tih-filterbar__radio-label--dark">
+                    ].map(([val, lbl]) => {
+                      // Mensual se deshabilita (no se oculta) en rangos largos:
+                      // así se ve que la opción existe y por qué no está
+                      // disponible, en vez de desaparecer sin explicación.
+                      const deshabilitado = val === "monthly" && rangoLargo;
+                      return (
+                      <label
+                        key={val}
+                        className="tih-filterbar__radio-label--dark"
+                        title={deshabilitado
+                          ? `Disponible solo para rangos de hasta ${MAX_ANIOS_MENSUAL} años. Reduce el periodo para verlo por mes.`
+                          : undefined}
+                        style={deshabilitado ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
+                      >
                         <input
                           type="radio"
                           name="period"
                           value={val}
                           checked={period === val}
+                          disabled={deshabilitado}
                           onChange={() => setPeriod(val)}
                         />
                         {lbl}
                       </label>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 

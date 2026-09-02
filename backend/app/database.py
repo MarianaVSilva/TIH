@@ -46,5 +46,25 @@ def _make_postgres_engine():
 engine = _make_postgres_engine() if settings.db_engine == "postgres" else _make_mssql_engine()
 
 
+# Catálogos que viven SOLO en SQL Server y no están replicados a Postgres
+# (hoy: [cmde_public].[entitlements].[fields] — play, año de descubrimiento,
+# profundidad de cada campo). Aun corriendo con DB_ENGINE=postgres las
+# credenciales de SQL Server siguen en .env, así que se puede abrir una
+# conexión aparte solo para esos catálogos. El motor se crea perezosamente
+# (no al importar) para no pagar la conexión si nunca se usa, y quien lo use
+# debe tolerar que falle: si el servidor no tiene ruta al SQL Server, lo
+# correcto es degradar mostrando el dato vacío, no tumbar el endpoint.
+_mssql_catalogo_engine = None
+
+
+def get_engine_catalogo_sqlserver():
+    global _mssql_catalogo_engine
+    if settings.db_engine != "postgres":
+        return engine
+    if _mssql_catalogo_engine is None:
+        _mssql_catalogo_engine = _make_mssql_engine()
+    return _mssql_catalogo_engine
+
+
 def get_db_dep():
     yield engine

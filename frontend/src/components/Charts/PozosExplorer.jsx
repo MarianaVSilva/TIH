@@ -310,6 +310,9 @@ export default function PozosExplorer() {
   const visibleRows = detalle?.rows?.filter(r => r.data.some(v => v)) ?? [];
   const liquidosRow = detalle?.rows?.find(r => /líquidos/i.test(r.label));
   const gasRow = detalle?.rows?.find(r => r.label === "Gas (MMpcd)");
+  // El agua ya venía en la tabla de productos pero no se graficaba; va como
+  // segunda serie de la tendencia, en su propio eje (ver PozoTrendChart).
+  const aguaRow = detalle?.rows?.find(r => /^agua/i.test(r.label));
   const tieneLiquidos = liquidosRow?.data.some(v => v) ?? false;
   const tieneGas = gasRow?.data.some(v => v) ?? false;
   // Pozos de gas seco (líquidos en 0 todo el histórico) usan la fila de Gas
@@ -654,6 +657,7 @@ export default function PozosExplorer() {
                     categories={detalle.categories}
                     data={tendenciaRow.data}
                     unidad={tendenciaEsGas ? "MMpcd" : "Mbd"}
+                    agua={aguaRow}
                     analisis={analisis}
                     metricSwitch={tieneLiquidos && tieneGas ? {
                       value: tendenciaEsGas ? "gas" : "liquidos",

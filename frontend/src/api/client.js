@@ -3,6 +3,7 @@ import axios from "axios";
 const api = axios.create({ baseURL: "/api/v1", timeout: 30000 });
 
 export const fetchTemas          = ()       => api.get("/temas/").then(r => r.data);
+export const fetchBuscar         = (q)      => api.get("/buscar/", { params: { q } }).then(r => r.data);
 
 export const fetchProduccionCuenca  = (p) => api.get("/produccion/cuenca",  { params: p }).then(r => r.data);
 export const fetchProduccionDetalle = (p) => api.get("/produccion/detalle", { params: p }).then(r => r.data);
@@ -23,6 +24,10 @@ export const fetchPerforacionPozosDetalle = (p) =>
   api.get("/perforacion/pozos-detalle", { params: p }).then(r => r.data);
 export const fetchPozosCampoDetalle = (p) =>
   api.get("/perforacion/pozos-campo-detalle", { params: p }).then(r => r.data);
+export const fetchContratosAdjudicadosDetalle = (empresa, columna) =>
+  api.get("/contratos/adjudicados/detalle", { params: { empresa, columna } }).then(r => r.data);
+export const fetchPozosComprometidosDetalle = (contrato) =>
+  api.get("/contratos/pozos-comprometidos/detalle", { params: { contrato } }).then(r => r.data);
 export const fetchPerforacionHistorico = (topic) =>
   api.get("/perforacion/historico", { params: { topic }, timeout: 60000 }).then(r => r.data);
 
@@ -51,6 +56,7 @@ export const fetchPozosCacheStatus  = () => api.get("/produccion/pozos/cache-sta
 export const fetchAsignacionesRanking = (p) => api.get("/produccion/asignaciones/ranking", { params: p }).then(r => r.data);
 export const fetchAsignacionDetalle   = (p) => api.get("/produccion/asignaciones/detalle",  { params: p }).then(r => r.data);
 export const fetchCampoDetalle        = (p) => api.get("/produccion/campos/detalle",  { params: p }).then(r => r.data);
+export const fetchOperadorDetalle     = (p) => api.get("/produccion/operadores/detalle", { params: p }).then(r => r.data);
 
 export const fetchResumen = () => api.get("/resumen/").then(r => r.data);
 

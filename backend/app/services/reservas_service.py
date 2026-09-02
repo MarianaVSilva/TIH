@@ -31,6 +31,71 @@ TIPO_COLUMNA = {
 UNIDAD_RESERVAS = {"ReservasP": "MMb", "ReservasG": "MMMpc", "ReservasPCE": "MMbpce"}
 AMBIENTES_ORDEN_RESERVAS = ["Aguas profundas", "Aguas someras", "Terrestre"]
 
+# Nombre de la columna de campo sin alias, para usarla en WHERE/GROUP BY.
+_CAMPO_COL = "campo_portal" if _PG else "campo_nombre"
+
+
+def _norm_campo_sql(expr: str) -> str:
+    """Normaliza un nombre de campo para cruzarlo entre tablas.
+
+    RESERVAS_CAMPOS guarda el nombre "bonito" del campo ("Abkatún", "Tupilco
+    Profundo") mientras que PRODUCCION_CAMPOS.CAMPO_PORTAL -- de donde sale el
+    identificador que usa el resto del sistema -- lo trae en mayúsculas, sin
+    acentos y sin espacios ("ABKATUN", "TUPILCOPROFUNDO"). Sin normalizar los
+    dos lados, el join no encuentra nada. En SQL Server la collation
+    CI_AI resuelve mayúsculas/acentos; en Postgres se hace con TRANSLATE
+    (unaccent es una extensión que puede no estar instalada).
+    """
+    sin_espacios = f"REPLACE({expr}, ' ', '')"
+    if _PG:
+        return f"UPPER(TRANSLATE({sin_espacios}, 'áéíóúüñÁÉÍÓÚÜÑ', 'aeiouunAEIOUUN'))"
+    return f"{sin_espacios} COLLATE Latin1_General_CI_AI"
+
+
+@cached()
+def get_reservas_de_campo(engine: Engine, campo: str, start_year: int, end_year: int) -> dict:
+    """Reservas 1P/2P/3P por año de UN campo (aceite/gas/pce), para el bloque
+    de reservas de la ficha de campo. 1P/2P/3P son acumulados de PROBADAS /
+    +PROBABLES / +POSIBLES, igual que en el resto del módulo."""
+    sql = text(f"""
+        SELECT {_YEAR} AS anio, categoria,
+               SUM(rr_aceite_mmb)  AS aceite,
+               SUM(rr_gas_mmmpc)   AS gas,
+               SUM(rr_pce_mmbpce)  AS pce
+        FROM {_TABLA_RESERVAS_CAMPOS}
+        WHERE {_norm_campo_sql(_CAMPO_COL)} = {_norm_campo_sql(':campo')}
+          AND {_YEAR} BETWEEN :start_year AND :end_year
+        GROUP BY {_YEAR}, categoria
+    """)
+    with engine.connect() as conn:
+        df = pd.read_sql(sql, conn, params={"campo": campo, "start_year": start_year, "end_year": end_year})
+
+    if df.empty:
+        return None
+
+    df.columns = df.columns.str.lower()
+    df["anio"] = df["anio"].astype(int)
+    for c in ["aceite", "gas", "pce"]:
+        df[c] = df[c].astype(float).fillna(0)
+
+    anios = sorted(df["anio"].unique().tolist())
+    out = {"categories": [str(a) for a in anios]}
+    for producto in ["aceite", "gas", "pce"]:
+        pivot = df.pivot_table(index="anio", columns="categoria", values=producto, aggfunc="sum", fill_value=0)
+        for cat in ["PROBADAS", "PROBABLES", "POSIBLES"]:
+            if cat not in pivot.columns:
+                pivot[cat] = 0
+        pivot = pivot.reindex(anios, fill_value=0)
+        p1 = pivot["PROBADAS"]
+        p2 = p1 + pivot["PROBABLES"]
+        p3 = p2 + pivot["POSIBLES"]
+        out[producto] = {
+            "p1": [round(float(v), 2) for v in p1],
+            "p2": [round(float(v), 2) for v in p2],
+            "p3": [round(float(v), 2) for v in p3],
+        }
+    return out
+
 
 @cached()
 def get_reservas_por_campo(engine: Engine, start_year: int, end_year: int, tipo: str = "ReservasP") -> dict:

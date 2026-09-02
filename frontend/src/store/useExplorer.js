@@ -34,7 +34,13 @@ function buildVisible(resultado, groupBy) {
 // el usuario los prende si los necesita). Se basa en resultado.series (la
 // serie de cabecera, un producto por item) en vez de "groups" para que
 // funcione igual sin importar la forma de la jerarquía (Nacional o Empresa).
-const PROD_CUENCA_DEFAULT_ON = new Set(["Petróleo", "Condensado", "Gas"]);
+// El agua va encendida por defecto (pedido explícito): antes había que
+// acordarse de prenderla, y como tiene su propia gráfica no le quita escala a
+// los hidrocarburos.
+// "Gas" (asociado + no asociado) ya no se grafica —es la suma de sus dos
+// componentes, ver sinSubtotales() en ChartArea—, asi que el default enciende
+// los componentes: con "Gas" a secas el panel de MMpcd salia vacio.
+const PROD_CUENCA_DEFAULT_ON = new Set(["Petróleo", "Condensado", "Gas asociado", "Gas no asociado", "Agua"]);
 const PRODUCTO_DEFAULT_TOPICS = new Set(["Cuenca", "Operadores", "Contratos", "Campos", "Asignaciones", "Estado"]);
 function buildProdCuencaVisible(resultado) {
   const v = {};
@@ -52,7 +58,7 @@ export const useExplorer = create((set, get) => ({
   seccion: "",
   tema: null,
   setSeccion: (seccion) => set({ seccion, tema: null, resultado: null }),
-  setTema: (tema) => set({ tema, resultado: null }),
+  setTema: (tema) => set({ tema, resultado: null, forzarTodasLasSeries: null }),
 
   // "Reservas por campo" es un solo tema en el menú (json_arg ReservasP) pero
   // trae 3 pestañas internas (Aceite/Gas/PCE) que pisan qué columna consulta
@@ -66,7 +72,7 @@ export const useExplorer = create((set, get) => ({
   // dispara) siga igual en la pestaña nueva.
   reservasSearch: "",
   setReservasSearch: (reservasSearch) => set({ reservasSearch }),
-  // Campo/asignación elegido en "Gráfica personalizada por campo" — mismo
+  // Campo/asignación elegido en "Gráfica individual por campo" — mismo
   // motivo que reservasSearch: sobrevive el remount al cambiar de pestaña
   // Aceite/Gas/PCE (el nombre no cambia entre pestañas, solo sus valores).
   reservasCampoSel: "",
@@ -126,6 +132,19 @@ export const useExplorer = create((set, get) => ({
   loading: false,
   error: null,
   setResultado: (resultado) => set(state => {
+    // Al llegar desde una ficha ("Ver producción completa…") se quieren TODAS
+    // las series encendidas para ver el desglose completo. No basta con
+    // encenderlas antes de consultar: esta misma función las recalcula al
+    // llegar cada respuesta y volvería a dejar solo las de por defecto. La
+    // bandera se consume aquí, una sola vez. visibleSeries vacío = todo
+    // visible (undefined no es false).
+    // NO se limpia la bandera aquí: al entrar a un tema se consulta dos veces
+    // (la sonda del histórico completo y luego el rango ya colapsado al último
+    // año), y la segunda respuesta volvería a dejar solo las series por
+    // defecto. Se limpia al cambiar de tema o en cuanto se toca un chip.
+    if (state.forzarTodasLasSeries && state.forzarTodasLasSeries.tema === state.tema?.json_arg) {
+      return { resultado, loading: false, error: null, visibleSeries: {} };
+    }
     if (resultado?.type === "hierarchical") {
       return {
         resultado,
@@ -161,7 +180,34 @@ export const useExplorer = create((set, get) => ({
   setPendingBusqueda: (pendingBusqueda) => set({ pendingBusqueda }),
 
   visibleSeries: {},
+  // {tema} — la consume setResultado en la primera respuesta de ESE tema (ver
+  // nota allí). Va con el tema dentro porque al navegar puede llegar todavía
+  // una respuesta del tema anterior, que si no se la comería.
+  forzarTodasLasSeries: null,
+  setForzarTodasLasSeries: (forzarTodasLasSeries) => set({ forzarTodasLasSeries }),
+  // Pila de "dónde estaba antes" para el botón flotante de volver. Solo se
+  // apila al navegar desde una ficha ("Ver producción completa…"), que es
+  // cuando el usuario se va a otro tema sin haberlo elegido él en el selector.
+  navHistory: [],
+  pushNav: (entrada) => set(state => ({ navHistory: [...state.navHistory, entrada].slice(-20) })),
+  quitarUltimaNav: () => set(state => ({ navHistory: state.navHistory.slice(0, -1) })),
+  // {tema, filtros} — filtros de Cuenca/Ambiente dirigidos a un tema concreto.
+  // TopBar limpia prodFiltros al cambiar de tema; sin este canal, unos filtros
+  // puestos al navegar se borraban justo después.
+  pendingProdFiltros: null,
+  setPendingProdFiltros: (pendingProdFiltros) => set({ pendingProdFiltros }),
+  // {tema, anio} — periodo dirigido a un tema concreto, por el mismo motivo
+  // que pendingProdFiltros: TopBar reajusta el rango solo al entrar a un tema
+  // (sonda del ultimo anio con datos) y borraria un periodo puesto al navegar.
+  // Lo usa el buscador global para abrir una entidad que dejo de producir hace
+  // anios (GURUMAL, ultima produccion en 2001) en un anio donde SI hay datos,
+  // en vez de dejarla vacia en el anio en curso.
+  pendingPeriodo: null,
+  setPendingPeriodo: (pendingPeriodo) => set({ pendingPeriodo }),
   toggleSerie: (name) => set(state => ({
+    // Tocar un chip devuelve el control al usuario: se descarta el "todas
+    // encendidas" con el que se llegó desde una ficha.
+    forzarTodasLasSeries: null,
     // visibleSeries[name] === undefined cuenta como visible (todo visible por
     // defecto, ver "!== false" en SeriesChips/filterSeries) — invertir el
     // valor crudo dejaba undefined -> true, que sigue leyéndose como visible,
