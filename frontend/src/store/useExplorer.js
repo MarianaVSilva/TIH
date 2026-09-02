@@ -204,6 +204,12 @@ export const useExplorer = create((set, get) => ({
   // en vez de dejarla vacia en el anio en curso.
   pendingPeriodo: null,
   setPendingPeriodo: (pendingPeriodo) => set({ pendingPeriodo }),
+  // {tema, nombre} — entidad que debe quedar seleccionada en la "Grafica
+  // individual" del tema destino. Al llegar desde el buscador global se busca
+  // UNA entidad concreta: si el usuario pasa a graficos, lo que quiere ver es
+  // la de ella, no la primera de la lista.
+  pendingIndividual: null,
+  setPendingIndividual: (pendingIndividual) => set({ pendingIndividual }),
   toggleSerie: (name) => set(state => ({
     // Tocar un chip devuelve el control al usuario: se descarta el "todas
     // encendidas" con el que se llegó desde una ficha.

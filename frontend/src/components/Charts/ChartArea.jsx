@@ -1377,6 +1377,26 @@ function SearchableSelect({ options, value, onChange }) {
 // unidad, igual que la vista general (GraficasPorUnidad). El agua viaja con
 // los líquidos, en su eje tenue a la derecha (ver utils/estiloAgua.js).
 // Cada panel exporta su propio PNG: son gráficas distintas, no una sola.
+// El nombre que llega del buscador y el que lista el selector salen de la
+// misma fuente, pero no siempre con el mismo formato (acentos, mayusculas,
+// espacios de mas). Se comparan normalizados para que un detalle tipografico
+// no deje la preseleccion sin efecto.
+function _mismaEntidad(a, b) {
+  const n = v => String(v ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().replace(/\s+/g, " ").trim();
+  return n(a) === n(b);
+}
+
+// Busca en la lista del selector la entidad que pidio el buscador global.
+function usarSeleccion(opciones, seleccionInicial, setSelected) {
+  useEffect(() => {
+    if (!seleccionInicial || !opciones?.length) return;
+    const hit = opciones.find(o => _mismaEntidad(o, seleccionInicial));
+    if (hit) setSelected(hit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seleccionInicial, opciones?.length]);
+}
+
 function PanelUnidadPersonalizada({ unidad, series, categories, chartType, titulo, filenameBase, zoomable, altura }) {
   const chartRef = useRef(null);
   const option = useMemo(
@@ -1418,8 +1438,9 @@ function GraficasPersonalizadasPorUnidad({ series, categories, chartType, titulo
 // "Gráfica individual": el usuario elige UNA empresa y ve toda su
 // producción (todos los productos con datos), en un panel por unidad,
 // cada uno exportable como PNG con un banner de título superpuesto.
-function OperadorCustomChart({ empresas, categories, chartType, tituloTema, visibleSeries = {} }) {
+function OperadorCustomChart({ empresas, categories, chartType, tituloTema, visibleSeries = {}, seleccionInicial }) {
   const [selected, setSelected] = useState(empresas[0]?.empresa ?? "");
+  usarSeleccion(empresas.map(e => e.empresa), seleccionInicial, setSelected);
   const emp = empresas.find(e => e.empresa === selected) ?? empresas[0];
   const series = filterSeries(emp?.series ?? [], visibleSeries);
 
@@ -1446,8 +1467,9 @@ function OperadorCustomChart({ empresas, categories, chartType, tituloTema, visi
 // "Gráfica individual" de "Producción por contrato": el usuario elige UN
 // contrato y ve toda su producción (todos los productos con datos), en un
 // panel por unidad — mismo patrón que OperadorCustomChart.
-function ContratoCustomChart({ contratos, categories, chartType, tituloTema, badgeFor }) {
+function ContratoCustomChart({ contratos, categories, chartType, tituloTema, badgeFor, seleccionInicial }) {
   const [selected, setSelected] = useState(contratos[0]?.nombre ?? "");
+  usarSeleccion(contratos.map(c => c.nombre), seleccionInicial, setSelected);
   const contrato = contratos.find(c => c.nombre === selected) ?? contratos[0];
   const series = contrato?.series ?? [];
 
@@ -1620,7 +1642,7 @@ function DataTitle({ titulo, period, start_year, end_year }) {
 }
 
 export default function ChartArea() {
-  const { resultado, loading, error, tema, visibleSeries, toggleSerie, setAllVisible, groupBy, setGroupBy, period, start_year, end_year, start_month, end_month, perfFiltros, prodFiltros, prodOpciones, compareMode, reservasTipo, setReservasTipo, reservasSearch, setReservasSearch, reservasCampoSel, setReservasCampoSel, pendingBusqueda } = useExplorer();
+  const { resultado, loading, error, tema, visibleSeries, toggleSerie, setAllVisible, groupBy, setGroupBy, period, start_year, end_year, start_month, end_month, perfFiltros, prodFiltros, prodOpciones, compareMode, reservasTipo, setReservasTipo, reservasSearch, setReservasSearch, reservasCampoSel, setReservasCampoSel, pendingBusqueda, pendingIndividual, setPendingIndividual } = useExplorer();
   const [viewMode, setViewMode]   = useState("tablas");
   const [chartType, setChartType] = useState("line");
 
@@ -1669,6 +1691,33 @@ export default function ChartArea() {
   // Vista general vs. "Gráfica individual" (una empresa en Operadores, un
   // Ambiente en "Producción por ubicación").
   const [operadorPersonalizada, setOperadorPersonalizada] = useState(false);
+  // Entidad que pidió el buscador global para la "Gráfica individual" de este
+  // tema: al llegar buscando UNA asignación/campo/contrato, si el usuario pasa
+  // a gráficos lo que quiere ver es la de ella, no la primera de la lista.
+  const [individualSel, setIndividualSel] = useState(null);
+  // Estos dos efectos van en ESTE orden a propósito: al llegar desde el
+  // buscador los dos se disparan en el mismo commit (cambia el tema y llega la
+  // bandera), y corren en orden de declaración. Al revés, el de limpieza
+  // borraba justo después la selección que el otro acababa de poner.
+  // Al cambiar de tema se olvida: la entidad pertenecía al tema anterior.
+  useEffect(() => {
+    setIndividualSel(null);
+    setOperadorPersonalizada(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tema?.json_arg]);
+  useEffect(() => {
+    if (!tema) return;
+    if (pendingIndividual && pendingIndividual.tema === tema.json_arg) {
+      setIndividualSel(pendingIndividual.nombre);
+      // Se enciende la vista individual, pero NO se cambia a gráficos: el
+      // usuario llega a la tabla, que es donde ve el dato. Si decide pasar a
+      // gráficos, ya está puesta la suya.
+      setOperadorPersonalizada(true);
+      setPendingIndividual(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingIndividual, tema?.json_arg]);
+
   // Inversiones por contrato: gráfica individual por contrato (el botón
   // de Filtros vive en TopBar, igual que Perforación/Producción).
   const [invPersonalizada, setInvPersonalizada] = useState(false);
@@ -2296,7 +2345,7 @@ export default function ChartArea() {
               : esOperadores
                 ? (
                   verPersonalizada
-                    ? <OperadorCustomChart empresas={resultado.empresas ?? []} categories={resultado.categories ?? []} chartType={chartType} tituloTema={tituloTema} visibleSeries={visibleSeries} />
+                    ? <OperadorCustomChart empresas={resultado.empresas ?? []} categories={resultado.categories ?? []} chartType={chartType} tituloTema={tituloTema} visibleSeries={visibleSeries} seleccionInicial={individualSel} />
                     : (() => {
                         // Vista por defecto: 2 gráficos totales por unidad (Mbd/MMpcd),
                         // ya reflejan el filtro Pemex/Privadas/empresas aplicado en TopBar
@@ -2322,7 +2371,8 @@ export default function ChartArea() {
                                   : esGcompoTopic ? resultado.cuencas_gas
                                   : esApiTopic ? resultado.cuencas_api
                                   : resultado.contratos) ?? []}
-                      categories={resultado.categories ?? []} chartType={chartType} tituloTema={tituloTema} />
+                      categories={resultado.categories ?? []} chartType={chartType} tituloTema={tituloTema}
+                      seleccionInicial={individualSel} />
                   : esProdCuenca
                   ? (() => {
                       // "Por producto": un panel por unidad (Mbd, MMpcd) más el

@@ -31,7 +31,7 @@ const TEMAS_POR_TIPO = {
   // original, GURUMAL por ejemplo) y la tabla descarta los ceros, asi que
   // ofrecer el tema llevaba a una pantalla vacia. El backend lo marca.
   campo: (r) => [
-    ["Campos", { busqueda: r.nombre, todasLasSeries: true, anio: inactivaDesde(r) }],
+    ["Campos", { busqueda: r.nombre, todasLasSeries: true, anio: inactivaDesde(r), individual: r.nombre }],
     ["PozosCampos", { busqueda: r.nombre, anio: inactivaDesde(r) }],
     ...(r.con_reservas ? [["ReservasP", { busqueda: r.nombre }]] : []),
   ],
@@ -40,13 +40,15 @@ const TEMAS_POR_TIPO = {
   ],
   asignacion: (r) => [
     ["Asignaciones", {
-      busqueda: r.nombre, todasLasSeries: true, anio: inactivaDesde(r),
+      busqueda: r.nombre, todasLasSeries: true, anio: inactivaDesde(r), individual: r.nombre,
       filtros: { cuencas: r.cuenca ? [r.cuenca] : [], ubicaciones: r.ubicacion ? [r.ubicacion] : [] },
     }],
     ...(r.con_reservas ? [["ReservasAsigP", { busqueda: r.nombre }]] : []),
   ],
   contrato: (r) => [
-    ["Contratos", { busqueda: r.codigo ?? r.nombre, todasLasSeries: true, anio: inactivaDesde(r) }],
+    // El selector de la gráfica individual de Contratos lista los códigos
+    // (ASIG_CONT), no el nombre del bloque.
+    ["Contratos", { busqueda: r.codigo ?? r.nombre, todasLasSeries: true, anio: inactivaDesde(r), individual: r.codigo ?? r.nombre }],
     ["InvCont", { busqueda: r.nombre }],
     ["PozosLic", { busqueda: r.nombre }],
     ["EfectivoLic", { busqueda: r.nombre }],
@@ -54,18 +56,21 @@ const TEMAS_POR_TIPO = {
     ...(r.con_reservas ? [["ReservasAsigP", { busqueda: r.nombre }]] : []),
   ],
   operador: (r) => [
-    ["Operadores", { busqueda: r.nombre, todasLasSeries: true }],
+    ["Operadores", { busqueda: r.nombre, todasLasSeries: true, individual: r.nombre }],
     ["PozPerf", { busqueda: r.nombre }],
     ["PozTerm", { busqueda: r.nombre }],
     ["EmpresasG", { busqueda: r.nombre }],
   ],
   entidad: (r) => [
-    ["Estado", { busqueda: r.nombre }],
+    ["Estado", { busqueda: r.nombre, individual: r.nombre }],
   ],
   cuenca: (r) => [
     ["Cuenca", { filtros: { cuencas: [r.nombre], ubicaciones: [] } }],
-    ["API", { filtros: { cuencas: [r.nombre], ubicaciones: [] } }],
-    ["Gcompo", { filtros: { cuencas: [r.nombre], ubicaciones: [] } }],
+    // API y Gcompo eligen por cuenca en su gráfica individual; "Cuenca" (el
+    // tema de Producción por ubicación) elige por ambiente, así que ahí no
+    // aplica la preselección.
+    ["API", { filtros: { cuencas: [r.nombre], ubicaciones: [] }, individual: r.nombre }],
+    ["Gcompo", { filtros: { cuencas: [r.nombre], ubicaciones: [] }, individual: r.nombre }],
     ["InvCuenca", { busqueda: r.nombre }],
   ],
 };

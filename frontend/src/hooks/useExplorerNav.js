@@ -9,9 +9,10 @@ import { useExplorer } from "../store/useExplorer";
 export function useExplorerNav() {
   const { temas, tema: temaActual, seccion: seccionActual, prodFiltros, perfFiltros,
           setSeccion, setTema, setPendingPozoSelection, setPendingBusqueda,
-          setPendingProdFiltros, setForzarTodasLasSeries, setPendingPeriodo, pushNav } = useExplorer();
+          setPendingProdFiltros, setForzarTodasLasSeries, setPendingPeriodo,
+          setPendingIndividual, pushNav } = useExplorer();
 
-  function irATema(jsonArg, { pozo, campo, busqueda, vista, filtros, todasLasSeries, anio } = {}) {
+  function irATema(jsonArg, { pozo, campo, busqueda, vista, filtros, todasLasSeries, anio, individual } = {}) {
     const tema = temas.find(t => t.json_arg === jsonArg);
     if (!tema) return false;
     // Se guarda de dónde venía para poder volver con el botón flotante: estos
@@ -51,6 +52,8 @@ export function useExplorerNav() {
     // Entidades que dejaron de producir: se abre el tema en su ultimo anio con
     // datos, si no la vista sale vacia en el anio en curso sin explicacion.
     if (anio) setPendingPeriodo({ tema: jsonArg, anio });
+    // La "Grafica individual" del tema destino abre ya en esta entidad.
+    if (individual) setPendingIndividual({ tema: jsonArg, nombre: individual });
     return true;
   }
 
