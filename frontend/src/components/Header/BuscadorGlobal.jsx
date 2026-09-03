@@ -3,6 +3,7 @@ import { fetchBuscar } from "../../api/client";
 import { useExplorer } from "../../store/useExplorer";
 import { useExplorerNav } from "../../hooks/useExplorerNav";
 import { acentuarTema } from "../../utils/acentuarTema";
+import { registrarBusqueda } from "../../utils/telemetria";
 
 // Buscador global: el usuario escribe el nombre de lo que sea —un pozo, un
 // campo, una asignación, un contrato, una empresa, una entidad federativa, una
@@ -149,6 +150,9 @@ export default function BuscadorGlobal() {
   }
 
   function abrirTema(r, destino) {
+    // Se registra lo que el usuario ELIGIÓ, no cada tecleo: eso dice qué busca
+    // la gente de verdad, sin llenar la tabla de prefijos a medio escribir.
+    registrarBusqueda(r.nombre);
     irATema(destino.jsonArg, destino.nav);
     setAbierto(false);
     setExpandido(null);

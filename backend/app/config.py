@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     pg_password: str = ""
     cors_origins: str = "http://localhost:5173,http://localhost:5174,http://localhost:80"
     secret_key: str = "change-in-production"
+    # Clave del panel de administrador (metricas de uso). Vacia = panel
+    # deshabilitado: preferimos que no exista a que exista sin proteccion.
+    admin_key: str = ""
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:7b"
 
