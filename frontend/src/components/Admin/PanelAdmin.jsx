@@ -149,9 +149,14 @@ export default function PanelAdmin() {
     },
     yAxis: { type: "value", axisLabel: { fontSize: 10, color: "#767b87" }, splitLine: { show: false } },
     series: [{
-      name: "Sesiones", type: "bar", barMaxWidth: 24,
+      name: "Sesiones", type: "line", smooth: true,
+      // Con un solo día no hay segmento que dibujar: sin el punto la gráfica
+      // saldría en blanco aunque el dato esté.
+      symbol: (datos?.por_dia?.length ?? 0) <= 1 ? "circle" : "none", symbolSize: 8,
       data: (datos?.por_dia ?? []).map(d => d.sesiones),
-      itemStyle: { color: "#0d7a4a", borderRadius: [4, 4, 0, 0] },
+      lineStyle: { width: 2, color: "#0d7a4a" },
+      itemStyle: { color: "#0d7a4a" },
+      areaStyle: { color: "#0d7a4a14" },
     }],
   };
 
@@ -166,9 +171,12 @@ export default function PanelAdmin() {
     },
     yAxis: { type: "value", axisLabel: { fontSize: 10, color: "#767b87" }, splitLine: { show: false } },
     series: [{
-      name: "Sesiones", type: "bar", barMaxWidth: 18,
+      name: "Sesiones", type: "line", smooth: true,
+      symbol: (datos?.por_hora?.length ?? 0) <= 1 ? "circle" : "none", symbolSize: 8,
       data: (datos?.por_hora ?? []).map(h => h.sesiones),
-      itemStyle: { color: "#0db4be", borderRadius: [4, 4, 0, 0] },
+      lineStyle: { width: 2, color: "#0db4be" },
+      itemStyle: { color: "#0db4be" },
+      areaStyle: { color: "#0db4be14" },
     }],
   };
 
@@ -218,7 +226,7 @@ export default function PanelAdmin() {
             <Tarjeta etiqueta="Equipos" valor={r.equipos.toLocaleString("es-MX")} nota="direcciones IP distintas" />
             <Tarjeta etiqueta="Tiempo total" valor={`${r.minutos.toLocaleString("es-MX")} min`} />
             <Tarjeta etiqueta="Por visita" valor={`${r.minutos_por_sesion} min`} nota="promedio" />
-            <Tarjeta etiqueta="Temas abiertos" valor={r.consultas_tema.toLocaleString("es-MX")} />
+            <Tarjeta etiqueta="Secciones abiertas" valor={r.consultas_seccion.toLocaleString("es-MX")} />
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16, marginBottom: 20 }}>
@@ -233,15 +241,14 @@ export default function PanelAdmin() {
           </div>
 
           <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 14, marginBottom: 20 }}>
-            <h2 style={{ fontSize: 12, fontWeight: 600, color: "#0f766e", margin: "0 0 10px" }}>Temas más consultados</h2>
-            {datos.temas.length === 0
+            <h2 style={{ fontSize: 12, fontWeight: 600, color: "#0f766e", margin: "0 0 10px" }}>Secciones más consultadas</h2>
+            {datos.secciones.length === 0
               ? <p style={{ fontSize: 12, color: "#94a3b8" }}>Sin consultas en el periodo.</p>
               : (
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
                     <thead>
                       <tr style={{ textAlign: "left", color: "#94a3b8", fontSize: 10, textTransform: "uppercase", letterSpacing: ".06em" }}>
-                        <th style={{ padding: "6px 8px" }}>Tema</th>
                         <th style={{ padding: "6px 8px" }}>Sección</th>
                         <th style={{ padding: "6px 8px", textAlign: "right" }}>Veces</th>
                         <th style={{ padding: "6px 8px", textAlign: "right" }}>Visitas</th>
@@ -249,10 +256,11 @@ export default function PanelAdmin() {
                       </tr>
                     </thead>
                     <tbody>
-                      {datos.temas.map(t => (
-                        <tr key={`${t.seccion}|${t.tema}`} style={{ borderTop: "1px solid #f1f5f9" }}>
-                          <td style={{ padding: "6px 8px", fontWeight: 500, color: "#1f2430" }}>{acentuarTema(t.tema)}</td>
-                          <td style={{ padding: "6px 8px", color: "#64748b" }}>{acentuarTema(t.seccion ?? "")}</td>
+                      {datos.secciones.map(t => (
+                        <tr key={t.seccion} style={{ borderTop: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "6px 8px", fontWeight: 500, color: "#1f2430" }}>
+                            {t.seccion === "Indicadores Economicos" ? "Indicadores Económicos" : acentuarTema(t.seccion ?? "")}
+                          </td>
                           <td style={{ padding: "6px 8px", textAlign: "right" }}>{t.consultas.toLocaleString("es-MX")}</td>
                           <td style={{ padding: "6px 8px", textAlign: "right", color: "#64748b" }}>{t.sesiones.toLocaleString("es-MX")}</td>
                           <td style={{ padding: "6px 8px", textAlign: "right", color: "#64748b" }}>{t.minutos.toLocaleString("es-MX")}</td>

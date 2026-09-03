@@ -16,7 +16,6 @@ import PozosComprometidosDetallePanel from "./PozosComprometidosDetallePanel";
 import ContratosAdjudicadosDetallePanel from "./ContratosAdjudicadosDetallePanel";
 import ReportBuilderModal from "./ReportBuilderModal";
 import { descargarCsvConHeader } from "../../utils/exportCsv";
-import { registrarTema } from "../../utils/telemetria";
 import { AGUA_COLOR, AGUA_AREA, AGUA_LINEA, esAgua, ejeAgua } from "../../utils/estiloAgua";
 
 const PALETTE = [
@@ -1696,12 +1695,6 @@ export default function ChartArea() {
   // tema: al llegar buscando UNA asignación/campo/contrato, si el usuario pasa
   // a gráficos lo que quiere ver es la de ella, no la primera de la lista.
   const [individualSel, setIndividualSel] = useState(null);
-  // Registro de uso: qué tema se abrió. La función ignora repeticiones del
-  // mismo tema, así que no importa que el efecto corra de más.
-  useEffect(() => {
-    if (tema?.json_arg) registrarTema(tema.seccion, tema.json_arg);
-  }, [tema?.json_arg, tema?.seccion]);
-
   // Estos dos efectos van en ESTE orden a propósito: al llegar desde el
   // buscador los dos se disparan en el mismo commit (cambia el tema y llega la
   // bandera), y corren en orden de declaración. Al revés, el de limpieza

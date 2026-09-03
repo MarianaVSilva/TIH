@@ -7,7 +7,8 @@ import { FichaProvider } from "./components/Fichas/FichaContext";
 import FichaModal from "./components/Fichas/FichaModal";
 import BotonVolver from "./components/UI/BotonVolver";
 import PanelAdmin from "./components/Admin/PanelAdmin";
-import { registrarVista, iniciarPulsos } from "./utils/telemetria";
+import { registrarVista, registrarSeccion, iniciarPulsos } from "./utils/telemetria";
+import { useExplorer } from "./store/useExplorer";
 
 export default function App() {
   const [chatOpen, setChatOpen] = useState(false);
@@ -27,6 +28,14 @@ export default function App() {
     registrarVista();
     iniciarPulsos();
   }, [esAdmin]);
+
+  // La sección activa se lee del store, que es justo lo que cambian las pills
+  // del encabezado — así se registra el clic en la pill aunque el usuario no
+  // llegue a elegir un tema.
+  const seccion = useExplorer(e => e.seccion);
+  useEffect(() => {
+    if (!esAdmin) registrarSeccion(seccion);
+  }, [seccion, esAdmin]);
 
   if (esAdmin) return <PanelAdmin />;
 

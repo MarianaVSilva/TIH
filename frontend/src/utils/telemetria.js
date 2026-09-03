@@ -40,21 +40,25 @@ function enviar(cuerpo) {
   } catch { /* la telemetría jamás debe romper la app */ }
 }
 
-// Tema que se está viendo ahora, para que los pulsos sepan a qué imputar el
-// tiempo.
-let actual = { seccion: null, tema: null };
+// Sección que se está viendo ahora, para que los pulsos sepan a qué imputar
+// el tiempo.
+//
+// La unidad que se mide es la SECCIÓN —las pills del encabezado— y no el tema
+// concreto (pedido explícito): interesa saber qué área del tablero se usa, no
+// cada consulta dentro de ella.
+let actual = { seccion: null };
 
 export function registrarVista() {
   enviar({ tipo: "vista" });
 }
 
-export function registrarTema(seccion, tema) {
-  if (!tema) return;
-  // Evita duplicar cuando el componente se vuelve a montar con el mismo tema
-  // (pasa al cambiar de periodo o de pestaña interna).
-  if (actual.tema === tema && actual.seccion === seccion) return;
-  actual = { seccion: seccion ?? null, tema };
-  enviar({ tipo: "tema", seccion: actual.seccion, tema });
+export function registrarSeccion(seccion) {
+  // Sin sección es el Panorama general, que también es una pill (la casita).
+  const nombre = seccion || "Panorama general";
+  // Evita duplicar cuando el componente se remonta sin cambiar de sección.
+  if (actual.seccion === nombre) return;
+  actual = { seccion: nombre };
+  enviar({ tipo: "seccion", seccion: nombre });
 }
 
 export function registrarBusqueda(texto) {
@@ -69,6 +73,6 @@ export function iniciarPulsos() {
   if (cronometro) return;
   cronometro = setInterval(() => {
     if (document.visibilityState !== "visible") return;
-    enviar({ tipo: "pulso", seccion: actual.seccion, tema: actual.tema });
+    enviar({ tipo: "pulso", seccion: actual.seccion });
   }, PULSO_MS);
 }

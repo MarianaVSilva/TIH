@@ -1,4 +1,5 @@
-"""Métricas de uso del tablero: cuánto se visita, cuánto tiempo y qué temas.
+"""Métricas de uso del tablero: cuánto se visita, cuánto tiempo y qué
+secciones se consultan.
 
 Es la ÚNICA parte del sistema que escribe datos propios de negocio (el resto
 de la base se consume en lectura, salvo los cachés). Vive en su propia tabla,
@@ -13,7 +14,7 @@ esta tabla es dato personal en la práctica y conviene tratarla como tal
 (acceso restringido, y borrarla cuando deje de ser útil — ver `purgar`).
 
 CÓMO SE MIDE EL TIEMPO: el frontend manda un "pulso" cada 30 s mientras la
-pestaña está visible, con el tema que se está viendo. El tiempo de una sesión
+pestaña está visible, con la sección que se está viendo. El tiempo de una sesión
 es la suma de sus pulsos. Se eligió así en vez de medir al cerrar la pestaña
 porque el evento de cierre no llega de forma confiable (el navegador lo
 descarta si tarda), y porque una pestaña olvidada en segundo plano no debe
@@ -95,7 +96,9 @@ def _asegurar_tabla(engine: Engine) -> None:
 
 # Tipos de evento aceptados. Se validan para que un cliente mal escrito (o
 # alguien golpeando el endpoint) no llene la tabla de basura arbitraria.
-TIPOS = {"vista", "tema", "pulso", "busqueda"}
+# "tema" queda aceptado por los registros que ya existen: la unidad de medida
+# paso a ser la SECCION (las pills del encabezado), no el tema concreto.
+TIPOS = {"vista", "seccion", "tema", "pulso", "busqueda"}
 
 
 def registrar(engine: Engine, *, sesion: str, tipo: str, ip: str | None = None,
@@ -151,7 +154,7 @@ def metricas(engine: Engine, desde: str | None = None, hasta: str | None = None)
         SELECT COUNT(DISTINCT sesion)  AS sesiones,
                COUNT(DISTINCT ip)      AS equipos,
                SUM(segundos)           AS segundos,
-               SUM(CASE WHEN tipo = 'tema' THEN 1 ELSE 0 END) AS consultas
+               SUM(CASE WHEN tipo IN ('seccion', 'tema') THEN 1 ELSE 0 END) AS consultas
         FROM {_TABLA} WHERE {filtro}
     """, params)
     fila = resumen.iloc[0] if not resumen.empty else {}
@@ -168,23 +171,25 @@ def metricas(engine: Engine, desde: str | None = None, hasta: str | None = None)
         GROUP BY {fecha_dia} ORDER BY 1
     """, params)
 
-    temas = _leer(engine, f"""
-        SELECT seccion, tema,
+    # Lo que se mide es la SECCION del encabezado (las pills), no el tema
+    # concreto: interesa que area del tablero se usa mas.
+    secciones = _leer(engine, f"""
+        SELECT seccion,
                COUNT(*)                AS consultas,
                COUNT(DISTINCT sesion)  AS sesiones
         FROM {_TABLA}
-        WHERE {filtro} AND tipo = 'tema' AND tema IS NOT NULL
-        GROUP BY seccion, tema ORDER BY 3 DESC
+        WHERE {filtro} AND tipo IN ('seccion', 'tema') AND seccion IS NOT NULL
+        GROUP BY seccion ORDER BY 2 DESC
     """, params)
 
-    # Tiempo por tema: los pulsos llevan el tema que se estaba viendo.
-    tiempo_tema = _leer(engine, f"""
-        SELECT tema, SUM(segundos) AS segundos
+    # Tiempo por seccion: los pulsos llevan la seccion que se estaba viendo.
+    tiempo_seccion = _leer(engine, f"""
+        SELECT seccion, SUM(segundos) AS segundos
         FROM {_TABLA}
-        WHERE {filtro} AND tipo = 'pulso' AND tema IS NOT NULL
-        GROUP BY tema ORDER BY 2 DESC
+        WHERE {filtro} AND tipo = 'pulso' AND seccion IS NOT NULL
+        GROUP BY seccion ORDER BY 2 DESC
     """, params)
-    minutos_por_tema = {r["tema"]: round(_num(r["segundos"]) / 60) for r in tiempo_tema.to_dict("records")}
+    minutos_por_seccion = {r["seccion"]: round(_num(r["segundos"]) / 60) for r in tiempo_seccion.to_dict("records")}
 
     busquedas = _leer(engine, f"""
         SELECT detalle AS texto, COUNT(*) AS veces
@@ -206,7 +211,7 @@ def metricas(engine: Engine, desde: str | None = None, hasta: str | None = None)
         "resumen": {
             "sesiones": sesiones,
             "equipos": _num(fila.get("equipos")),
-            "consultas_tema": _num(fila.get("consultas")),
+            "consultas_seccion": _num(fila.get("consultas")),
             "minutos": round(segundos / 60),
             # Promedio por sesión: la cifra que de verdad dice si la gente se
             # queda o solo asoma.
@@ -216,10 +221,10 @@ def metricas(engine: Engine, desde: str | None = None, hasta: str | None = None)
             {"dia": str(r["dia"]), "sesiones": _num(r["sesiones"]), "minutos": round(_num(r["segundos"]) / 60)}
             for r in por_dia.to_dict("records")
         ],
-        "temas": [
-            {"seccion": r["seccion"], "tema": r["tema"], "consultas": _num(r["consultas"]),
-             "sesiones": _num(r["sesiones"]), "minutos": minutos_por_tema.get(r["tema"], 0)}
-            for r in temas.to_dict("records")
+        "secciones": [
+            {"seccion": r["seccion"], "consultas": _num(r["consultas"]),
+             "sesiones": _num(r["sesiones"]), "minutos": minutos_por_seccion.get(r["seccion"], 0)}
+            for r in secciones.to_dict("records")
         ],
         "busquedas": [
             {"texto": r["texto"], "veces": _num(r["veces"])}
