@@ -30,17 +30,45 @@ app = FastAPI(
     title="TIH – Tablero de Información de Hidrocarburos",
     description="API moderna para consulta de información estadística de hidrocarburos.",
     version="2.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    # /docs, /redoc y /openapi.json solo si DOCS_ENABLED=true. En produccion
+    # enumeran toda la superficie de la API a cualquiera; se dejan apagados.
+    docs_url="/docs" if settings.docs_enabled else None,
+    redoc_url="/redoc" if settings.docs_enabled else None,
+    openapi_url="/openapi.json" if settings.docs_enabled else None,
 )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # Sin cookies: el panel de admin autentica con un header, no con sesion de
+    # navegador. allow_credentials=True obliga a origenes exactos y no aporta
+    # nada aqui, asi que se apaga. Metodos y headers acotados a lo que se usa.
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Admin-Key"],
+    max_age=3600,
 )
+
+
+@app.middleware("http")
+async def limite_tamano_cuerpo(request: Request, call_next):
+    """Rechaza cuerpos gigantes por Content-Length antes de leerlos. Los POST
+    de este API son diminutos (eventos de telemetria); cualquier cosa grande
+    es un intento de agotar memoria."""
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > settings.max_body_bytes:
+        return SafeJSONResponse({"detail": "Cuerpo de la peticion demasiado grande."}, status_code=413)
+    return await call_next(request)
+
+
+@app.exception_handler(Exception)
+async def error_no_controlado(request: Request, exc: Exception):
+    """Nunca devolver una traza ni el mensaje interno al cliente: filtraria
+    nombres de tablas, rutas y detalles utiles para un atacante. Se registra
+    en el log del servidor y al cliente le llega un mensaje generico."""
+    import logging
+    logging.getLogger("tih").exception("Error no controlado en %s", request.url.path)
+    return SafeJSONResponse({"detail": "Error interno del servidor."}, status_code=500)
 # Comprime respuestas grandes (p. ej. "Descargar todo" en Actividad Petrolera,
 # ~10MB de JSON sin comprimir para 150k filas) — reduce bastante el tiempo de
 # transferencia sin tocar dependencias nuevas (GZipMiddleware ya viene con
@@ -54,18 +82,18 @@ app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=3)
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
+    # Nota: estas respuestas son JSON de la API. La CSP que de verdad protege
+    # la aplicacion es la del HTML, y ese lo sirve Apache (ver
+    # deploy/apache_tih.conf) — alli va la CSP con la lista de origenes que el
+    # frontend necesita. Aqui se manda una CSP minima igualmente, por defensa
+    # en profundidad si alguien abre una respuesta de la API directo.
     response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; "
-        "script-src 'self'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; "
-        "connect-src 'self'; "
-        "frame-ancestors 'none'; "
-        "base-uri 'self'"
+        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "same-origin"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     return response
 
 PREFIX = "/api/v1"

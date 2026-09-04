@@ -19,6 +19,7 @@ from sqlalchemy.engine import Engine
 from app.config import settings
 from app.database import get_db_dep
 from app.services import uso_service
+from app.services.rate_limit import limitar
 
 router = APIRouter(prefix="/uso", tags=["uso"])
 
@@ -32,18 +33,25 @@ class EventoIn(BaseModel):
 
 
 def _ip(request: Request) -> str | None:
-    """IP real del visitante. Detrás de Apache/Nginx la conexión viene del
-    proxy, así que manda X-Forwarded-For si está presente."""
+    """IP real del visitante. Detrás de un único proxy de confianza (Apache),
+    el ÚLTIMO valor de X-Forwarded-For es el que el proxy añadió con la IP real;
+    los anteriores puede haberlos puesto el cliente y son falsificables."""
     reenviada = request.headers.get("x-forwarded-for")
     if reenviada:
-        return reenviada.split(",")[0].strip()
+        partes = [p.strip() for p in reenviada.split(",") if p.strip()]
+        if partes:
+            return partes[-1]
     return request.client.host if request.client else None
 
 
-def _exigir_admin(x_admin_key: str | None = Header(default=None)) -> None:
+def _exigir_admin(request: Request, x_admin_key: str | None = Header(default=None)) -> None:
     """Clave de administrador. Se compara en tiempo constante para no filtrar
     por cuánto tarda en fallar, y se rechaza si no hay clave configurada: sin
-    eso, un despliegue sin `admin_key` en el .env dejaría el panel abierto."""
+    eso, un despliegue sin `admin_key` en el .env dejaría el panel abierto.
+
+    Rate limit estricto: 10 intentos por minuto y por IP. Con eso, adivinar
+    una clave aleatoria de 24 caracteres por fuerza bruta es inviable."""
+    limitar(request, max_peticiones=10, ventana_seg=60, ambito="admin")
     esperada = (settings.admin_key or "").strip()
     if not esperada:
         raise HTTPException(status_code=503, detail="El panel de administrador no está configurado (falta admin_key).")
@@ -53,6 +61,10 @@ def _exigir_admin(x_admin_key: str | None = Header(default=None)) -> None:
 
 @router.post("/evento", status_code=204)
 def registrar_evento(evento: EventoIn, request: Request, engine: Engine = Depends(get_db_dep)):
+    # Endpoint publico (lo llama el navegador de cada visitante). Un tope
+    # generoso —120/min por IP, 4 pulsos/min en uso normal— frena un flood que
+    # busque llenar la tabla, sin estorbar a un usuario real.
+    limitar(request, max_peticiones=120, ventana_seg=60, ambito="evento")
     uso_service.registrar(
         engine, sesion=evento.sesion, tipo=evento.tipo, ip=_ip(request),
         seccion=evento.seccion, tema=evento.tema, detalle=evento.detalle,

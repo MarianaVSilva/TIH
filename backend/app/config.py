@@ -21,6 +21,14 @@ class Settings(BaseSettings):
     admin_key: str = ""
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:7b"
+    # Documentacion interactiva (/docs, /redoc, /openapi.json). Apagada por
+    # defecto: en produccion enumera toda la API a cualquiera. Se enciende con
+    # DOCS_ENABLED=true en el .env solo cuando se necesita depurar.
+    docs_enabled: bool = False
+    # Tope de tamano del cuerpo de una peticion (bytes). Corta cargas absurdas
+    # antes de que lleguen a leerse. 1 MB sobra para todo lo que este API recibe
+    # (los POST son eventos de telemetria diminutos).
+    max_body_bytes: int = 1_048_576
 
     @property
     def cors_origins_list(self) -> list[str]:
