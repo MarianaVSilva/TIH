@@ -26,7 +26,7 @@ function Card({ children, style, ...rest }) {
   );
 }
 
-function UnidadesNota({ style, texto = "Mbd: miles de barriles diarios · MMpcd: millones de pies cúbicos diarios" }) {
+function UnidadesNota({ style, texto = "* Mbd: miles de barriles diarios · MMpcd: millones de pies cúbicos diarios" }) {
   return (
     <p
       className="text-[10px] leading-tight"
@@ -137,7 +137,7 @@ function CifrasNacionales({ nacional }) {
       <div style={{ padding: "4px 26px 0" }}>
         <UnidadesNota style={{ marginTop: 0 }} />
         <p className="text-[10px]" style={{ color: MUTED, marginTop: 2 }}>
-          Hidrocarburos líquidos: se refiere a la suma de petróleo y condensado.
+          * Hidrocarburos líquidos: se refiere a la suma de petróleo y condensado.
         </p>
       </div>
     </div>
