@@ -191,9 +191,13 @@ function IndicadoresEconomicos({ indicadores }) {
           color="#0d7a4a" bg="#daf0df"
         />
       </div>
-      <p className="text-[10px] truncate" style={{ color: MUTED, padding: "4px 26px" }} title="Precios de referencia tomados de la tabla de precios de la base de datos, sujetos a variación. Cada indicador muestra su último dato disponible.">
+      <p className="text-[10px] truncate" style={{ color: MUTED, padding: "4px 26px 0" }} title="Precios de referencia tomados de la tabla de precios de la base de datos, sujetos a variación. Cada indicador muestra su último dato disponible.">
         * Precios de referencia, sujetos a variación · último dato disponible de cada indicador
       </p>
+      {/* Segundo renglón (vacío) para igualar la altura de la card de
+          Producción, que lleva la nota extra de "Hidrocarburos líquidos": así
+          las dos cards de arriba quedan a la par y sus bandas de color alineadas. */}
+      <p className="text-[10px]" aria-hidden="true" style={{ padding: "0 26px 4px", visibility: "hidden" }}>·</p>
     </div>
   );
 }
@@ -316,45 +320,43 @@ function buildExportPDFData(data) {
   };
 }
 
+// Fila de un ranking (campos o reservas): nombre + valor en una línea y una
+// BARRA horizontal proporcional debajo. Antes eran "barrilitos" diminutos que
+// se veían perdidos en el espacio grande de la card; la barra llena el ancho y
+// se lee como un ranking de verdad.
 function CampoRow({ rank, nombre, valor, ratio, color }) {
   const nombreMostrado = nombreCampoDisplay(nombre);
   const { abrirCampo } = useAbrirFicha();
   return (
-    <div className="flex items-center gap-1.5 py-1 min-w-0">
-      <span className="text-[13px] shrink-0" style={{ color: MUTED, width: 18 }}>{rank}.</span>
-      <button
-        // Se abre la ficha con el nombre CRUDO (identificador real), no con
-        // el nombre "bonito" que se muestra. flex-1 + break-words: el nombre
-        // toma el ancho que haya y parte a dos renglones antes que recortarse
-        // (TUPILCO PROFUNDO / QUESQUI se veían cortados con el ancho fijo).
-        onClick={() => abrirCampo(nombre)}
-        title="Ver ficha del campo"
-        className="flex-1 min-w-0 text-[12px] font-medium leading-tight text-left hover:underline decoration-teal-400 underline-offset-2"
-        style={{ color: INK, overflowWrap: "anywhere" }}
-      >
-        {nombreMostrado}
-      </button>
-      <div className="flex gap-0.5 shrink-0 self-center">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <BarrelPartial key={i} fraction={ratio * 5 - i} color={color} size={16} />
-        ))}
+    <div className="min-w-0">
+      <div className="flex items-baseline gap-2">
+        <span className="text-[12px] shrink-0" style={{ color: MUTED, width: 18 }}>{rank}.</span>
+        <button
+          // Se abre la ficha con el nombre CRUDO (identificador real), no con
+          // el nombre "bonito" que se muestra.
+          onClick={() => abrirCampo(nombre)}
+          title="Ver ficha del campo"
+          className="flex-1 min-w-0 text-[13px] font-medium leading-tight text-left hover:underline decoration-teal-400 underline-offset-2"
+          style={{ color: INK, overflowWrap: "anywhere" }}
+        >
+          {nombreMostrado}
+        </button>
+        <span className="text-[13.5px] font-semibold tabular-nums shrink-0" style={{ color: INK }}>
+          {valor.toLocaleString("es-MX")}
+        </span>
       </div>
-      <span className="text-[13.5px] font-semibold tabular-nums text-right self-center shrink-0" style={{ color: INK }}>
-        {valor.toLocaleString("es-MX")}
-      </span>
+      <div className="rounded-full mt-1.5" style={{ height: 8, background: "#eef0ec" }}>
+        {/* mínimo 3% para que un valor chico igual muestre un trozo visible. */}
+        <div className="rounded-full h-full" style={{ width: `${Math.max((ratio || 0) * 100, 3)}%`, background: color }} />
+      </div>
     </div>
   );
 }
 
-// Espaciador que reproduce el ancho de "rango + nombre" y "barrilitos" de
-// CampoRow, para que la unidad quede alineada justo arriba de las cifras.
+// Etiqueta de unidad alineada a la derecha, sobre la columna de cifras.
 function UnidadHeader({ unidad }) {
   return (
-    <div className="flex items-center gap-1.5 pb-1">
-      <span className="shrink-0" style={{ width: 68 }} />
-      <span className="shrink-0" style={{ width: 88 }} />
-      <span className="text-[11px] italic" style={{ color: MUTED }}>{unidad}</span>
-    </div>
+    <div className="text-right text-[11px] italic pb-1" style={{ color: MUTED }}>{unidad}</div>
   );
 }
 
