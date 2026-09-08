@@ -122,7 +122,7 @@ function CifrasNacionales({ nacional }) {
       <div style={{ padding: "10px 26px 4px" }}>
         <CardTitle>Producción mensual</CardTitle>
       </div>
-      <div className="flex items-stretch flex-wrap flex-1">
+      <div className="flex items-stretch flex-wrap flex-none" style={{ height: 126 }}>
         <BigStat
           label="Hidrocarburos líquidos" unidad="Mbd"
           valor={nacional.liquidos?.valor} promedio={nacional.liquidos?.promedio}
@@ -173,7 +173,7 @@ function IndicadoresEconomicos({ indicadores }) {
       <div style={{ padding: "10px 26px 4px" }}>
         <CardTitle>Precios de referencia</CardTitle>
       </div>
-      <div className="flex items-stretch flex-wrap flex-1">
+      <div className="flex items-stretch flex-wrap flex-none" style={{ height: 126 }}>
         <IndicadorEconomico
           label="Henry Hub" unidad="USD/MMBtu"
           valor={indicadores.henry_hub?.valor} fecha={indicadores.henry_hub?.fecha}
@@ -191,13 +191,9 @@ function IndicadoresEconomicos({ indicadores }) {
           color="#0d7a4a" bg="#daf0df"
         />
       </div>
-      <p className="text-[10px] truncate" style={{ color: MUTED, padding: "4px 26px 0" }} title="Precios de referencia tomados de la tabla de precios de la base de datos, sujetos a variación. Cada indicador muestra su último dato disponible.">
+      <p className="text-[10px] truncate" style={{ color: MUTED, padding: "4px 26px" }} title="Precios de referencia tomados de la tabla de precios de la base de datos, sujetos a variación. Cada indicador muestra su último dato disponible.">
         * Precios de referencia, sujetos a variación · último dato disponible de cada indicador
       </p>
-      {/* Segundo renglón (vacío) para igualar la altura de la card de
-          Producción, que lleva la nota extra de "Hidrocarburos líquidos": así
-          las dos cards de arriba quedan a la par y sus bandas de color alineadas. */}
-      <p className="text-[10px]" aria-hidden="true" style={{ padding: "0 26px 4px", visibility: "hidden" }}>·</p>
     </div>
   );
 }
