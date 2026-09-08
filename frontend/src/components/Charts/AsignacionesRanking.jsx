@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { fmt2 } from "../../utils/formato";
 import { fetchAsignacionesRanking } from "../../api/client";
 import LoadingSpinner from "../UI/LoadingSpinner";
 import { useExplorer } from "../../store/useExplorer";
@@ -93,14 +94,14 @@ function PodioCard({ a, rank, unidad, colorValor }) {
       <div className="flex items-end justify-between mt-auto pt-2">
         <div>
           <p className="text-[22px] font-bold leading-none tabular-nums" style={{ color: colorValor }}>
-            {a.valor != null ? a.valor.toLocaleString("es-MX") : "—"}
+            {a.valor != null ? fmt2(a.valor) : "—"}
           </p>
           <p className="text-[10.5px] text-slate-400 mt-0.5">{unidad}</p>
         </div>
         {a.productividad_mbd_km2 != null && (
           <div className="text-right">
             <p className="text-[13px] font-bold tabular-nums" style={{ color: "#d97706" }}>
-              {a.productividad_mbd_km2.toLocaleString("es-MX")}
+              {fmt2(a.productividad_mbd_km2)}
             </p>
             <p className="text-[9.5px] text-slate-400">Mbd/km²</p>
           </div>
@@ -245,10 +246,10 @@ export default function AsignacionesRanking({ period, start_year, end_year, star
                         </td>
                         <td className="px-4 py-3"><VigenciaBadge vigente={a.vigente} endDate={a.end_date} /></td>
                         <td className="px-4 py-3 text-[13px] font-bold text-right tabular-nums" style={{ color: colorValor }}>
-                          {a.valor != null ? a.valor.toLocaleString("es-MX") : "—"} <span className="font-normal text-slate-400 text-[11px]">{unidadValor}</span>
+                          {a.valor != null ? fmt2(a.valor) : "—"} <span className="font-normal text-slate-400 text-[11px]">{unidadValor}</span>
                         </td>
                         <td className="px-4 py-3 text-[12px] font-medium text-right tabular-nums" style={{ color: "#d97706" }}>
-                          {a.productividad_mbd_km2 != null ? a.productividad_mbd_km2.toLocaleString("es-MX") : "—"}
+                          {a.productividad_mbd_km2 != null ? fmt2(a.productividad_mbd_km2) : "—"}
                         </td>
                       </tr>
                     ))}

@@ -72,7 +72,7 @@ export default function BloqueProduccion({ titulo, categories = [], series = [],
                   <td className="px-3 py-1.5 text-[12px] font-semibold text-slate-600 whitespace-nowrap text-center">{cat}</td>
                   {series.map(s => (
                     <td key={s.label} className="px-3 py-1.5 text-[12px] text-center tabular-nums text-slate-700">
-                      {s.data[i]?.toLocaleString("es-MX") ?? "—"}
+                      {s.data[i] != null ? fmt(s.data[i]) : "—"}
                     </td>
                   ))}
                 </tr>
@@ -105,7 +105,7 @@ export function BloqueReservas({ reservas }) {
   const activo = disponibles.includes(tipo) ? tipo : disponibles[0];
   const bloque = reservas[activo];
   const unidad = { aceite: "MMb", gas: "MMMpc", pce: "MMbpce" }[activo];
-  const fmt = v => (v ?? 0).toLocaleString("es-MX", { maximumFractionDigits: 2 });
+  const fmt = v => (v ?? 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const option = {
     backgroundColor: "#fff",

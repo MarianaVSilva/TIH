@@ -1,6 +1,7 @@
 import { forwardRef, useImperativeHandle, useRef } from "react";
 import ReactECharts from "echarts-for-react";
 import { AGUA_COLOR, AGUA_AREA, AGUA_LINEA, rayasHidrocarburo, ejeAgua } from "../../utils/estiloAgua";
+import { fmt2 } from "../../utils/formato";
 
 const AREA_COLOR = { CRITICO: "rgba(220,38,38,0.12)", DECLINANDO: "rgba(245,158,11,0.12)" };
 
@@ -46,7 +47,7 @@ const PozoTrendChart = forwardRef(function PozoTrendChart({ categories, data, un
 
   const option = {
     backgroundColor: "#fff",
-    tooltip: { trigger: "axis", textStyle: { fontSize: 11 } },
+    tooltip: { trigger: "axis", textStyle: { fontSize: 11 }, valueFormatter: v => (v == null ? "—" : fmt2(v)) },
     // Con agua hay una serie más y un eje a la derecha: se abre espacio y se
     // muestra la leyenda para saber cuál es cuál.
     // La leyenda va a la IZQUIERDA: arriba a la derecha está el nombre del eje
@@ -63,7 +64,7 @@ const PozoTrendChart = forwardRef(function PozoTrendChart({ categories, data, un
       axisLine: { lineStyle: { color: "#e7e5e0" } },
     },
     yAxis: [
-      { type: "value", axisLabel: { fontSize: 10, color: "#767b87" }, splitLine: { show: false } },
+      { type: "value", axisLabel: { fontSize: 10, color: "#767b87", formatter: v => fmt2(v) }, splitLine: { show: false } },
       ...(hayAgua ? [ejeAgua()] : []),
     ],
     series: [

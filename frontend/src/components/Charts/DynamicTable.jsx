@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, Fragment } from "react";
 import { useExplorer } from "../../store/useExplorer";
 import ReportBuilderModal from "./ReportBuilderModal";
 import { normalizarSiMayusculas } from "../../utils/nombreCampo";
+import { fmtNum } from "../../utils/formato";
 
 // ── Banderas de país (SVG propio, no emoji) ──────────────────────────────────
 // "Contratos adjudicados" antepone la bandera del país de origen al nombre de
@@ -1434,6 +1435,10 @@ function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, tit
 export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick, onCellClick, flatExportEntidad, historicoTopic, historicoFetch, preserveColumnOrder, search: searchControlada, onSearchChange, sinResumen, exportOperadorTabla, flatAlfabetico, ocultarSuma, temaJsonArg, onRowFicha, notaPie }) {
   const { pendingBusqueda, setPendingBusqueda } = useExplorer();
   const [searchLocal, setSearchLocal] = useState("");
+  // Los datos van con 2 decimales (produccion, reservas, inversiones...); solo
+  // los temas de CONTEO de pozos son enteros ("14 pozos", no "14.00").
+  const decimalesTabla = ["PozPerf", "PozTerm", "PozosCampos"].includes(temaJsonArg) ? 0 : 2;
+  const fmtCelda = (v) => (v === null || v === undefined ? "" : v === 0 ? "—" : fmtNum(v, decimalesTabla));
   // Búsqueda controlada desde afuera (Reservas, ver ChartArea): sobrevive al
   // desmontar/remontar de este componente al cambiar de pestaña Aceite/Gas/PCE.
   const search    = searchControlada ?? searchLocal;
@@ -1672,7 +1677,10 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   // respeta el orden cronológico (antes → después). Columnas que no son años
   // (p. ej. Ambiente en Pozos/Inversión comprometida) usan el orden tal cual
   // viene del backend — invertirlas no tiene sentido cronológico.
-  const displayCats = isMonthly || isCompare || preserveColumnOrder ? visCats : [...visCats].reverse();
+  // Años/períodos SIEMPRE de menor a mayor de izquierda a derecha (pedido
+  // explícito). visCats ya viene ascendente del backend; antes se invertía en
+  // la vista anual para poner el más reciente primero, ahora se deja como está.
+  const displayCats = visCats;
 
   // Resalte de columna al hacer hover (overlay translúcido, no pisa el color de fondo existente)
   const colHighlightShadow = "inset 0 0 0 9999px rgba(13,148,136,0.12)";
@@ -1779,7 +1787,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
       const label = "    ".repeat(nivel) + (row.label ?? "");
       const valores = displayCats.map(c => {
         const v = row[c];
-        return v === null || v === undefined ? "" : (v === 0 ? "—" : v.toLocaleString("es-MX"));
+        return fmtCelda(v);
       });
       filas.push([label, ...valores]);
       if (REPORTE_TIPOS_NEGRITA.has(row._type)) filasNegritas.add(i);
@@ -2113,14 +2121,14 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                                   onMouseLeave={() => setHoveredCol(null)}
                                   onClick={esClick ? (e) => { e.stopPropagation(); onCellClick(row, c, val); } : undefined}
                                 >
-                                  {val === null ? "" : val === 0 ? "—" : val.toLocaleString("es-MX")}
+                                  {fmtCelda(val)}
                                 </td>
                               );
                             })}
                             {showSuma && (
                               <td className="px-2 py-[5px] text-center tabular-nums text-[12px] font-medium"
                                 style={{ color: "#818cf8", background: "#eef2ff80" }}>
-                                {suma === null ? "" : suma === 0 ? "—" : suma.toLocaleString("es-MX")}
+                                {suma === null ? "" : suma === 0 ? "—" : fmtNum(suma, decimalesTabla)}
                               </td>
                             )}
                           </Fragment>
@@ -2146,7 +2154,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                           onMouseLeave={() => setHoveredCol(null)}
                           onClick={esClick ? (e) => { e.stopPropagation(); onCellClick(row, c, val); } : undefined}
                         >
-                          {val === null ? "" : val === 0 ? "—" : val.toLocaleString("es-MX")}
+                          {fmtCelda(val)}
                         </td>
                       );
                     })}
@@ -2162,7 +2170,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                         <td className="px-2 py-[5px] text-center tabular-nums text-[12px] font-semibold" style={{ color, background: "#f8fafc" }}>
                           {diff === 0 ? "—" : (
                             <>
-                              {arrow} {Math.abs(diff).toLocaleString("es-MX")}
+                              {arrow} {fmtNum(Math.abs(diff), decimalesTabla)}
                               {pct !== null && <span className="opacity-70"> ({pct > 0 ? "+" : ""}{pct.toFixed(1)}%)</span>}
                             </>
                           )}
@@ -2175,7 +2183,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                       const suma = vals.reduce((a, b) => a + b, 0);
                       return (
                         <td className="px-2 py-[5px] text-center tabular-nums text-[12px] font-medium" style={{ color: "#a5b4fc", background: "#eef2ff60" }}>
-                          {suma === 0 ? "—" : suma.toLocaleString("es-MX")}
+                          {suma === 0 ? "—" : fmtNum(suma, decimalesTabla)}
                         </td>
                       );
                     })()}

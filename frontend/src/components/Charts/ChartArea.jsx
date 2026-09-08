@@ -16,6 +16,7 @@ import PozosComprometidosDetallePanel from "./PozosComprometidosDetallePanel";
 import ContratosAdjudicadosDetallePanel from "./ContratosAdjudicadosDetallePanel";
 import ReportBuilderModal from "./ReportBuilderModal";
 import { descargarCsvConHeader } from "../../utils/exportCsv";
+import { fmt2, fmtNum } from "../../utils/formato";
 import { AGUA_COLOR, AGUA_AREA, AGUA_LINEA, esAgua, ejeAgua } from "../../utils/estiloAgua";
 
 const PALETTE = [
@@ -117,7 +118,7 @@ function DataTable({ title, categories, series, periodoNota }) {
                 <td className="px-4 py-1.5 text-slate-700 font-medium sticky left-0 bg-inherit whitespace-nowrap">{cat}</td>
                 {series.map(s => (
                   <td key={s.name} className="px-3 py-1.5 text-right text-slate-600 tabular-nums">
-                    {s.data[i] != null ? s.data[i].toLocaleString("es-MX") : "—"}
+                    {s.data[i] != null ? fmt2(s.data[i]) : "—"}
                   </td>
                 ))}
               </tr>
@@ -160,7 +161,8 @@ function buildChartOption(categories, series, chartType, { zoomable = false } = 
           backgroundColor: "#fff",
           borderColor: "#e2e8f0",
           textStyle: { color: "#374151", fontSize: 11 },
-          formatter: "{b}: {c} ({d}%)",
+          valueFormatter: v => fmt2(v),
+          formatter: p => `${p.name}: ${fmt2(p.value)} (${p.percent}%)`,
         },
         legend: { type: "plain", bottom: 0, textStyle: { color: "#6b7280", fontSize: 10 } },
         series: [{
@@ -180,6 +182,7 @@ function buildChartOption(categories, series, chartType, { zoomable = false } = 
           backgroundColor: "#fff",
           borderColor: "#e7e5e0",
           textStyle: { color: "#1f2430", fontSize: 11 },
+          valueFormatter: v => (v == null ? "—" : fmt2(v)),
         },
         legend: { type: "plain", bottom: showZoom ? 26 : 0, left: "center", width: "92%", itemGap: 14, textStyle: { color: "#767b87", fontSize: 10 } },
         grid: { top: 30, right: hayAgua ? 56 : 24, bottom: (series.length > 6 ? 90 : 50) + (showZoom ? 26 : 0), left: 20, containLabel: true },
@@ -206,7 +209,7 @@ function buildChartOption(categories, series, chartType, { zoomable = false } = 
         yAxis: [
           {
             type: "value",
-            axisLabel: { color: "#767b87", fontSize: 10, formatter: v => v.toLocaleString("es-MX") },
+            axisLabel: { color: "#767b87", fontSize: 10, formatter: v => fmt2(v) },
             splitLine: { show: false },
           },
           ...(hayAgua ? [ejeAgua()] : []),
@@ -656,9 +659,9 @@ function buildReservasTabla(resultado, { esReservasAsig, entidadLabel, unidad })
           const base = esReservasAsig ? [g.cuenca, cuencaActual ?? "—"] : [g.cuenca];
           filas.push([
             ...base, sg.ubicacion, rows[i].label, anio,
-            (r1.data[ai] ?? 0).toLocaleString("es-MX"),
-            (r2.data[ai] ?? 0).toLocaleString("es-MX"),
-            (r3.data[ai] ?? 0).toLocaleString("es-MX"),
+            fmt2(r1.data[ai] ?? 0),
+            fmt2(r2.data[ai] ?? 0),
+            fmt2(r3.data[ai] ?? 0),
           ]);
         });
       }
@@ -680,7 +683,7 @@ const RESERVAS_CAMPO_GROUP_COLORS = { p1: "#9CCC65", p2: "#FBC02D", p3: "#FFA726
 // completas una junto a otra), con eje Y visible. Reemplaza el diseño previo
 // de barra apilada por incrementos, que el usuario pidió cambiar por este.
 function buildReservasCampoGroupedOption(categories, p1, p2, p3, unidad) {
-  const fmt = v => (v ?? 0).toLocaleString("es-MX", { maximumFractionDigits: 2 });
+  const fmt = v => (v ?? 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return {
     backgroundColor: "#fff",
     tooltip: {
@@ -2062,7 +2065,11 @@ export default function ChartArea() {
       : esProdCuenca ? buildProdCuencaSeries(resultado)
       : buildHierSeries(resultado, groupBy);
     const cuencaCount = (resultado.groups ?? []).filter(g => g.cuenca !== "Nacional").length;
-    const chartHierSeries = sinSubtotales(hierSeries);
+    // Se conservan los totales "Gas" e "Hidrocarburos líquidos" como CHIPS
+    // (el usuario pidió que "Gas" exista en las series). No aplanan la gráfica
+    // porque llegan APAGADOS por defecto (ver PROD_CUENCA_DEFAULT_ON en el
+    // store): están disponibles para prenderlos, pero no se dibujan solos.
+    const chartHierSeries = hierSeries;
     // "Gráfica individual": en Operadores elige una empresa; en "Producción
     // por ubicación" (Cuenca) elige un Ambiente; en "Producción por contrato"
     // elige un contrato — reemplaza al viejo toggle "Por cuenca" (se quitó).
@@ -2128,7 +2135,7 @@ export default function ChartArea() {
         columnas: [...pivot.columnasIdentidad, ...pivot.columnasValor],
         filas: pivot.filas.map(f => [
           ...f.identidad,
-          ...f.valores.map(v => (v == null ? "" : v === 0 ? "—" : v.toLocaleString("es-MX"))),
+          ...f.valores.map(v => (v == null ? "" : v === 0 ? "—" : fmt2(v))),
         ]),
       };
     }
@@ -2438,7 +2445,7 @@ export default function ChartArea() {
         filterSeries(tab.series, visibleSeries).forEach(s => {
           tab.categories.forEach((cat, i) => {
             const v = s.data[i];
-            filas.push([tab.label, s.name, cat, v == null ? "" : v.toLocaleString("es-MX")]);
+            filas.push([tab.label, s.name, cat, v == null ? "" : fmt2(v)]);
           });
         });
       });
@@ -2490,7 +2497,7 @@ export default function ChartArea() {
   function buildTablaReporteSimple() {
     const columnas = ["Periodo", ...series.map(s => s.name)];
     const filas = (resultado.categories ?? []).map((cat, i) => [
-      cat, ...series.map(s => (s.data[i] != null ? s.data[i].toLocaleString("es-MX") : "—")),
+      cat, ...series.map(s => (s.data[i] != null ? fmt2(s.data[i]) : "—")),
     ]);
     return { columnas, filas };
   }

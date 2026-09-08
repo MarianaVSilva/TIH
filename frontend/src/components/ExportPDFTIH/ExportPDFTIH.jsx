@@ -23,6 +23,7 @@ const ExportPDFTIH = ({ data, onClose, isOpen }) => {
   });
 
   const [isGenerating, setIsGenerating] = useState(false);
+  const numSeleccionadas = Object.values(selectedSections).filter(Boolean).length;
 
   const handleCheckboxChange = (section) => {
     setSelectedSections(prev => ({
@@ -98,10 +99,10 @@ const ExportPDFTIH = ({ data, onClose, isOpen }) => {
         <div className="sections-list">
           {[
             { id: 'produccion', label: 'Producción mensual' },
-            { id: 'indicadores', label: 'Indicadores económicos' },
-            { id: 'campos', label: 'Top 8: Campos productores' },
+            { id: 'indicadores', label: 'Precios de referencia' },
+            { id: 'campos', label: 'Top 10 Campos Productores' },
             { id: 'operador', label: 'Producción por Operador' },
-            { id: 'reservas', label: 'Top 5: Reservas por campo' },
+            { id: 'reservas', label: 'Top 5 Reservas por campo' },
             { id: 'pozos', label: 'Pozos operando' },
           ].map(section => (
             <label key={section.id} className="checkbox-label">
@@ -115,12 +116,19 @@ const ExportPDFTIH = ({ data, onClose, isOpen }) => {
           ))}
         </div>
 
+        {numSeleccionadas < 2 && (
+          <p style={{ fontSize: 12, color: '#b45309', margin: '10px 0 0' }}>
+            Elige al menos 2 tarjetas: un PDF de una sola queda desbalanceado.
+          </p>
+        )}
+
         <div className="modal-actions">
           <button className="btn-cancel" onClick={onClose}>Cancelar</button>
           <button
             className="btn-generate"
             onClick={generatePDF}
-            disabled={isGenerating}
+            disabled={isGenerating || numSeleccionadas < 2}
+            style={numSeleccionadas < 2 ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
           >
             {isGenerating ? 'Generando...' : 'Generar PDF'}
           </button>
@@ -168,14 +176,14 @@ function bigStatHTML({ label, unidad, valor, promedio, anioPromedio, color, bg }
   `;
 }
 
-function indicadorHTML({ label, valor, anterior, color, bg }) {
+function indicadorHTML({ label, valor, anterior, color, bg, unidad = 'USD/barril' }) {
   if (valor == null) return '';
   const cambio = pct(valor, anterior);
   const subiendo = cambio > 0;
   const bajando = cambio < 0;
   return `
     <div style="flex:1; min-width:0; text-align:center; background:${bg}; padding:16px 18px; border-radius:8px;">
-      <div style="font-size:13px; color:${INK}; line-height:1.4;">${label} · USD/barril</div>
+      <div style="font-size:13px; color:${INK}; line-height:1.4;">${label} · ${unidad}</div>
       <div style="font-family:Georgia, serif; color:${color}; font-size:32px; font-weight:700; line-height:1.3; margin-top:2px;">
         $${valor.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
       </div>
@@ -213,6 +221,7 @@ const CHIP_FAM = "'Open Sans', Arial, sans-serif";
 // así que text-anchor/dominant-baseline centran de verdad (es la misma razón
 // por la que el "92%" de las donas sí sale centrado).
 function chipHTML(texto, color, bg) {
+  if (!texto) return '';
   const t = String(texto).toUpperCase();
   const font = `700 ${CHIP_FS}px ${CHIP_FAM}`;
   // measureText no considera letter-spacing; lo sumo aparte.
@@ -231,7 +240,7 @@ function cardTitleHTML(chip, chipColor, chipBg, titulo) {
   return `
     <div style="margin-bottom:14px;">
       ${chipHTML(chip, chipColor, chipBg)}
-      ${titulo ? `<span style="display:inline-block; vertical-align:middle; margin-left:9px; font-size:13.5px; font-weight:700; line-height:normal; text-transform:uppercase; letter-spacing:0.02em; color:${INK};">${titulo}</span>` : ''}
+      ${titulo ? `<span style="display:inline-block; vertical-align:middle; ${chip ? 'margin-left:9px;' : ''} font-size:13.5px; font-weight:700; line-height:normal; text-transform:uppercase; letter-spacing:0.02em; color:${INK};">${titulo}</span>` : ''}
     </div>
   `;
 }
@@ -361,7 +370,7 @@ const generateDashboardHTML = (data, selectedSections) => {
 
       ${selectedSections.produccion && (data.produccion?.liquidos != null || data.produccion?.gas != null) ? `
       <div class="section-card">
-        ${cardTitleHTML('Producción', VERDE, VERDE_BG, 'Mensual')}
+        ${cardTitleHTML(null, VERDE, VERDE_BG, 'Producción mensual')}
         <div style="display:flex; gap:14px;">
           ${bigStatHTML({ label: 'Hidrocarburos líquidos', unidad: 'Mbd', valor: data.produccion?.liquidos, promedio: data.produccion?.liquidosPromedio, anioPromedio: data.produccion?.liquidosAnioPromedio, color: VERDE, bg: VERDE_BG })}
           ${bigStatHTML({ label: 'Gas natural', unidad: 'MMpcd', valor: data.produccion?.gas, promedio: data.produccion?.gasPromedio, anioPromedio: data.produccion?.gasAnioPromedio, color: AZUL, bg: AZUL_BG })}
@@ -369,11 +378,12 @@ const generateDashboardHTML = (data, selectedSections) => {
       </div>
       ` : ''}
 
-      ${selectedSections.indicadores && (data.mercado?.brent != null || data.mercado?.mezcla != null) ? `
+      ${selectedSections.indicadores && (data.mercado?.brent != null || data.mercado?.mezcla != null || data.mercado?.henryHub != null) ? `
       <div class="section-card">
-        ${cardTitleHTML('Mercado', ROJO, ROJO_BG, 'Indicadores Económicos')}
+        ${cardTitleHTML(null, ROJO, ROJO_BG, 'Precios de referencia')}
         <div style="display:flex; gap:14px;">
-          ${indicadorHTML({ label: 'Precio del petróleo (Brent)', valor: data.mercado?.brent, anterior: data.mercado?.brentAnterior, color: ROJO, bg: ROJO_BG })}
+          ${indicadorHTML({ label: 'Henry Hub', unidad: 'USD/MMBtu', valor: data.mercado?.henryHub, anterior: data.mercado?.henryHubAnterior, color: AZUL, bg: AZUL_BG })}
+          ${indicadorHTML({ label: 'Brent', valor: data.mercado?.brent, anterior: data.mercado?.brentAnterior, color: ROJO, bg: ROJO_BG })}
           ${indicadorHTML({ label: 'Mezcla Mexicana de Exportación', valor: data.mercado?.mezcla, anterior: data.mercado?.mezclaAnterior, color: VERDE, bg: VERDE_BG })}
         </div>
       </div>
@@ -381,7 +391,7 @@ const generateDashboardHTML = (data, selectedSections) => {
 
       ${selectedSections.campos && (camposLiq.length || camposGas.length) ? `
       <div class="section-card">
-        ${cardTitleHTML('Campos', VERDE, VERDE_BG, 'Top 8 Productores')}
+        ${cardTitleHTML(null, VERDE, VERDE_BG, 'Top 10 Campos Productores')}
         <div style="display:flex; gap:20px;">
           <div style="flex:1; min-width:0;">
             <div style="font-size:11px; font-style:italic; color:${MUTED}; margin-bottom:6px;">Mbd</div>
@@ -397,7 +407,7 @@ const generateDashboardHTML = (data, selectedSections) => {
 
       ${selectedSections.reservas && (resAceite.length || resGas.length) ? `
       <div class="section-card">
-        ${cardTitleHTML('Reservas', ORANGE, '#fbe6d3', 'Top 5: Reservas por campo')}
+        ${cardTitleHTML(null, ORANGE, '#fbe6d3', 'Top 5 Reservas por campo')}
         <div style="display:flex; gap:20px;">
           <div style="flex:1; min-width:0;">
             <div style="font-size:12px; font-weight:600; color:${VERDE}; margin-bottom:4px;">Reservas de aceite</div>
@@ -415,7 +425,7 @@ const generateDashboardHTML = (data, selectedSections) => {
 
       ${selectedSections.operador && (data.operador?.liquidosPemexPorcentaje != null || data.operador?.gasPemexPorcentaje != null) ? `
       <div class="section-card">
-        ${cardTitleHTML('Operador', AZUL, AZUL_BG, 'Producción por Operador')}
+        ${cardTitleHTML(null, AZUL, AZUL_BG, 'Producción por Operador')}
         <div style="display:flex; gap:20px;">
           <div style="flex:1; min-width:0; display:flex; gap:12px;">
             <div style="flex-shrink:0; width:96px; text-align:center;">
@@ -445,7 +455,7 @@ const generateDashboardHTML = (data, selectedSections) => {
 
       ${selectedSections.pozos && data.pozos?.total != null ? `
       <div class="section-card">
-        ${cardTitleHTML('Pozos Operando', ROJO, ROJO_BG, '')}
+        ${cardTitleHTML(null, ROJO, ROJO_BG, 'Pozos operando')}
         <div style="display:flex; gap:14px; align-items:stretch;">
           <div style="flex:1; text-align:center; background:${ROJO_BG}; border-radius:8px; padding:14px 12px;">
             <div style="font-family:Georgia, serif; font-size:26px; font-weight:700; line-height:1.35; min-height:35px; color:${ROJO};">${data.pozos.total.toLocaleString('es-MX')}</div>

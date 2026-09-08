@@ -5,6 +5,7 @@ import ExportPDFTIH from "../ExportPDFTIH/ExportPDFTIH";
 import "../ExportPDFTIH/ExportPDFTIH.css";
 import { useExplorerNav } from "../../hooks/useExplorerNav";
 import { nombreCampoDisplay } from "../../utils/nombreCampo";
+import { fmt2 } from "../../utils/formato";
 import { useAbrirFicha } from "../Fichas/FichaContext";
 
 // Cada mini-sección vive en su propia card blanca con borde/sombra sutil,
@@ -86,13 +87,13 @@ function BigStat({ label, valor, unidad, promedio, anioPromedio, color, bg }) {
     <div className="flex-1 min-w-0 text-center flex flex-col justify-center" style={{ background: bg, padding: "4px 20px" }}>
       <span className="text-[13px]" style={{ color: INK }}>{label} · {unidad}</span>
       <span style={{ fontFamily: "'Patria', Georgia, serif", color, fontSize: 33, fontWeight: 700, lineHeight: 1.15, marginTop: 3, textShadow: `0 0 18px ${color}33` }}>
-        {valor.toLocaleString("es-MX")}
+        {fmt2(valor)}
       </span>
       {cambio != null && (
         <p className="text-[13px] font-semibold mt-0.5" style={{ color: up ? "#059669" : ORANGE }}>
           {up ? "↑" : "↓"} {Math.abs(cambio)}%{" "}
           <span className="font-normal" style={{ color: MUTED }}>
-            vs {promedio.toLocaleString("es-MX")} promedio {anioPromedio}
+            vs {fmt2(promedio)} promedio {anioPromedio}
           </span>
         </p>
       )}
@@ -153,7 +154,7 @@ function IndicadorEconomico({ label, valor, fecha, anterior, color, bg, unidad =
     <div className="flex-1 min-w-0 text-center flex flex-col justify-center" style={{ background: bg, padding: "4px 20px" }}>
       <span className="text-[13px] block" style={{ color: INK }}>{label} · {unidad}</span>
       <span style={{ fontFamily: "'Patria', Georgia, serif", color, fontSize: 33, fontWeight: 700, lineHeight: 1.15, marginTop: 3, display: "block", textShadow: `0 0 18px ${color}33` }}>
-        ${valor.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
+        ${fmt2(valor)}
       </span>
       {cambio != null && (
         <p className="text-[13px] font-semibold" style={{ color: subiendo ? "#059669" : bajando ? ORANGE : MUTED }}>
@@ -277,6 +278,8 @@ function buildExportPDFData(data) {
       gasAnioPromedio: n?.gas?.anio_promedio,
     },
     mercado: {
+      henryHub: ind?.henry_hub?.valor,
+      henryHubAnterior: ind?.henry_hub?.anterior,
       brent: ind?.brent?.valor,
       brentAnterior: ind?.brent?.anterior,
       brentCambio: fmtPct(pct(ind?.brent?.valor, ind?.brent?.anterior)),
@@ -338,7 +341,7 @@ function CampoRow({ rank, nombre, valor, ratio, color }) {
           {nombreMostrado}
         </button>
         <span className="text-[13.5px] font-semibold tabular-nums shrink-0" style={{ color: INK }}>
-          {valor.toLocaleString("es-MX")}
+          {fmt2(valor)}
         </span>
       </div>
       <div className="rounded-full mt-1.5" style={{ height: 8, background: "#eef0ec" }}>
@@ -535,7 +538,7 @@ function ContratoBar({ nombre, valor, maxValor, color }) {
           {nombreCampoDisplay(nombre)}
         </button>
         <span className="text-[13px] font-semibold tabular-nums whitespace-nowrap" style={{ color: INK }}>
-          {valor.toLocaleString("es-MX")}
+          {fmt2(valor)}
         </span>
       </div>
       <div className="rounded-full mt-1" style={{ height: 5, background: "#eef0ec" }}>
@@ -549,7 +552,7 @@ function OperadorDonut({ pct, color, unidad, pemexTotal, otrosTotal }) {
   const option = {
     tooltip: {
       trigger: "item",
-      formatter: (p) => `${p.name}: <b>${p.value.toLocaleString("es-MX")} ${unidad}</b> (${p.percent}%)`,
+      formatter: (p) => `${p.name}: <b>${fmt2(p.value)} ${unidad}</b> (${p.percent}%)`,
     },
     series: [
       {
@@ -600,14 +603,14 @@ function ProduccionPorOperadorContent({ porOperador, fuel }) {
             <span className="rounded-full shrink-0" style={{ width: 7, height: 7, background: color }} />
             <span className="truncate">PEMEX</span>
             <span className="font-semibold whitespace-nowrap ml-auto">
-              {bloque.pemex_total.toLocaleString("es-MX")} {unidad}
+              {fmt2(bloque.pemex_total)} {unidad}
             </span>
           </div>
           <div className="flex items-center gap-2 text-[13.5px]" style={{ color: INK }}>
             <span className="rounded-full shrink-0" style={{ width: 7, height: 7, background: "#c7c9c3" }} />
             <span className="truncate">PRIVADOS</span>
             <span className="font-semibold whitespace-nowrap ml-auto">
-              {bloque.otros_total.toLocaleString("es-MX")} {unidad}
+              {fmt2(bloque.otros_total)} {unidad}
             </span>
           </div>
         </div>
