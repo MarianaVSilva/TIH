@@ -974,7 +974,21 @@ export default function TopBar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfOpciones, isPerf]); // sin "tema": debe esperar a que perfOpciones sea el de este topic
 
-  const secciones = [...new Set(temas.map(t => t.seccion))].sort();
+  // Orden fijo de las pills (pedido explícito), no alfabético. Los nombres de
+  // la BD vienen sin acento ("Produccion", "Indicadores Economicos"); se
+  // ordena por ese valor crudo y el acento se pone al pintar (acentuarTema).
+  const ORDEN_SECCIONES = [
+    "Produccion", "Producción",
+    "Recursos y reservas",
+    "Actividad petrolera",
+    "Licitaciones y Contratos",
+    "Indicadores Economicos", "Indicadores Económicos",
+  ];
+  const secciones = [...new Set(temas.map(t => t.seccion))].sort((a, b) => {
+    const ia = ORDEN_SECCIONES.indexOf(a), ib = ORDEN_SECCIONES.indexOf(b);
+    // Cualquier sección no listada cae al final, en orden alfabético.
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b);
+  });
   // "Reservas por campo de gas/pce" quedan fuera del menú: son el mismo dato
   // que "Reservas por campo" (json_arg ReservasP), solo que con las pestañas
   // Aceite/Gas/PCE ahora se elige la columna sin necesitar 3 temas separados.

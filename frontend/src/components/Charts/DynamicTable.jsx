@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, Fragment } from "react";
 import { useExplorer } from "../../store/useExplorer";
 import ReportBuilderModal from "./ReportBuilderModal";
+import { normalizarSiMayusculas } from "../../utils/nombreCampo";
 
 // ── Banderas de país (SVG propio, no emoji) ──────────────────────────────────
 // "Contratos adjudicados" antepone la bandera del país de origen al nombre de
@@ -2074,7 +2075,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                       )}
                       <span className="inline-flex items-center gap-2">
                         {row._pais && <FlagIcon pais={row._pais} />}
-                        {row.label}
+                        {normalizarSiMayusculas(row.label)}
                         {((row._type === "banner" && hasCollapsible) || (showToggleEnPrimeraFila && esPrimeraVisible)) && (
                           <ToggleTodoBtn dark={isDark || !!tone} />
                         )}

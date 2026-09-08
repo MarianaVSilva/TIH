@@ -3,6 +3,7 @@ import { fetchBuscar } from "../../api/client";
 import { useExplorer } from "../../store/useExplorer";
 import { useExplorerNav } from "../../hooks/useExplorerNav";
 import { acentuarTema } from "../../utils/acentuarTema";
+import { normalizarSiMayusculas } from "../../utils/nombreCampo";
 import { registrarBusqueda } from "../../utils/telemetria";
 
 // Buscador global: el usuario escribe el nombre de lo que sea —un pozo, un
@@ -233,7 +234,7 @@ export default function BuscadorGlobal() {
                     >
                       <span style={{ width: 6, height: 6, borderRadius: "50%", background: COLOR_TIPO[tipo], flexShrink: 0 }} />
                       <span style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#1f2430" }}>{r.nombre}</span>
+                        <span style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#1f2430" }}>{normalizarSiMayusculas(r.nombre)}</span>
                         {inactivaDesde(r) && (
                           <span style={{ display: "block", fontSize: 10, color: "#b45309", marginTop: 1 }}>
                             Sin producción desde {inactivaDesde(r)} · se abre en ese año

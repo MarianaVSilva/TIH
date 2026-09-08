@@ -120,7 +120,7 @@ function CifrasNacionales({ nacional }) {
   return (
     <div className="rounded-xl min-w-0 overflow-hidden flex flex-col dash-card" style={{ background: "#fff", border: `1px solid ${BORDER}`, height: "100%" }}>
       <div style={{ padding: "10px 26px 4px" }}>
-        <CardTitle chip="Producción" chipColor="#0d7a4a" chipBg="#daf0df">Mensual</CardTitle>
+        <CardTitle>Producción mensual</CardTitle>
       </div>
       <div className="flex items-stretch flex-wrap flex-1">
         <BigStat
@@ -136,19 +136,22 @@ function CifrasNacionales({ nacional }) {
       </div>
       <div style={{ padding: "4px 26px 0" }}>
         <UnidadesNota style={{ marginTop: 0 }} />
+        <p className="text-[10px]" style={{ color: MUTED, marginTop: 2 }}>
+          Hidrocarburos líquidos: se refiere a la suma de petróleo y condensado.
+        </p>
       </div>
     </div>
   );
 }
 
-function IndicadorEconomico({ label, valor, fecha, anterior, color, bg }) {
+function IndicadorEconomico({ label, valor, fecha, anterior, color, bg, unidad = "USD/barril" }) {
   if (valor == null) return null;
   const cambio = anterior ? Math.round(((valor - anterior) / anterior) * 1000) / 10 : null;
   const subiendo = cambio > 0;
   const bajando = cambio < 0;
   return (
     <div className="flex-1 min-w-0 text-center flex flex-col justify-center" style={{ background: bg, padding: "4px 20px" }}>
-      <span className="text-[13px] block" style={{ color: INK }}>{label} · USD/barril</span>
+      <span className="text-[13px] block" style={{ color: INK }}>{label} · {unidad}</span>
       <span style={{ fontFamily: "'Patria', Georgia, serif", color, fontSize: 33, fontWeight: 700, lineHeight: 1.15, marginTop: 3, display: "block", textShadow: `0 0 18px ${color}33` }}>
         ${valor.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
       </span>
@@ -164,15 +167,21 @@ function IndicadorEconomico({ label, valor, fecha, anterior, color, bg }) {
 }
 
 function IndicadoresEconomicos({ indicadores }) {
-  if (!indicadores?.brent && !indicadores?.mezcla_mexicana) return null;
+  if (!indicadores?.brent && !indicadores?.mezcla_mexicana && !indicadores?.henry_hub) return null;
   return (
     <div className="rounded-xl min-w-0 overflow-hidden flex flex-col dash-card" style={{ background: "#fff", border: `1px solid ${BORDER}` }}>
       <div style={{ padding: "10px 26px 4px" }}>
-        <CardTitle chip="Mercado" chipColor="#8a2c17" chipBg="#fbe3d8">Indicadores Económicos</CardTitle>
+        <CardTitle>Precios de referencia</CardTitle>
       </div>
       <div className="flex items-stretch flex-wrap flex-1">
         <IndicadorEconomico
-          label="Precio del petróleo (Brent)" valor={indicadores.brent?.valor} fecha={indicadores.brent?.fecha}
+          label="Henry Hub" unidad="USD/MMBtu"
+          valor={indicadores.henry_hub?.valor} fecha={indicadores.henry_hub?.fecha}
+          anterior={indicadores.henry_hub?.anterior}
+          color="#1d6fa5" bg="#dbeafb"
+        />
+        <IndicadorEconomico
+          label="Brent" valor={indicadores.brent?.valor} fecha={indicadores.brent?.fecha}
           anterior={indicadores.brent?.anterior}
           color="#8a2c17" bg="#fbe3d8"
         />
@@ -182,8 +191,8 @@ function IndicadoresEconomicos({ indicadores }) {
           color="#0d7a4a" bg="#daf0df"
         />
       </div>
-      <p className="text-[10px] truncate" style={{ color: MUTED, padding: "4px 26px" }} title="* Precios de referencia, sujetos a variación. Brent: cotización intradía (Yahoo Finance, fuente no oficial). Mezcla Mexicana: estimado informativo de Petróleos Mexicanos, cotización diaria publicada antes de las 6:00 p.m.">
-        * Precios de referencia, sujetos a variación · Brent: Yahoo Finance · Mezcla: estimado Pemex antes de 6:00 p.m.
+      <p className="text-[10px] truncate" style={{ color: MUTED, padding: "4px 26px" }} title="Precios de referencia tomados de la tabla de precios de la base de datos, sujetos a variación. Cada indicador muestra su último dato disponible.">
+        * Precios de referencia, sujetos a variación · último dato disponible de cada indicador
       </p>
     </div>
   );
@@ -311,20 +320,20 @@ function CampoRow({ rank, nombre, valor, ratio, color }) {
   const nombreMostrado = nombreCampoDisplay(nombre);
   const { abrirCampo } = useAbrirFicha();
   return (
-    <div className="flex items-start gap-1.5 py-1 min-w-0">
-      <div className="flex items-baseline gap-1 shrink-0 min-w-0" style={{ width: 68 }}>
-        <span className="text-[13px] shrink-0" style={{ color: MUTED }}>{rank}.</span>
-        <button
-          // Se abre la ficha con el nombre CRUDO (identificador real), no con
-          // el nombre "bonito" que se muestra.
-          onClick={() => abrirCampo(nombre)}
-          title="Ver ficha del campo"
-          className="text-[12px] font-medium leading-tight truncate text-left hover:underline decoration-teal-400 underline-offset-2"
-          style={{ color: INK }}
-        >
-          {nombreMostrado}
-        </button>
-      </div>
+    <div className="flex items-center gap-1.5 py-1 min-w-0">
+      <span className="text-[13px] shrink-0" style={{ color: MUTED, width: 18 }}>{rank}.</span>
+      <button
+        // Se abre la ficha con el nombre CRUDO (identificador real), no con
+        // el nombre "bonito" que se muestra. flex-1 + break-words: el nombre
+        // toma el ancho que haya y parte a dos renglones antes que recortarse
+        // (TUPILCO PROFUNDO / QUESQUI se veían cortados con el ancho fijo).
+        onClick={() => abrirCampo(nombre)}
+        title="Ver ficha del campo"
+        className="flex-1 min-w-0 text-[12px] font-medium leading-tight text-left hover:underline decoration-teal-400 underline-offset-2"
+        style={{ color: INK, overflowWrap: "anywhere" }}
+      >
+        {nombreMostrado}
+      </button>
       <div className="flex gap-0.5 shrink-0 self-center">
         {Array.from({ length: 5 }).map((_, i) => (
           <BarrelPartial key={i} fraction={ratio * 5 - i} color={color} size={16} />
@@ -484,8 +493,6 @@ function CamposCarousel({ topCampos, porOperador, slide, setSlide, count, onPaus
       onMouseEnter={onPause} onMouseLeave={onResume}
     >
       <CardTitle
-        chip={slide === 0 ? "Campos" : "Operador"}
-        chipColor={slide === 0 ? "#0d7a4a" : "#1d6fa5"} chipBg={slide === 0 ? "#daf0df" : "#dbe9f5"}
         right={
           <div className="flex items-center gap-3">
             {slide === 0
@@ -499,7 +506,7 @@ function CamposCarousel({ topCampos, porOperador, slide, setSlide, count, onPaus
           </div>
         }
       >
-        {slide === 0 ? "Top 8 Productores" : "Producción por Operador"}
+        {slide === 0 ? "Top 10 Campos Productores" : "Producción por Operador"}
       </CardTitle>
       <div key={slide} className="carousel-slide flex-1 min-h-0 flex flex-col justify-center">
         {slide === 0
@@ -519,10 +526,10 @@ function ContratoBar({ nombre, valor, maxValor, color }) {
         <button
           onClick={() => irAOperador(nombre)}
           title="Ver producción del operador"
-          className="text-[13px] text-left hover:underline decoration-teal-400 underline-offset-2 truncate"
-          style={{ color: INK }}
+          className="text-[13px] text-left hover:underline decoration-teal-400 underline-offset-2"
+          style={{ color: INK, overflowWrap: "anywhere" }}
         >
-          {nombre}
+          {nombreCampoDisplay(nombre)}
         </button>
         <span className="text-[13px] font-semibold tabular-nums whitespace-nowrap" style={{ color: INK }}>
           {valor.toLocaleString("es-MX")}
@@ -631,8 +638,8 @@ function Top5ReservasCard({ top5Reservas, nivel, setNivel }) {
 
   return (
     <Card style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      <CardTitle chip="Reservas" chipColor={ORANGE} chipBg="#fbe6d3" right={<NivelToggle nivel={nivel} setNivel={setNivel} />}>
-        Top 5: Reservas por campo
+      <CardTitle right={<NivelToggle nivel={nivel} setNivel={setNivel} />}>
+        Top 5 Reservas por campo
       </CardTitle>
       <div className="flex-1 min-h-0 flex flex-col">
         <Top5ReservasContent top5Reservas={top5Reservas} nivel={nivel} />

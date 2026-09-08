@@ -37,10 +37,10 @@ def get_resumen(engine: Engine) -> dict:
     # latencias en vez de la suma de todas.
     with ThreadPoolExecutor(max_workers=13) as pool:
         f_nacional = pool.submit(_safe, produccion_service.get_resumen_nacional, engine)
-        f_top_campos = pool.submit(_safe, produccion_service.get_top_campos, engine, 8)
+        f_top_campos = pool.submit(_safe, produccion_service.get_top_campos, engine, 10)
         f_por_operador = pool.submit(_safe, produccion_service.get_produccion_por_operador, engine)
         f_pozos_operando = pool.submit(_safe, produccion_service.get_pozos_operando, engine)
-        f_indicadores_economicos = pool.submit(_safe, precios_service.get_indicadores_economicos, engine)
+        f_indicadores_economicos = pool.submit(_safe, precios_service.get_indicadores_desde_precios, engine)
         f_perf = pool.submit(
             _safe, perforacion_service.get_perforacion, engine, topic="PozPerf",
             start_year=start_year, end_year=end_year, start_month=1, end_month=12, period="annually",

@@ -10,6 +10,7 @@ from app.config import settings
 from app.services.cache_utils import cached
 
 SCHEMA = settings.db_schema + "."
+_PG = settings.db_engine == "postgres"
 
 # Tabla propia para guardar el precio diario de la Mezcla Mexicana tal como
 # lo reporta el RSS de Pemex. La tabla PRECIOS de la BD la llena un proceso
@@ -179,6 +180,53 @@ def _get_mme_anterior(engine: Engine, fecha_actual: str) -> float | None:
     if brecha_dias > 5:
         return None
     return round(float(df["mme"].iloc[0]), 2)
+
+
+_PRECIOS_COLS = (
+    ("brent", "BRENT", "brent", "USD/barril"),
+    ("mezcla_mexicana", "MME", "mme", "USD/barril"),
+    ("henry_hub", "HENRY_HUB", "henry_hub", "USD/MMBtu"),
+)
+
+
+def get_indicadores_desde_precios(engine: Engine) -> dict:
+    """Indicadores del dashboard leídos DIRECTO de la tabla PRECIOS de la BD.
+
+    Reemplaza el scraping de Yahoo/RSS, que fallaba intermitentemente y hacía
+    "desaparecer" la Mezcla. Cada columna (Brent, MME, Henry Hub) se actualiza
+    en fechas distintas —un día solo llega la MME, otro solo el Brent—, así que
+    NO se toma una fila fija: para cada columna se toma su ÚLTIMO valor no nulo
+    y el anterior no nulo (para el "vs cierre anterior"). Así ningún indicador
+    se queda vacío por el hueco de otro.
+    """
+    col_sql = "fecha" if _PG else "FECHA"
+    tabla = "api.v_precios" if _PG else f"{SCHEMA}PRECIOS"
+    cols = ", ".join(c[1] if not _PG else c[2] for c in _PRECIOS_COLS)
+    # Un par de meses basta para encontrar los dos últimos valores de cada
+    # columna aunque haya huecos.
+    corte = "DATEADD(month, -3, GETDATE())" if not _PG else "(NOW() - INTERVAL '3 months')"
+    sql = f"SELECT {col_sql} AS fecha, {cols} FROM {tabla} WHERE {col_sql} >= {corte} ORDER BY {col_sql} DESC"
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(sqlalchemy_text(sql), conn)
+    except Exception:
+        return {}
+    df.columns = df.columns.str.lower()
+    out = {}
+    for clave, _mssql, pgcol, _unidad in _PRECIOS_COLS:
+        col = pgcol.lower()
+        serie = df[["fecha", col]].dropna(subset=[col])
+        if serie.empty:
+            out[clave] = None
+            continue
+        fila = serie.iloc[0]
+        anterior = float(serie.iloc[1][col]) if len(serie) > 1 else None
+        out[clave] = {
+            "valor": round(float(fila[col]), 2),
+            "fecha": pd.to_datetime(fila["fecha"]).strftime("%Y-%m-%d"),
+            "anterior": round(anterior, 2) if anterior is not None else None,
+        }
+    return out
 
 
 def get_indicadores_economicos(engine: Engine | None = None) -> dict:
