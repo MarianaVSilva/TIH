@@ -378,7 +378,7 @@ function CamposColumn({ campos, offset, maxValor, shades, unidad }) {
 
 // Avanza el carrusel solo cada `intervalMs`; se detiene mientras `paused` es true
 // (el caller lo activa con onMouseEnter/onMouseLeave sobre la card).
-function useAutoSlide(count, paused, intervalMs = 5000) {
+function useAutoSlide(count, paused, intervalMs = 10000) {
   const [slide, setSlide] = useState(0);
   useEffect(() => {
     if (count < 2 || paused) return;
