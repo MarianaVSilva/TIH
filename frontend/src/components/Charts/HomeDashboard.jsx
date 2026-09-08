@@ -482,7 +482,9 @@ function Top5ReservasContent({ top5Reservas, nivel }) {
   );
 }
 
-function CamposCarousel({ topCampos, porOperador, slide, setSlide, count, onPause, onResume }) {
+const CAROUSEL_TITULOS = ["Top 10 Campos Productores", "Producción por Operador", "Pozos operando"];
+
+function CamposCarousel({ topCampos, porOperador, pozosOperando, slide, setSlide, count, onPause, onResume }) {
   const [fuel, setFuel] = useState("liquidos");
   const [fuelOperador, setFuelOperador] = useState("liquidos");
   if (!topCampos?.liquidos?.length && !topCampos?.gas?.length) return null;
@@ -495,9 +497,10 @@ function CamposCarousel({ topCampos, porOperador, slide, setSlide, count, onPaus
       <CardTitle
         right={
           <div className="flex items-center gap-3">
-            {slide === 0
-              ? <FuelToggle fuel={fuel} setFuel={setFuel} />
-              : <FuelToggle fuel={fuelOperador} setFuel={setFuelOperador} />}
+            {/* El selector Líquidos/Gas solo aplica a Campos y Operador; en
+                Pozos operando no hay nada que alternar. */}
+            {slide === 0 && <FuelToggle fuel={fuel} setFuel={setFuel} />}
+            {slide === 1 && <FuelToggle fuel={fuelOperador} setFuel={setFuelOperador} />}
             <CarouselNav
               index={slide} count={count}
               onPrev={() => setSlide(s => (s - 1 + count) % count)}
@@ -506,10 +509,12 @@ function CamposCarousel({ topCampos, porOperador, slide, setSlide, count, onPaus
           </div>
         }
       >
-        {slide === 0 ? "Top 10 Campos Productores" : "Producción por Operador"}
+        {CAROUSEL_TITULOS[slide]}
       </CardTitle>
       <div key={slide} className="carousel-slide flex-1 min-h-0 flex flex-col justify-center">
-        {slide === 0
+        {slide === 2
+          ? <PozosOperandoContent pozosOperando={pozosOperando} />
+          : slide === 0
           ? <TopCamposContent topCampos={topCampos} fuel={fuel} setFuel={setFuel} />
           : <ProduccionPorOperadorContent porOperador={porOperador} fuel={fuelOperador} />}
       </div>
@@ -662,35 +667,29 @@ function PozoOperandoStat({ label, valor, pct, color, bg }) {
   );
 }
 
-function PozosOperando({ pozosOperando }) {
+// Contenido de "Pozos operando" para vivir como slide del carrusel (sin la
+// Card propia: el carrusel ya la aporta). El total grande al centro y los dos
+// desgloses debajo.
+function PozosOperandoContent({ pozosOperando }) {
   if (!pozosOperando?.total) return null;
   const { total, pozos_aceite, pozos_gas, pct_aceite, pct_gas, periodo } = pozosOperando;
   const [anio, mes] = (periodo ?? "").split("-");
   const mesLabel = mes ? MESES[parseInt(mes, 10) - 1] : "";
-
   return (
-    <Card style={{ padding: "10px 26px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-      <div className="grid gap-4 items-center grid-cols-1 sm:grid-cols-[200px_minmax(0,1fr)]">
-        <div>
-          <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "#8a2c17", opacity: 0.75 }}>
-            Pozos operando
-          </span>
-          <div>
-            <span style={{ fontFamily: "'Patria', Georgia, serif", color: "#8a2c17", fontSize: 26, fontWeight: 700, lineHeight: 1.2 }}>
-              {total.toLocaleString("es-MX")}
-            </span>
-            <p className="text-[12px]" style={{ color: "#8a2c17", opacity: 0.75 }}>
-              pozos productores en operación durante {mesLabel} de {anio}.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex gap-4 flex-wrap">
-          <PozoOperandoStat label="Petróleo y gas asociado" valor={pozos_aceite} pct={pct_aceite} color="#0d7a4a" bg="#daf0df" />
-          <PozoOperandoStat label="Gas no asociado y condensado" valor={pozos_gas} pct={pct_gas} color="#1d6fa5" bg="#dbeafb" />
-        </div>
+    <div className="flex flex-col items-center justify-center text-center gap-4 h-full">
+      <div>
+        <span style={{ fontFamily: "'Patria', Georgia, serif", color: "#8a2c17", fontSize: 44, fontWeight: 700, lineHeight: 1 }}>
+          {total.toLocaleString("es-MX")}
+        </span>
+        <p className="text-[13px] mt-1" style={{ color: MUTED }}>
+          pozos productores en operación durante {mesLabel} de {anio}.
+        </p>
       </div>
-    </Card>
+      <div className="flex gap-4 flex-wrap justify-center w-full">
+        <PozoOperandoStat label="Petróleo y gas asociado" valor={pozos_aceite} pct={pct_aceite} color="#0d7a4a" bg="#daf0df" />
+        <PozoOperandoStat label="Gas no asociado y condensado" valor={pozos_gas} pct={pct_gas} color="#1d6fa5" bg="#dbeafb" />
+      </div>
+    </div>
   );
 }
 
@@ -703,7 +702,10 @@ export default function HomeDashboard() {
   // Slide del carrusel de Campos (Top campos <-> Producción por Operador).
   const tieneOperador = !!(data?.por_operador?.liquidos || data?.por_operador?.gas);
   const tieneReservas = !!(data?.top5_reservas?.["1P"]?.aceite?.length || data?.top5_reservas?.["1P"]?.gas?.length);
-  const carouselCount = tieneOperador ? 2 : 1;
+  const tienePozos = !!data?.pozos_operando?.total;
+  // Slides del carrusel: Campos (siempre) + Operador + Pozos operando, los dos
+  // últimos solo si hay datos.
+  const carouselCount = 1 + (tieneOperador ? 1 : 0) + (tienePozos ? 1 : 0);
   const [carouselPaused, setCarouselPaused] = useState(false);
   const [carouselSlide, setCarouselSlide] = useAutoSlide(carouselCount, carouselPaused);
 
@@ -774,14 +776,11 @@ export default function HomeDashboard() {
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <CamposCarousel
-            topCampos={data.top_campos} porOperador={data.por_operador}
+            topCampos={data.top_campos} porOperador={data.por_operador} pozosOperando={data.pozos_operando}
             slide={carouselSlide} setSlide={setCarouselSlide} count={carouselCount}
             onPause={() => setCarouselPaused(true)} onResume={() => setCarouselPaused(false)}
           />
           <Top5ReservasCard top5Reservas={data.top5_reservas} nivel={reservasNivel} setNivel={setReservasNivel} />
-        </div>
-        <div style={{ flex: "0 0 auto", marginTop: 4 }}>
-          <PozosOperando pozosOperando={data.pozos_operando} />
         </div>
       </div>
 
