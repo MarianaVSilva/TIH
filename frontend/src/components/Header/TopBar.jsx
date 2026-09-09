@@ -1163,7 +1163,7 @@ export default function TopBar() {
                       onChangeStart={v => setFiltro(end_year == null ? { start_year: v, end_year: v } : { start_year: v })}
                       onChangeEnd={v => setFiltro(start_year == null ? { start_year: v, end_year: v } : { end_year: v })}
                     />
-                    {start_year !== end_year && (
+                    {period !== "monthly" && start_year !== end_year && (
                       <button
                         type="button"
                         onClick={() => setFiltro({ start_year: null, end_year: null })}
@@ -1200,12 +1200,31 @@ export default function TopBar() {
                 </div>
                 <div className="tih-filterbar__group">
                   <span className="tih-filterbar__label--dark">Mes fin</span>
-                  <CustomSelect small
-                    value={end_month}
-                    options={MONTHS.map((m, i) => ({ value: i + 1, label: m }))}
-                    onChange={v => setFiltro({ end_month: +v })}
-                    minWidth={82}
-                  />
+                  <div className="flex items-center gap-1">
+                    <CustomSelect small
+                      value={end_month}
+                      options={MONTHS.map((m, i) => ({ value: i + 1, label: m }))}
+                      onChange={v => setFiltro({ end_month: +v })}
+                      minWidth={82}
+                    />
+                    {start_year !== end_year && (
+                      <button
+                        type="button"
+                        onClick={() => setFiltro({ start_year: null, end_year: null })}
+                        title="Limpiar años"
+                        aria-label="Limpiar rango de años"
+                        style={{ background: "none", border: "none", cursor: "pointer", padding: 2, display: "flex", color: "rgba(255,255,255,0.4)" }}
+                        onMouseEnter={e => e.currentTarget.style.color = "#fff"}
+                        onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.4)"}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/>
+                          <line x1="10" y1="11" x2="10" y2="17"/>
+                          <line x1="14" y1="11" x2="14" y2="17"/>
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </>
             )}

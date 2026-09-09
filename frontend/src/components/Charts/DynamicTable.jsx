@@ -1386,7 +1386,7 @@ function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, tit
                   <label className="flex items-center gap-2 py-0.5 cursor-pointer">
                     <input type="checkbox" checked={!sumaOculta} className="accent-teal-600"
                       onChange={() => setSumaOculta(v => !v)} />
-                    <span className="text-[12px] text-slate-700">Suma</span>
+                    <span className="text-[12px] text-slate-700">Prom</span>
                   </label>
                 </>
               )}
@@ -1664,11 +1664,12 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   // Modo "Comparar años": exactamente 2 años, en orden cronológico + columna de diferencia.
   const isCompare = !!compareMode && !isMonthly && visCats.length === 2;
 
-  // Columna de suma a la derecha con 2+ años (vista anual); en vista mensual
-  // se agrega al final de cada año en vez de una sola global. "Pozos
-  // operando por campo" la oculta (ocultarSuma, pedido explícito): son fotos
-  // de pozos activos por año (promedio, no acumulado, ver
-  // perforacion_service.py), sumar dos años no tiene significado real.
+  // Columna de promedio ("Prom") a la derecha con 2+ años (vista anual); en
+  // vista mensual se agrega al final de cada año en vez de una sola global.
+  // Antes sumaba las columnas visibles, pero eso no tiene significado real
+  // sobre valores de tasa diaria (Mbd/MMpcd): se cambió a promedio. Algunas
+  // tablas (ocultarSuma, pedido explícito) igual la ocultan porque ni el
+  // promedio aplica a su dato (p.ej. conteos puntuales de pozos activos).
   const sumaDisponible = !ocultarSuma && (isMonthly ? visCats.length > 0 : visCats.length >= 2);
   const showSuma = sumaDisponible && !sumaOculta;
   const extraSumaCols = isMonthly ? (showSuma ? yearGroups.length : 0) : (showSuma ? 1 : 0);
@@ -1927,7 +1928,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                           {showSuma && (
                             <th className="text-center px-1 py-1.5 text-[11px] font-semibold whitespace-nowrap"
                               style={{ minWidth: 76, background: "#eef2ff", color: "#6366f1" }}>
-                              Suma
+                              Prom
                             </th>
                           )}
                         </Fragment>
@@ -1970,7 +1971,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                   )}
                   {showSuma && (
                     <th className="text-center px-2 py-3 text-[13px] font-bold whitespace-nowrap" style={{ minWidth: 96, background: "#eef2ff", color: "#818cf8" }}>
-                      Suma
+                      Prom
                     </th>
                   )}
                 </tr>
@@ -2098,7 +2099,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                       return yearGroups.map(([year, cols], yi) => {
                         const clr = !isCuenca ? YEAR_COLORS[yi % YEAR_COLORS.length] : null;
                         const sumaVals = cols.map(c => row[c]).filter(v => v !== null);
-                        const suma = sumaVals.length ? sumaVals.reduce((a, b) => a + b, 0) : null;
+                        const suma = sumaVals.length ? sumaVals.reduce((a, b) => a + b, 0) / sumaVals.length : null;
                         return (
                           <Fragment key={year}>
                             {cols.map((c, ci) => {
@@ -2180,7 +2181,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                     {showSuma && !isMonthly && !useColSpan && (() => {
                       const vals = displayCats.map(c => row[c]).filter(v => v !== null);
                       if (!vals.length) return <td />;
-                      const suma = vals.reduce((a, b) => a + b, 0);
+                      const suma = vals.reduce((a, b) => a + b, 0) / vals.length;
                       return (
                         <td className="px-2 py-[5px] text-center tabular-nums text-[12px] font-medium" style={{ color: "#a5b4fc", background: "#eef2ff60" }}>
                           {suma === 0 ? "—" : fmtNum(suma, decimalesTabla)}
