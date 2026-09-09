@@ -18,6 +18,7 @@ import ReportBuilderModal from "./ReportBuilderModal";
 import { descargarCsvConHeader } from "../../utils/exportCsv";
 import { fmt2, fmtNum } from "../../utils/formato";
 import { AGUA_COLOR, AGUA_AREA, AGUA_LINEA, esAgua, ejeAgua } from "../../utils/estiloAgua";
+import { sinCerosIniciales } from "../../utils/seriesUtils";
 
 const PALETTE = [
   "#0db4be","#6366f1","#f59e0b","#ef4444",
@@ -227,7 +228,10 @@ function buildChartOption(categories, series, chartType, { zoomable = false } = 
           // es contexto al fondo, no una barra mas que se compare de altura.
           name: s.name,
           type: "line",
-          data: s.data,
+          // Series como Agua/Nitrógeno empiezan a reportarse años después de
+          // que arranca la tabla (antes traen 0.0, no null) — sin esto la
+          // línea aparecía plana en el suelo antes de existir de verdad.
+          data: sinCerosIniciales(s.data),
           smooth: true,
           symbol: categories.length <= 1 ? "circle" : "none",
           symbolSize: 8,
@@ -240,7 +244,7 @@ function buildChartOption(categories, series, chartType, { zoomable = false } = 
           name: s.name,
           type: isBar ? "bar" : "line",
           ...(hayAgua ? { yAxisIndex: 0, z: 3 } : {}),
-          data: s.data,
+          data: sinCerosIniciales(s.data),
           smooth: true,
           lineStyle: { width: 2, color: colorDeSerie(s.name) },
           // Con una sola categoría no hay segmento de línea que dibujar —
@@ -383,7 +387,7 @@ function PreciosGroupChart({ titulo, unidad, categories, series, height = 300 })
     xAxis: { type: "category", data: categories, axisLabel: { fontSize: 10 } },
     yAxis: { type: "value", name: unidad, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
     series: series.map(s => ({
-      name: s.name, type: "line", data: s.data, smooth: true, showSymbol: false,
+      name: s.name, type: "line", data: sinCerosIniciales(s.data), smooth: true, showSymbol: false,
       areaStyle: { opacity: 0.12 },
       lineStyle: { width: 2.5 },
       // Líneas punteadas horizontales en el máximo y mínimo de la serie

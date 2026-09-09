@@ -2,6 +2,7 @@ import { forwardRef, useImperativeHandle, useRef } from "react";
 import ReactECharts from "echarts-for-react";
 import { AGUA_COLOR, AGUA_AREA, AGUA_LINEA, rayasHidrocarburo, ejeAgua } from "../../utils/estiloAgua";
 import { fmt2 } from "../../utils/formato";
+import { sinCerosIniciales } from "../../utils/seriesUtils";
 
 const AREA_COLOR = { CRITICO: "rgba(220,38,38,0.12)", DECLINANDO: "rgba(245,158,11,0.12)" };
 
@@ -26,7 +27,7 @@ const PozoTrendChart = forwardRef(function PozoTrendChart({ categories, data, un
 
   if (!categories?.length) return null;
   const cats = categories;
-  const vals = data;
+  const vals = sinCerosIniciales(data);
 
   const markLineData = [];
   if (analisis?.pico_historico_mbd) {
@@ -92,7 +93,7 @@ const PozoTrendChart = forwardRef(function PozoTrendChart({ categories, data, un
       },
       ...(hayAgua ? [{
         name: "Agua",
-        type: "line", data: agua.data, smooth: true, symbol: "none", yAxisIndex: 1, z: 2,
+        type: "line", data: sinCerosIniciales(agua.data), smooth: true, symbol: "none", yAxisIndex: 1, z: 2,
         lineStyle: AGUA_LINEA,
         itemStyle: { color: AGUA_COLOR },
         areaStyle: { color: AGUA_AREA },

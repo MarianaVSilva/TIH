@@ -5,6 +5,7 @@ import LoadingSpinner from "../UI/LoadingSpinner";
 import { tendenciaLabel } from "../../utils/tendenciaLabel";
 import { transponerAPivot } from "./DynamicTable";
 import { useExplorerNav } from "../../hooks/useExplorerNav";
+import { sinCerosIniciales } from "../../utils/seriesUtils";
 
 const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626", SIN_PRODUCCION: "#94a3b8" };
 // Pozo sin producción actual: la tendencia no tiene sentido, se omite.
@@ -95,7 +96,7 @@ export default function PozosComparar({ seleccionados, onQuitar, period, start_y
     xAxis: { type: "category", data: data.categories, axisLabel: { fontSize: 9, rotate: 45 } },
     yAxis: { type: "value", axisLabel: { fontSize: 9 } },
     series: data.series.map((s, i) => ({
-      name: s.name, type: "line", data: s.data, smooth: true, symbol: "none",
+      name: s.name, type: "line", data: sinCerosIniciales(s.data), smooth: true, symbol: "none",
       lineStyle: { width: 2, color: colorDe(i) },
       itemStyle: { color: colorDe(i) },
     })),

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import ReactECharts from "echarts-for-react";
 import { SeccionTitulo } from "./FichaShell";
+import { sinCerosIniciales } from "../../utils/seriesUtils";
 
 const INK = "#1f2430";
 const MUTED = "#767b87";
@@ -28,7 +29,7 @@ export default function BloqueProduccion({ titulo, categories = [], series = [],
     xAxis: { type: "category", data: categories, axisLabel: { color: MUTED, fontSize: 10 }, axisLine: { lineStyle: { color: BORDER } } },
     yAxis: { type: "value", axisLabel: { color: MUTED, fontSize: 10 }, splitLine: { show: false } },
     series: series.map((s, i) => ({
-      name: s.label, type: "line", data: s.data, smooth: true, symbol: categories.length <= 1 ? "circle" : "none",
+      name: s.label, type: "line", data: sinCerosIniciales(s.data), smooth: true, symbol: categories.length <= 1 ? "circle" : "none",
       lineStyle: { width: 2 }, color: SERIE_COLORS[i % SERIE_COLORS.length],
     })),
   };
