@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useExplorer } from "../../store/useExplorer";
 import { useChartData } from "../../hooks/useChartData";
-import { fetchTemas, fetchPerforacionFiltros, fetchProduccionFiltros } from "../../api/client";
+import { fetchTemas, fetchPerforacionFiltros, fetchProduccionFiltros, fetchRangoAnios } from "../../api/client";
 import { acentuarTema } from "../../utils/acentuarTema";
 import BuscadorGlobal from "./BuscadorGlobal";
 import "../../styles/header.css";
@@ -76,9 +76,13 @@ const PRODUCCION_SECCIONES = new Set(["Producción", "Produccion"]);
 // Nombres vienen tal cual de la BD, sin acentos (y a veces en minúsculas) —
 // se corrigen solo en pantalla, sin tocar la BD.
 // ── Selector de rango de años ─────────────────────────────────────────────────
-function YearRangeSelector({ startYear, endYear, onChangeStart, onChangeEnd }) {
-  const startOptions = YEARS.filter(y => endYear == null || y <= endYear).map(y => ({ value: y, label: String(y) }));
-  const endOptions   = YEARS.filter(y => startYear == null || y >= startYear).map(y => ({ value: y, label: String(y) }));
+function YearRangeSelector({ startYear, endYear, onChangeStart, onChangeEnd, years }) {
+  // `years`: rango real con datos para el tema activo (ver rango-anios en
+  // TopBar). Sin eso (cargando, o tema sin mapear en el backend) se usa la
+  // lista genérica 1960–hoy de siempre, para no dejar el selector vacío.
+  const lista = years ?? YEARS;
+  const startOptions = lista.filter(y => endYear == null || y <= endYear).map(y => ({ value: y, label: String(y) }));
+  const endOptions   = lista.filter(y => startYear == null || y >= startYear).map(y => ({ value: y, label: String(y) }));
 
   return (
     <div className="flex items-center gap-1.5">
@@ -677,6 +681,28 @@ export default function TopBar() {
   // Corte vigente, sin dimensión de año — a diferencia de InvCuenca/InvCont
   // (esos sí son series por año), el filtro de Periodo no les aplica.
   const esSnapshot = ["PozosLic", "EfectivoLic", "InvLic", "EmpresasG"].includes(tema?.json_arg);
+
+  // Rango real de años CON DATOS para el tema activo (ver GET
+  // /temas/rango-anios) — antes el selector de Periodo ofrecía siempre
+  // 1960–hoy sin importar el tema; Reservas, por ejemplo, solo tiene datos
+  // 2010–2024 y dejaba elegir años vacíos. null mientras carga o si el tema
+  // no está mapeado en el backend: en ese caso YearRangeSelector cae a la
+  // lista genérica de siempre (ver su propio fallback).
+  const [rangoAnios, setRangoAnios] = useState(null);
+  useEffect(() => {
+    setRangoAnios(null);
+    if (!tema?.json_arg || esSnapshot) return;
+    let vigente = true;
+    fetchRangoAnios(tema.json_arg).then(r => {
+      if (vigente && r?.min_year != null && r?.max_year != null) setRangoAnios(r);
+    }).catch(() => {});
+    return () => { vigente = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tema?.json_arg]);
+  const aniosDisponibles = rangoAnios
+    ? Array.from({ length: rangoAnios.max_year - rangoAnios.min_year + 1 }, (_, i) => rangoAnios.max_year - i)
+    : null; // null = usar la lista genérica (YEARS) dentro de YearRangeSelector
+
   const [invDrawerOpen, setInvDrawerOpen] = useState(false);
   // Nombres de los grupos de primer nivel (cuenca, o Ronda/Farmouts/
   // Migraciones) — vienen ya resueltos en resultado.groups, sin pedirle al
@@ -1133,6 +1159,7 @@ export default function TopBar() {
                     <YearRangeSelector
                       startYear={start_year}
                       endYear={end_year}
+                      years={aniosDisponibles}
                       onChangeStart={v => setFiltro(end_year == null ? { start_year: v, end_year: v } : { start_year: v })}
                       onChangeEnd={v => setFiltro(start_year == null ? { start_year: v, end_year: v } : { end_year: v })}
                     />
@@ -1257,6 +1284,10 @@ export default function TopBar() {
                 </button>
               </div>
             )}
+
+            {/* Slot al que ChartArea porta (React Portal) el switch "Ver como
+                tablas/gráficos" y sus controles — ver .tih-filterbar__viewbar-slot. */}
+            <div id="tih-viewbar-slot" className="tih-filterbar__viewbar-slot" />
 
           </div>
         )}

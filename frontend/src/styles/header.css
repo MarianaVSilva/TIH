@@ -183,6 +183,16 @@
   gap: 4px;
 }
 
+/* Hueco donde ChartArea porta el switch "Ver como tablas/gráficos" (y los
+   controles que lo acompañan) — vive en el DOM de ChartArea, pero se pide
+   que aparezca visualmente en esta barra, cargado a la derecha (debajo del
+   buscador, que está en la fila de pills justo arriba). margin-left:auto lo
+   empuja al final de la fila sin tocar el orden de los demás filtros. */
+.tih-filterbar__viewbar-slot {
+  margin-left: auto;
+  align-self: center;
+}
+
 /* Labels */
 .tih-filterbar__label--dark {
   font-family: 'Noto Sans', sans-serif;

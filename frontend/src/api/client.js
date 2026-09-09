@@ -3,6 +3,7 @@ import axios from "axios";
 const api = axios.create({ baseURL: "/api/v1", timeout: 30000 });
 
 export const fetchTemas          = ()       => api.get("/temas/").then(r => r.data);
+export const fetchRangoAnios     = (topic)  => api.get("/temas/rango-anios", { params: { topic } }).then(r => r.data);
 export const fetchBuscar         = (q)      => api.get("/buscar/", { params: { q } }).then(r => r.data);
 
 export const fetchProduccionCuenca  = (p) => api.get("/produccion/cuenca",  { params: p }).then(r => r.data);

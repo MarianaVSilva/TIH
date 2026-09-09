@@ -1,4 +1,5 @@
 import { useState, useRef, useMemo, useEffect } from "react";
+import { createPortal } from "react-dom";
 import ReactECharts from "echarts-for-react";
 import * as echarts from "echarts";
 import { useExplorer } from "../../store/useExplorer";
@@ -17,7 +18,7 @@ import ContratosAdjudicadosDetallePanel from "./ContratosAdjudicadosDetallePanel
 import ReportBuilderModal from "./ReportBuilderModal";
 import { descargarCsvConHeader } from "../../utils/exportCsv";
 import { fmt2, fmtNum } from "../../utils/formato";
-import { AGUA_COLOR, AGUA_AREA, AGUA_LINEA, esAgua, ejeAgua } from "../../utils/estiloAgua";
+import { AGUA_COLOR, esAgua } from "../../utils/estiloAgua";
 import { sinCerosIniciales } from "../../utils/seriesUtils";
 
 const PALETTE = [
@@ -140,11 +141,6 @@ function buildChartOption(categories, series, chartType, { zoomable = false } = 
   const isBar = chartType === "bar";
   const showZoom = zoomable && !isPie && categories.length > 12;
 
-  // El agua se grafica junto a los hidrocarburos pero en un eje propio a la
-  // derecha (ver utils/estiloAgua.js). En pastel no aplica: ahi no hay ejes y
-  // meterla al reparto la haria leerse como produccion.
-  const hayAgua = !isPie && series.length > 1 && series.some(s => esAgua(s.name));
-
   const pieData = isPie
     ? series.map(s => ({
         name: s.name,
@@ -186,7 +182,7 @@ function buildChartOption(categories, series, chartType, { zoomable = false } = 
           valueFormatter: v => (v == null ? "—" : fmt2(v)),
         },
         legend: { type: "plain", bottom: showZoom ? 26 : 0, left: "center", width: "92%", itemGap: 14, textStyle: { color: "#767b87", fontSize: 10 } },
-        grid: { top: 30, right: hayAgua ? 56 : 24, bottom: (series.length > 6 ? 90 : 50) + (showZoom ? 26 : 0), left: 20, containLabel: true },
+        grid: { top: 30, right: 24, bottom: (series.length > 6 ? 90 : 50) + (showZoom ? 26 : 0), left: 20, containLabel: true },
         xAxis: {
           type: "category",
           data: categories,
@@ -207,14 +203,11 @@ function buildChartOption(categories, series, chartType, { zoomable = false } = 
           axisLine: { lineStyle: { color: "#e7e5e0" } },
           axisTick: { show: false },
         },
-        yAxis: [
-          {
-            type: "value",
-            axisLabel: { color: "#767b87", fontSize: 10, formatter: v => fmt2(v) },
-            splitLine: { show: false },
-          },
-          ...(hayAgua ? [ejeAgua()] : []),
-        ],
+        yAxis: {
+          type: "value",
+          axisLabel: { color: "#767b87", fontSize: 10, formatter: v => fmt2(v) },
+          splitLine: { show: false },
+        },
         ...(showZoom ? {
           dataZoom: [
             { type: "inside", start: 100 - Math.min(100, (12 / categories.length) * 100 * 3), end: 100 },
@@ -223,9 +216,11 @@ function buildChartOption(categories, series, chartType, { zoomable = false } = 
               textStyle: { color: "#767b87", fontSize: 9 } },
           ],
         } : {}),
-        series: series.map((s, idx) => (esAgua(s.name) && hayAgua ? {
-          // Siempre linea con area tenue, aunque el resto sean barras: el agua
-          // es contexto al fondo, no una barra mas que se compare de altura.
+        series: series.map((s, idx) => (esAgua(s.name) ? {
+          // El agua siempre se dibuja como línea continua, aunque el resto
+          // sean barras: es contexto de la producción, no una barra más que
+          // se compare por altura. Comparte el mismo eje (pedido explícito),
+          // sin relleno — solo su color la distingue.
           name: s.name,
           type: "line",
           // Series como Agua/Nitrógeno empiezan a reportarse años después de
@@ -235,15 +230,12 @@ function buildChartOption(categories, series, chartType, { zoomable = false } = 
           smooth: true,
           symbol: categories.length <= 1 ? "circle" : "none",
           symbolSize: 8,
-          yAxisIndex: 1,
-          z: 2,
-          lineStyle: AGUA_LINEA,
+          z: 3,
+          lineStyle: { width: 2, color: AGUA_COLOR },
           itemStyle: { color: AGUA_COLOR },
-          areaStyle: { color: AGUA_AREA },
         } : {
           name: s.name,
           type: isBar ? "bar" : "line",
-          ...(hayAgua ? { yAxisIndex: 0, z: 3 } : {}),
           data: sinCerosIniciales(s.data),
           smooth: true,
           lineStyle: { width: 2, color: colorDeSerie(s.name) },
@@ -804,6 +796,33 @@ function PreciosDashboard({ categories, series }) {
 }
 
 // ── Inversiones aprobadas por cuenca ────────────────────────────────────────
+// El switch "Ver como tablas/gráficos" (ViewBar) vive lógicamente aquí en
+// ChartArea —el estado (viewMode, chartType) y las opciones dependen de qué
+// tema está activo, calculadas junto al resto de esta pantalla—, pero se
+// pidió que aparezca VISUALMENTE en la barra de filtros del encabezado
+// (tema/periodicidad/periodo), cargado a la derecha bajo el buscador. En vez
+// de mover ese estado al store global solo para poder pintarlo desde TopBar,
+// se porta con un Portal al hueco que TopBar ya deja listo
+// (#tih-viewbar-slot, ver styles/header.css) — el DOM final queda en el
+// header, pero la lógica sigue en un solo lugar.
+//
+// `useSlot` reintenta encontrar el nodo en cada render (barato: un solo
+// getElementById) porque en el primer montaje de la app TopBar podría no
+// haber pintado el slot todavía cuando ChartArea corre su primer render.
+function useSlot(id) {
+  const [el, setEl] = useState(() => (typeof document !== "undefined" ? document.getElementById(id) : null));
+  useEffect(() => {
+    if (!el) setEl(document.getElementById(id));
+  });
+  return el;
+}
+
+function ViewBarPortal({ children }) {
+  const slot = useSlot("tih-viewbar-slot");
+  if (!slot) return null;
+  return createPortal(children, slot);
+}
+
 function ViewBar({ viewMode, setViewMode, chartType, setChartType, hideGraphics = false, extra, extraModos = [], onGenerarReporte, hideChartTypes = false, chartTypes = CHART_TYPES }) {
   const modos = [
     ...(hideGraphics
@@ -811,8 +830,10 @@ function ViewBar({ viewMode, setViewMode, chartType, setChartType, hideGraphics 
       : [{ id: "tablas", label: "Ver como tablas" }, { id: "graficos", label: "Ver como gráficos" }]),
     ...extraModos,
   ];
+  // Sin margen inferior: ahora vive en el hueco de la barra de filtros del
+  // encabezado (ver ViewBarPortal más abajo), no ya al tope del contenido.
   return (
-    <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+    <div className="flex items-center justify-between flex-wrap gap-2">
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5">
           {modos.map(({ id, label }) => (
@@ -891,10 +912,9 @@ function sinSubtotales(series) {
 //
 // El agua comparte unidad con petróleo y condensado pero no es un
 // hidrocarburo: viaja con las series de Mbd (pedido explícito: "que el agua se
-// vea en todos los gráficos de Mbd"), pero dibujada aparte —eje propio a la
-// derecha y área azul muy tenue, ver utils/estiloAgua.js— para que no se lea
-// como producción. Solo cae en su propio panel si no hay ningún líquido con
-// que acompañarla, o en pastel (que no tiene ejes).
+// vea en todos los gráficos de Mbd"), en el mismo eje, distinguida solo por su
+// color (ver utils/estiloAgua.js). Solo cae en su propio panel si no hay
+// ningún líquido con que acompañarla, o en pastel (que no tiene ejes).
 function partirSeriesPorUnidad(series, { aguaAparte = false } = {}) {
   const esMMpcd = s => s.name.includes("MMpcd");
   const mbdTodo = series.filter(s => !esMMpcd(s));
@@ -1886,28 +1906,30 @@ export default function ChartArea() {
             ))}
           </div>
         )}
-        <ViewBar
-          viewMode={viewMode} setViewMode={setViewMode} chartType={chartType} setChartType={setChartType}
-          hideChartTypes
-          onGenerarReporte={() => setReportModalOpen(true)}
-          extra={esReservas ? (
-            <button
-              onClick={() => setReservasModo(m => m === "campo" ? null : "campo")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-                reservasModo === "campo" ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
-              }`}>
-              Gráfica individual por {esReservasAsig ? "asignación/contrato" : "campo"}
-            </button>
-          ) : contratosPersonalizada.length > 0 ? (
-            <button
-              onClick={() => setInvPersonalizada(v => !v)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-                invPersonalizada ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
-              }`}>
-              Gráfica individual
-            </button>
-          ) : null}
-        />
+        <ViewBarPortal>
+          <ViewBar
+            viewMode={viewMode} setViewMode={setViewMode} chartType={chartType} setChartType={setChartType}
+            hideChartTypes
+            onGenerarReporte={() => setReportModalOpen(true)}
+            extra={esReservas ? (
+              <button
+                onClick={() => setReservasModo(m => m === "campo" ? null : "campo")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                  reservasModo === "campo" ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
+                }`}>
+                Gráfica individual por {esReservasAsig ? "asignación/contrato" : "campo"}
+              </button>
+            ) : contratosPersonalizada.length > 0 ? (
+              <button
+                onClick={() => setInvPersonalizada(v => !v)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                  invPersonalizada ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
+                }`}>
+                Gráfica individual
+              </button>
+            ) : null}
+          />
+        </ViewBarPortal>
         {viewMode === "graficos" && !verPersonalizada && !esReservas && !esEmpresas && (
           <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm w-fit mb-4">
             {CHART_TYPES.filter(t => t.id === "bar" || t.id === "pie").map(({ id, label, icon }, idx, arr) => (
@@ -2200,23 +2222,25 @@ export default function ChartArea() {
             setAllVisible={setAllVisible}
           />
         )}
-        <ViewBar
-          viewMode={vistaEfectiva} setViewMode={setViewMode}
-          chartType={chartType} setChartType={setChartType}
-          hideGraphics={hideGraphics}
-          chartTypes={esOperadores ? CHART_TYPES.filter(t => t.id !== "pie" && t.id !== "heatmap") : CHART_TYPES}
-          onGenerarReporte={() => setReportModalOpen(true)}
-          extraModos={tema?.json_arg === "Asignaciones" ? [{ id: "ranking", label: "Ranking" }] : []}
-          extra={puedeVerPersonalizada ? (
-            <button
-              onClick={() => setOperadorPersonalizada(v => !v)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-                operadorPersonalizada ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
-              }`}>
-              Gráfica individual
-            </button>
-          ) : null}
-        />
+        <ViewBarPortal>
+          <ViewBar
+            viewMode={vistaEfectiva} setViewMode={setViewMode}
+            chartType={chartType} setChartType={setChartType}
+            hideGraphics={hideGraphics}
+            chartTypes={esOperadores ? CHART_TYPES.filter(t => t.id !== "pie" && t.id !== "heatmap") : CHART_TYPES}
+            onGenerarReporte={() => setReportModalOpen(true)}
+            extraModos={tema?.json_arg === "Asignaciones" ? [{ id: "ranking", label: "Ranking" }] : []}
+            extra={puedeVerPersonalizada ? (
+              <button
+                onClick={() => setOperadorPersonalizada(v => !v)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                  operadorPersonalizada ? "bg-tih-dark text-white border-tih-dark" : "bg-white text-slate-600 border-slate-200 hover:border-teal-400"
+                }`}>
+                Gráfica individual
+              </button>
+            ) : null}
+          />
+        </ViewBarPortal>
         <div ref={contentRef} style={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: "auto" }}>
           {vistaEfectiva === "ranking"
             ? <AsignacionesRanking period={period} start_year={start_year} end_year={end_year} start_month={start_month} end_month={end_month}
@@ -2464,8 +2488,10 @@ export default function ChartArea() {
           toggleSerie={toggleSerie}
           setAllVisible={setAllVisible}
         />
-        <ViewBar viewMode={viewMode} setViewMode={setViewMode} chartType={chartType} setChartType={setChartType}
-          onGenerarReporte={() => setReportModalOpen(true)} />
+        <ViewBarPortal>
+          <ViewBar viewMode={viewMode} setViewMode={setViewMode} chartType={chartType} setChartType={setChartType}
+            onGenerarReporte={() => setReportModalOpen(true)} />
+        </ViewBarPortal>
         <div ref={contentRef}>
           {resultado.tabs.map(tab => {
             const series = filterSeries(tab.series, visibleSeries);
@@ -2517,9 +2543,11 @@ export default function ChartArea() {
         toggleSerie={toggleSerie}
         setAllVisible={setAllVisible}
       />
-      <ViewBar viewMode={viewMode} setViewMode={setViewMode} chartType={chartType} setChartType={setChartType} hideGraphics={simpleHideGraphics}
-        hideChartTypes={tema?.json_arg === "Precios"}
-        onGenerarReporte={() => setReportModalOpen(true)} />
+      <ViewBarPortal>
+        <ViewBar viewMode={viewMode} setViewMode={setViewMode} chartType={chartType} setChartType={setChartType} hideGraphics={simpleHideGraphics}
+          hideChartTypes={tema?.json_arg === "Precios"}
+          onGenerarReporte={() => setReportModalOpen(true)} />
+      </ViewBarPortal>
       <div ref={contentRef}>
         {(simpleHideGraphics ? "tablas" : viewMode) === "tablas"
           ? <DataTable title={tema?.json_arg === "Precios" ? "" : tituloTema} categories={resultado.categories ?? []} series={series}
