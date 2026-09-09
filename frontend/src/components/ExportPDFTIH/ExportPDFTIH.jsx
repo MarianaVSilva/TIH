@@ -12,31 +12,44 @@ import { nombreCampoDisplay } from '../../utils/nombreCampo';
  * - isOpen: booleano para mostrar/ocultar modal
  */
 
+// Todas las tarjetas se incluyen siempre (si tienen datos en el periodo);
+// lo único que el usuario elige es el ORDEN en que aparecen en el PDF —
+// pedido explícito, reemplaza al checkbox "incluir sí/no" de antes.
+const SECCIONES_DEFAULT = [
+  { id: 'produccion', label: 'Producción mensual' },
+  { id: 'indicadores', label: 'Precios de referencia' },
+  { id: 'campos', label: 'Top 10 Campos Productores' },
+  { id: 'operador', label: 'Producción por Operador' },
+  { id: 'reservas', label: 'Top 5 Reservas por campo' },
+  { id: 'pozos', label: 'Pozos operando' },
+];
+
 const ExportPDFTIH = ({ data, onClose, isOpen }) => {
-  const [selectedSections, setSelectedSections] = useState({
-    produccion: true,
-    indicadores: true,
-    campos: true,
-    operador: true,
-    reservas: true,
-    pozos: true,
-  });
-
+  const [orden, setOrden] = useState(SECCIONES_DEFAULT);
   const [isGenerating, setIsGenerating] = useState(false);
-  const numSeleccionadas = Object.values(selectedSections).filter(Boolean).length;
 
-  const handleCheckboxChange = (section) => {
-    setSelectedSections(prev => ({
-      ...prev,
-      [section]: !prev[section]
-    }));
+  const moverArriba = (idx) => {
+    if (idx === 0) return;
+    setOrden(prev => {
+      const next = [...prev];
+      [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+      return next;
+    });
+  };
+  const moverAbajo = (idx) => {
+    setOrden(prev => {
+      if (idx >= prev.length - 1) return prev;
+      const next = [...prev];
+      [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+      return next;
+    });
   };
 
   const generatePDF = async () => {
     setIsGenerating(true);
 
     try {
-      const htmlContent = generateDashboardHTML(data, selectedSections);
+      const htmlContent = generateDashboardHTML(data, orden.map(s => s.id));
 
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = htmlContent;
@@ -93,42 +106,42 @@ const ExportPDFTIH = ({ data, onClose, isOpen }) => {
         </div>
 
         <p className="modal-description">
-          Elige qué tarjetas incluir — se genera un PDF con el mismo estilo del sitio, tal como se ven ahora en pantalla.
+          Se incluyen todas las tarjetas con datos en el periodo actual — elige el orden en que aparecen en el PDF.
         </p>
 
         <div className="sections-list">
-          {[
-            { id: 'produccion', label: 'Producción mensual' },
-            { id: 'indicadores', label: 'Precios de referencia' },
-            { id: 'campos', label: 'Top 10 Campos Productores' },
-            { id: 'operador', label: 'Producción por Operador' },
-            { id: 'reservas', label: 'Top 5 Reservas por campo' },
-            { id: 'pozos', label: 'Pozos operando' },
-          ].map(section => (
-            <label key={section.id} className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={selectedSections[section.id]}
-                onChange={() => handleCheckboxChange(section.id)}
-              />
-              <span>{section.label}</span>
-            </label>
+          {orden.map((section, idx) => (
+            <div key={section.id} className="order-row" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 4px' }}>
+              <span style={{ fontSize: 12, color: '#94a3b8', width: 18, textAlign: 'right' }}>{idx + 1}.</span>
+              <span style={{ flex: 1, fontSize: 13.5 }}>{section.label}</span>
+              <button
+                type="button"
+                onClick={() => moverArriba(idx)}
+                disabled={idx === 0}
+                aria-label={`Mover "${section.label}" hacia arriba`}
+                style={{ width: 26, height: 26, borderRadius: 6, border: '1px solid #e2e8f0', background: '#fff', cursor: idx === 0 ? 'not-allowed' : 'pointer', opacity: idx === 0 ? 0.35 : 1, fontSize: 13, lineHeight: 1 }}
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                onClick={() => moverAbajo(idx)}
+                disabled={idx === orden.length - 1}
+                aria-label={`Mover "${section.label}" hacia abajo`}
+                style={{ width: 26, height: 26, borderRadius: 6, border: '1px solid #e2e8f0', background: '#fff', cursor: idx === orden.length - 1 ? 'not-allowed' : 'pointer', opacity: idx === orden.length - 1 ? 0.35 : 1, fontSize: 13, lineHeight: 1 }}
+              >
+                ↓
+              </button>
+            </div>
           ))}
         </div>
-
-        {numSeleccionadas < 2 && (
-          <p style={{ fontSize: 12, color: '#b45309', margin: '10px 0 0' }}>
-            Elige al menos 2 tarjetas: un PDF de una sola queda desbalanceado.
-          </p>
-        )}
 
         <div className="modal-actions">
           <button className="btn-cancel" onClick={onClose}>Cancelar</button>
           <button
             className="btn-generate"
             onClick={generatePDF}
-            disabled={isGenerating || numSeleccionadas < 2}
-            style={numSeleccionadas < 2 ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+            disabled={isGenerating}
           >
             {isGenerating ? 'Generando...' : 'Generar PDF'}
           </button>
@@ -300,7 +313,7 @@ function tablaOperadorHTML({ pemexAsig, pemexMig, privRondas, privMig }) {
  * Genera el HTML del dashboard para captura con html2canvas, replicando
  * colores/tipografía/estructura de HomeDashboard.jsx (portrait, una columna).
  */
-const generateDashboardHTML = (data, selectedSections) => {
+const generateDashboardHTML = (data, order) => {
   // Periodo real de los datos (mismo texto del encabezado en pantalla); si
   // por alguna razón no viene, cae a la fecha de hoy.
   const fecha = (data.periodoLabel || new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'long' })).toUpperCase();
@@ -368,7 +381,19 @@ const generateDashboardHTML = (data, selectedSections) => {
         </div>
       </div>
 
-      ${selectedSections.produccion && (data.produccion?.liquidos != null || data.produccion?.gas != null) ? `
+      ${order.map(id => SECTION_RENDERERS[id]?.(data, { camposLiq, camposGas, maxCamposLiq, maxCamposGas, resAceite, resGas, maxResAceite, maxResGas }) ?? '').join('')}
+    </div>
+  `;
+};
+
+// Cada sección es una función pura (data, extras) -> HTML o '' si no hay datos
+// para esa tarjeta. Antes cada bloque llevaba su propio checkbox de "incluir
+// sí/no"; ahora TODAS las que tengan datos se incluyen siempre, y lo único
+// que decide el usuario es en qué ORDEN aparecen (ver SectionsOrderList) — la
+// condición `!= null` / `.length` sigue estando para que una tarjeta vacía
+// (sin ese dato en el periodo) simplemente no ocupe espacio en el PDF.
+const SECTION_RENDERERS = {
+  produccion: (data) => (data.produccion?.liquidos == null && data.produccion?.gas == null) ? '' : `
       <div class="section-card">
         ${cardTitleHTML(null, VERDE, VERDE_BG, 'Producción mensual')}
         <div style="display:flex; gap:14px;">
@@ -376,9 +401,9 @@ const generateDashboardHTML = (data, selectedSections) => {
           ${bigStatHTML({ label: 'Gas natural', unidad: 'MMpcd', valor: data.produccion?.gas, promedio: data.produccion?.gasPromedio, anioPromedio: data.produccion?.gasAnioPromedio, color: AZUL, bg: AZUL_BG })}
         </div>
       </div>
-      ` : ''}
+  `,
 
-      ${selectedSections.indicadores && (data.mercado?.brent != null || data.mercado?.mezcla != null || data.mercado?.henryHub != null) ? `
+  indicadores: (data) => (data.mercado?.brent == null && data.mercado?.mezcla == null && data.mercado?.henryHub == null) ? '' : `
       <div class="section-card">
         ${cardTitleHTML(null, ROJO, ROJO_BG, 'Precios de referencia')}
         <div style="display:flex; gap:14px;">
@@ -387,9 +412,9 @@ const generateDashboardHTML = (data, selectedSections) => {
           ${indicadorHTML({ label: 'Mezcla Mexicana de Exportación', valor: data.mercado?.mezcla, anterior: data.mercado?.mezclaAnterior, color: VERDE, bg: VERDE_BG })}
         </div>
       </div>
-      ` : ''}
+  `,
 
-      ${selectedSections.campos && (camposLiq.length || camposGas.length) ? `
+  campos: (data, { camposLiq, camposGas, maxCamposLiq, maxCamposGas }) => (!camposLiq.length && !camposGas.length) ? '' : `
       <div class="section-card">
         ${cardTitleHTML(null, VERDE, VERDE_BG, 'Top 10 Campos Productores')}
         <div style="display:flex; gap:20px;">
@@ -403,9 +428,9 @@ const generateDashboardHTML = (data, selectedSections) => {
           </div>
         </div>
       </div>
-      ` : ''}
+  `,
 
-      ${selectedSections.reservas && (resAceite.length || resGas.length) ? `
+  reservas: (data, { resAceite, resGas, maxResAceite, maxResGas }) => (!resAceite.length && !resGas.length) ? '' : `
       <div class="section-card">
         ${cardTitleHTML(null, ORANGE, '#fbe6d3', 'Top 5 Reservas por campo')}
         <div style="display:flex; gap:20px;">
@@ -421,9 +446,9 @@ const generateDashboardHTML = (data, selectedSections) => {
           </div>
         </div>
       </div>
-      ` : ''}
+  `,
 
-      ${selectedSections.operador && (data.operador?.liquidosPemexPorcentaje != null || data.operador?.gasPemexPorcentaje != null) ? `
+  operador: (data) => (data.operador?.liquidosPemexPorcentaje == null && data.operador?.gasPemexPorcentaje == null) ? '' : `
       <div class="section-card">
         ${cardTitleHTML(null, AZUL, AZUL_BG, 'Producción por Operador')}
         <div style="display:flex; gap:20px;">
@@ -451,9 +476,9 @@ const generateDashboardHTML = (data, selectedSections) => {
           </div>
         </div>
       </div>
-      ` : ''}
+  `,
 
-      ${selectedSections.pozos && data.pozos?.total != null ? `
+  pozos: (data) => (data.pozos?.total == null) ? '' : `
       <div class="section-card">
         ${cardTitleHTML(null, ROJO, ROJO_BG, 'Pozos operando')}
         <div style="display:flex; gap:14px; align-items:stretch;">
@@ -475,9 +500,7 @@ const generateDashboardHTML = (data, selectedSections) => {
           </div>
         </div>
       </div>
-      ` : ''}
-    </div>
-  `;
+  `,
 };
 
 export default ExportPDFTIH;
