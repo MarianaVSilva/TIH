@@ -985,7 +985,7 @@ const KPI_CONFIG = [
   {
     key:   (k) => k.total?.toLocaleString("es-MX"),
     label: (topic) => PRODUCCION_TOTAL_LABEL[topic] ?? "Total de pozos",
-    nota:  "Dato del último periodo mostrado, no acumulado ni promedio.",
+    nota:  (topic, kpis) => `Dato del último periodo mostrado${kpis.periodo_dato ? ` (${kpis.periodo_dato})` : ""}.`,
     icon:  (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-5 h-5">
         <circle cx="12" cy="12" r="9"/><line x1="12" y1="3" x2="12" y2="21"/>
@@ -1070,6 +1070,7 @@ function buildSimpleKpis(categories, series) {
     total: Math.round(total),
     anio_top: categories[anioTopIdx],
     operador_top: seriesForTop[topSerieIdx]?.name,
+    periodo_dato: categories[lastIdx],
   };
 }
 
@@ -1083,6 +1084,7 @@ function KpiCards({ kpis, topic }) {
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
       {items.map(({ label, color, value, nota }) => {
         const labelText = typeof label === "function" ? label(topic, kpis) : label;
+        const notaText = typeof nota === "function" ? nota(topic, kpis) : nota;
         return (
           <div
             key={labelText}
@@ -1092,14 +1094,15 @@ function KpiCards({ kpis, topic }) {
               <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
               <span className="text-[10px] font-semibold uppercase tracking-wider leading-tight">
                 {labelText}
-                {nota && (
-                  <span className="ml-0.5 text-slate-300 cursor-help normal-case font-bold" title={nota}>*</span>
-                )}
+                {notaText && <span className="ml-0.5 font-bold">*</span>}
               </span>
             </div>
             <p className="text-slate-800 text-lg font-bold leading-tight truncate">
               {value ?? "—"}
             </p>
+            {notaText && (
+              <p className="text-[9.5px] text-slate-400 leading-tight -mt-1.5">* {notaText}</p>
+            )}
           </div>
         );
       })}
@@ -2222,7 +2225,10 @@ export default function ChartArea() {
     return (
       <>
       <div style={{ display: "flex", flexDirection: "column", height: "100%", minWidth: 0 }}>
-        <KpiCards kpis={resultado.kpis} topic={tema?.json_arg} />
+        <KpiCards
+          kpis={resultado.kpis && { ...resultado.kpis, periodo_dato: resultado.kpis.periodo_dato ?? resultado.categories?.[resultado.categories.length - 1] }}
+          topic={tema?.json_arg}
+        />
         {(groupBy || esProdCuenca || esOperadores) && chartHierSeries.length > 0 && vistaEfectiva !== "ranking" && (
           <SeriesChips
             items={chartHierSeries}
