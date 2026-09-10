@@ -497,6 +497,12 @@ function extractLeaves(resultado) {
   return leaves;
 }
 
+// Clasifica una hoja como Mbd/MMpcd por el nombre real del producto (el
+// subtotal "categoria" no siempre distingue unidad — en "Producción por
+// cuenca y ubicación" el único subtotal es "Producción", mezclando ambas).
+const esLeafMbd = (l) => l.categoria === "Hidrocarburos líquidos (Mbd)" || /\(Mbd\)/.test(l.operator ?? "");
+const esLeafMmpcd = (l) => l.categoria === "Gas (MMpcd)" || /\(MMpcd\)/.test(l.operator ?? "");
+
 function sumLeaves(list, cats) {
   const t = cats.map(() => 0);
   for (const lf of list) lf.data.forEach((v, i) => { t[i] += v ?? 0; });
@@ -765,8 +771,8 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
   } else if (!ocultarTotalesUnidad) {
     // Con forceDivisions un solo "Total" mezclaría unidades distintas
     // (Mbd, MMpcd) — se muestran los 2 totales por unidad en su lugar.
-    const mbdLeaves = leavesMostradas.filter(l => l.categoria === "Hidrocarburos líquidos (Mbd)");
-    const mmpcdLeaves = leavesMostradas.filter(l => l.categoria === "Gas (MMpcd)");
+    const mbdLeaves = leavesMostradas.filter(l => esLeafMbd(l));
+    const mmpcdLeaves = leavesMostradas.filter(l => esLeafMmpcd(l));
     if (mbdLeaves.length) rows.push({ _id: "total|Nacional|mbd", _type: "totalmbd", label: "Total Mbd", ...dataObj(cats, sumLeaves(mbdLeaves, cats)) });
     if (mmpcdLeaves.length) rows.push({ _id: "total|Nacional|mmpcd", _type: "totalmmpcd", label: "Total MMpcd", ...dataObj(cats, sumLeaves(mmpcdLeaves, cats)) });
   }
@@ -882,6 +888,14 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
             ...(bucket[0]?.categoriaCode ? { _code: bucket[0].categoriaCode, _esEntidad: true } : {}),
           });
           if (!isOpen) continue;
+          if (forceDivisions && !ocultarTotalesUnidad) {
+            const mbdLeaves = bucketMostrado.filter(esLeafMbd);
+            const mmpcdLeaves = bucketMostrado.filter(esLeafMmpcd);
+            if (mbdLeaves.length && mmpcdLeaves.length) {
+              rows.push({ _id: `${key}|totalmbd`, _type: "totalmbd", _indent: 12 + (depth + 1) * 18, label: "Total Mbd", ...dataObj(cats, sumLeaves(mbdLeaves, cats)) });
+              rows.push({ _id: `${key}|totalmmpcd`, _type: "totalmmpcd", _indent: 12 + (depth + 1) * 18, label: "Total MMpcd", ...dataObj(cats, sumLeaves(mmpcdLeaves, cats)) });
+            }
+          }
           renderOperators(bucket, key, depth + 1, qEfectiva, nextDims);
         }
         continue;
@@ -898,6 +912,14 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
           ? { _code: bucket[0].categoriaCode, _esEntidad: true } : {}),
       });
       if (!isOpen) continue;
+      if (forceDivisions && !ocultarTotalesUnidad) {
+        const mbdLeaves = bucketMostrado.filter(esLeafMbd);
+        const mmpcdLeaves = bucketMostrado.filter(esLeafMmpcd);
+        if (mbdLeaves.length && mmpcdLeaves.length) {
+          rows.push({ _id: `${key}|totalmbd`, _type: "totalmbd", _indent: 12 + (depth + 1) * 18, label: "Total Mbd", ...dataObj(cats, sumLeaves(mbdLeaves, cats)) });
+          rows.push({ _id: `${key}|totalmmpcd`, _type: "totalmmpcd", _indent: 12 + (depth + 1) * 18, label: "Total MMpcd", ...dataObj(cats, sumLeaves(mmpcdLeaves, cats)) });
+        }
+      }
 
       if (levelIdx + 1 < levels.length) {
         walk(bucket, levelIdx + 1, key, depth + 1, false, [], qEfectiva, nextDims);
