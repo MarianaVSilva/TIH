@@ -84,9 +84,9 @@ function BigStat({ label, valor, unidad, promedio, anioPromedio, color, bg }) {
   const cambio = promedio ? Math.round(((valor - promedio) / promedio) * 1000) / 10 : null;
   const up = cambio > 0;
   return (
-    <div className="flex-1 min-w-0 text-center flex flex-col justify-center" style={{ background: bg, padding: "4px 20px" }}>
+    <div className="flex-1 text-center flex flex-col justify-center" style={{ background: bg, padding: "4px clamp(8px, 2.5vw, 20px)", minWidth: 150 }}>
       <span className="text-[13px]" style={{ color: INK }}>{label} · {unidad}</span>
-      <span style={{ fontFamily: "'Patria', Georgia, serif", color, fontSize: 33, fontWeight: 700, lineHeight: 1.15, marginTop: 3, textShadow: `0 0 18px ${color}33` }}>
+      <span style={{ fontFamily: "'Patria', Georgia, serif", color, fontSize: "clamp(24px, 5.5vw, 33px)", fontWeight: 700, lineHeight: 1.15, marginTop: 3, textShadow: `0 0 18px ${color}33` }}>
         {fmt2(valor)}
       </span>
       {cambio != null && (
@@ -123,7 +123,11 @@ function CifrasNacionales({ nacional }) {
       <div style={{ padding: "10px 26px 4px" }}>
         <CardTitle>Producción mensual</CardTitle>
       </div>
-      <div className="flex items-stretch flex-wrap flex-none" style={{ height: 126 }}>
+      {/* minHeight (no height fijo): a ancho normal el contenido cabe en 126 y
+          las bandas de las dos cards superiores siguen alineadas; en pantallas
+          angostas el texto se envuelve y la banda crece en vez de desbordarse
+          sobre la nota al pie. */}
+      <div className="flex items-stretch flex-wrap flex-none" style={{ minHeight: 126 }}>
         <BigStat
           label="Hidrocarburos líquidos" unidad="Mbd"
           valor={nacional.liquidos?.valor} promedio={nacional.liquidos?.promedio}
@@ -151,9 +155,9 @@ function IndicadorEconomico({ label, valor, fecha, anterior, color, bg, unidad =
   const subiendo = cambio > 0;
   const bajando = cambio < 0;
   return (
-    <div className="flex-1 min-w-0 text-center flex flex-col justify-center" style={{ background: bg, padding: "4px 20px" }}>
+    <div className="flex-1 text-center flex flex-col justify-center" style={{ background: bg, padding: "4px clamp(8px, 2.5vw, 20px)", minWidth: 150 }}>
       <span className="text-[13px] block" style={{ color: INK }}>{label} · {unidad}</span>
-      <span style={{ fontFamily: "'Patria', Georgia, serif", color, fontSize: 33, fontWeight: 700, lineHeight: 1.15, marginTop: 3, display: "block", textShadow: `0 0 18px ${color}33` }}>
+      <span style={{ fontFamily: "'Patria', Georgia, serif", color, fontSize: "clamp(24px, 5.5vw, 33px)", fontWeight: 700, lineHeight: 1.15, marginTop: 3, display: "block", textShadow: `0 0 18px ${color}33` }}>
         ${fmt2(valor)}
       </span>
       {cambio != null && (
@@ -174,7 +178,7 @@ function IndicadoresEconomicos({ indicadores }) {
       <div style={{ padding: "10px 26px 4px" }}>
         <CardTitle>Precios de referencia</CardTitle>
       </div>
-      <div className="flex items-stretch flex-wrap flex-none" style={{ height: 126 }}>
+      <div className="flex items-stretch flex-wrap flex-none" style={{ minHeight: 126 }}>
         <IndicadorEconomico
           label="Henry Hub" unidad="USD/MMBtu"
           valor={indicadores.henry_hub?.valor} fecha={indicadores.henry_hub?.fecha}
