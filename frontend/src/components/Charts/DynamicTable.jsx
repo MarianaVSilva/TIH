@@ -509,11 +509,18 @@ function extractLeaves(resultado) {
   return leaves;
 }
 
-// Clasifica una hoja como Mbd/MMpcd por el nombre real del producto (el
-// subtotal "categoria" no siempre distingue unidad — en "Producción por
-// cuenca y ubicación" el único subtotal es "Producción", mezclando ambas).
-const esLeafMbd = (l) => l.categoria === "Hidrocarburos líquidos (Mbd)" || /\(Mbd\)/.test(l.operator ?? "");
-const esLeafMmpcd = (l) => l.categoria === "Gas (MMpcd)" || /\(MMpcd\)/.test(l.operator ?? "");
+// Clasifica una hoja para los totales por unidad. Igual que totalesPorUnidad,
+// se apoya en los rollups del backend ("Hidrocarburos líquidos (Mbd)" y
+// "Gas (MMpcd)"), que YA suman sus componentes: hay que tomar el rollup, no
+// todo lo que termine en "(Mbd)".
+//
+// Cuando "categoria" sí distingue la unidad, la hoja es un componente del
+// rollup (Petróleo, Condensado…) y suma; cuando el único subtotal es genérico
+// ("Producción", en Producción por cuenca y ubicación), el rollup viaja como
+// una hoja más y se toma solo ese — si no, Petróleo y Condensado se contarían
+// dos veces, una dentro del rollup y otra por su cuenta.
+const esLeafMbd = (l) => l.categoria === "Hidrocarburos líquidos (Mbd)" || l.operator === "Hidrocarburos líquidos (Mbd)";
+const esLeafMmpcd = (l) => l.categoria === "Gas (MMpcd)" || l.operator === "Gas (MMpcd)";
 
 function sumLeaves(list, cats) {
   const t = cats.map(() => 0);
@@ -792,10 +799,20 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
       .sort((a, b) => a.orden - b.orden);
   }
 
-  const nacionalAbierto = !openGroups.has(NACIONAL_KEY);
+  // Cuando el árbol se reduce a UNA sola rama (p. ej. al abrir la producción de
+  // una asignación concreta), la sección Nacional repite exactamente las cifras
+  // de esa rama: arranca contraída para no dibujar la tabla dos veces. Se le da
+  // otra llave para invertir el valor por defecto sin perder el clic manual
+  // (con esa llave, presente = abierta).
+  const nacionalRedundante =
+    levels.length > 0 && new Set(leavesMostradas.map(lf => levels[0].of(lf))).size <= 1;
+  const nacionalKey = nacionalRedundante ? `${NACIONAL_KEY}|abrir` : NACIONAL_KEY;
+  const nacionalAbierto = nacionalRedundante
+    ? openGroups.has(nacionalKey)
+    : !openGroups.has(nacionalKey);
   rows.push({
     _id: "banner|Nacional", _type: "banner", label: "Nacional",
-    _groupKey: NACIONAL_KEY, _open: nacionalAbierto,
+    _groupKey: nacionalKey, _open: nacionalAbierto,
     ...dataObj(cats, cats.map(() => null)),
   });
   if (!nacionalAbierto) {
@@ -1664,7 +1681,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
         if (r._type === "ubicacion" && r.label === "Nacional") return;
         // La sección "Nacional" se colapsa solo con su propio clic: "Contraer
         // todo" colapsa el árbol, no el resumen de arriba.
-        if (r._groupKey === NACIONAL_KEY) return;
+        if (r._groupKey.startsWith(NACIONAL_KEY)) return;
         const convencionInvertida = r._groupKey.startsWith("sub|") || r._groupKey.startsWith("ml/");
         const debeEstarEnSet = convencionInvertida ? !targetOpen : targetOpen;
         debeEstarEnSet ? next.add(r._groupKey) : next.delete(r._groupKey);
@@ -1820,9 +1837,9 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   // "Expandir todo" una vez colapsadas las categorías reales.
   // La sección "Nacional" no cuenta para el botón "Contraer/Expandir todo":
   // ese botón no la toca (ver toggleAllGroups).
-  const hasOpenGroups = rows.some(r => r._groupKey != null && r._groupKey !== NACIONAL_KEY && r._open && !(r._type === "ubicacion" && r.label === "Nacional"));
+  const hasOpenGroups = rows.some(r => r._groupKey != null && !r._groupKey.startsWith(NACIONAL_KEY) && r._open && !(r._type === "ubicacion" && r.label === "Nacional"));
 
-  const hasCollapsible = rows.some(r => r._groupKey != null && r._groupKey !== NACIONAL_KEY);
+  const hasCollapsible = rows.some(r => r._groupKey != null && !r._groupKey.startsWith(NACIONAL_KEY));
   const hasBanner = rows.some(r => r._type === "banner");
   // Cuando el encabezado de la columna de nombres tiene su propia etiqueta
   // (p. ej. "Privados" en Operadores filtrado a un solo grupo), esa etiqueta
