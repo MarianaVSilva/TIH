@@ -988,6 +988,13 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
 
   const nacGroup = resultado.groups.find(g => g.cuenca === "Nacional");
 
+  // Con búsqueda activa los totales de esta vista NO se recalculan sobre lo
+  // filtrado (salen de las filas crudas del grupo), así que mostrarían cifras
+  // que no corresponden a lo que quedó en pantalla: se ocultan mientras dure
+  // la búsqueda. (En la vista multinivel sí se recalculan, y ahí se quedan.)
+  const totalesUnidad = mostrarTotalesUnidad && !ocultarTotalesUnidad && !q;
+  const totalGeneral = !mostrarTotalesUnidad && !q;
+
   // ── null / operador: Nacional completo ──────────────────────────────────────
   if (!groupBy || groupBy === "operador") {
     if (!nacGroup) return rows;
@@ -1011,7 +1018,7 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
 
       if (!isOpen) continue;
 
-      if (mostrarTotalesUnidad && !ocultarTotalesUnidad) {
+      if (totalesUnidad) {
         const { mbd, mmpcd } = totalesPorUnidad(sg.rows, cats);
         if (mbd) rows.push({ _id: `${gk}|totalmbd`, _type: "totalmbd", _cuenca: "Nacional", _ub: sg.ubicacion, label: "Total Mbd", ...dataObj(cats, mbd) });
         if (mmpcd) rows.push({ _id: `${gk}|totalmmpcd`, _type: "totalmmpcd", _cuenca: "Nacional", _ub: sg.ubicacion, label: "Total MMpcd", ...dataObj(cats, mmpcd) });
@@ -1034,13 +1041,13 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
       });
       if (!nacionalAbierto) {
         // Sección colapsada: solo el banner.
-      } else if (mostrarTotalesUnidad) {
+      } else if (totalesUnidad) {
         // Con productos de distintas unidades (Mbd/MMpcd), un solo "Total"
         // los mezclaría sin sentido — se muestran los 2 totales por unidad.
         const { mbd, mmpcd } = totalesPorUnidad(nacSg.rows, cats);
-        if (mbd && !ocultarTotalesUnidad) rows.push({ _id: "total|Nacional|mbd", _type: "totalmbd", _cuenca: "Nacional", _ub: "", label: "Total Mbd", ...dataObj(cats, mbd) });
-        if (mmpcd && !ocultarTotalesUnidad) rows.push({ _id: "total|Nacional|mmpcd", _type: "totalmmpcd", _cuenca: "Nacional", _ub: "", label: "Total MMpcd", ...dataObj(cats, mmpcd) });
-      } else {
+        if (mbd) rows.push({ _id: "total|Nacional|mbd", _type: "totalmbd", _cuenca: "Nacional", _ub: "", label: "Total Mbd", ...dataObj(cats, mbd) });
+        if (mmpcd) rows.push({ _id: "total|Nacional|mmpcd", _type: "totalmmpcd", _cuenca: "Nacional", _ub: "", label: "Total MMpcd", ...dataObj(cats, mmpcd) });
+      } else if (totalGeneral) {
         const { total } = mergeSubgroups([nacSg], cats);
         rows.push({
           _id: "total|Nacional", _type: "total", _cuenca: "Nacional", _ub: "", label: "Total",
@@ -1117,7 +1124,7 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
           ...Object.fromEntries(cats.map((c, ci) => [c, (sinResumen || isOpen || mostrarTotalesUnidad) ? null : (g.data?.[ci] ?? null)])),
         });
         if (!isOpen) continue;
-        if (mostrarTotalesUnidad && !ocultarTotalesUnidad) {
+        if (totalesUnidad) {
           const { mbd, mmpcd } = totalesPorUnidad(sgRows, cats);
           if (mbd) rows.push({ _id: `${gk}|totalmbd`, _type: "totalmbd", _cuenca: g.cuenca, _ub: "", label: "Total Mbd", ...dataObj(cats, mbd) });
           if (mmpcd) rows.push({ _id: `${gk}|totalmmpcd`, _type: "totalmmpcd", _cuenca: g.cuenca, _ub: "", label: "Total MMpcd", ...dataObj(cats, mmpcd) });
@@ -1217,7 +1224,7 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
       });
       if (!nacionalAbierto) {
         // Sección colapsada: solo el banner.
-      } else if (mostrarTotalesUnidad) {
+      } else if (totalesUnidad) {
         // Sección "Nacional": aquí se concentran TODAS las sumas — los 2
         // totales por unidad y una fila por producto, cada una en su unidad.
         // Un solo "Total" mezclaría Mbd con MMpcd, y por eso los encabezados
@@ -1233,7 +1240,7 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
             ...Object.fromEntries(cats.map((c, ci) => [c, op.data[ci] ?? 0])),
           });
         }
-      } else {
+      } else if (totalGeneral) {
         rows.push({
           _id: "total|Nacional", _type: "total", _cuenca: "Nacional", _ub: "", label: "Total",
           ...Object.fromEntries(cats.map((c, ci) => [c, total[ci]])),
@@ -1256,7 +1263,7 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
         ...Object.fromEntries(cats.map((c, ci) => [c, mostrarTotalesUnidad ? null : total[ci]])),
       });
       if (!isOpen) continue;
-      if (mostrarTotalesUnidad && !ocultarTotalesUnidad) {
+      if (totalesUnidad) {
         const { mbd, mmpcd } = totalesPorUnidad(sg.rows ?? [], cats);
         if (mbd) rows.push({ _id: `${gk}|totalmbd`, _type: "totalmbd", _cuenca: "Nacional", _ub: sg.ubicacion, label: "Total Mbd", ...dataObj(cats, mbd) });
         if (mmpcd) rows.push({ _id: `${gk}|totalmmpcd`, _type: "totalmmpcd", _cuenca: "Nacional", _ub: sg.ubicacion, label: "Total MMpcd", ...dataObj(cats, mmpcd) });
@@ -1293,7 +1300,7 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
     });
     if (!nacionalAbierto) {
       // Sección colapsada: solo el banner.
-    } else if (mostrarTotalesUnidad) {
+    } else if (totalesUnidad) {
       // Un solo "Total" mezclaría Mbd con MMpcd. Aquí cada encabezado ya ES un
       // producto (unidad única) y conserva su cifra, así que en Nacional solo
       // van los 2 totales por unidad.
@@ -1302,7 +1309,7 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
         if (mbd) rows.push({ _id: "total|Nacional|mbd", _type: "totalmbd", _cuenca: "Nacional", _ub: "", label: "Total Mbd", ...dataObj(cats, mbd) });
         if (mmpcd) rows.push({ _id: "total|Nacional|mmpcd", _type: "totalmmpcd", _cuenca: "Nacional", _ub: "", label: "Total MMpcd", ...dataObj(cats, mmpcd) });
       }
-    } else {
+    } else if (totalGeneral) {
       rows.push({
         _id: "total|Nacional", _type: "total", _cuenca: "Nacional", _ub: "", label: "Total",
         ...Object.fromEntries(cats.map((c, ci) => [c, total[ci]])),
