@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import ReactECharts from "echarts-for-react";
 import { SeccionTitulo } from "./FichaShell";
 import { sinCerosIniciales } from "../../utils/seriesUtils";
+import { fmt2 } from "../../utils/formato";
 
 const INK = "#1f2430";
 const MUTED = "#767b87";
@@ -73,7 +74,7 @@ export default function BloqueProduccion({ titulo, categories = [], series = [],
                   <td className="px-3 py-1.5 text-[12px] font-semibold text-slate-600 whitespace-nowrap text-center">{cat}</td>
                   {series.map(s => (
                     <td key={s.label} className="px-3 py-1.5 text-[12px] text-center tabular-nums text-slate-700">
-                      {s.data[i] != null ? fmt(s.data[i]) : "—"}
+                      {s.data[i] != null ? fmt2(s.data[i]) : "—"}
                     </td>
                   ))}
                 </tr>
