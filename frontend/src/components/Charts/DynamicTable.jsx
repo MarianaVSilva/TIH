@@ -145,8 +145,6 @@ const TYPE_STYLE = {
   operator:    { label: "text-[12.5px] text-slate-600 pl-8",                            num: "text-slate-600 text-[12.5px]" },
   planoperator:{ label: "text-[12.5px] text-slate-600 pl-4",                            num: "text-slate-600 text-[12.5px]" },
   totaloperator:{ label: "text-[12.5px] font-bold text-teal-700 pl-8",                  num: "text-teal-700 font-bold text-[12.5px]" },
-  totalmbd:    { label: "text-[13px] font-bold text-blue-700 pl-4",                    num: "text-blue-700 font-bold text-[13px]" },
-  totalmmpcd:  { label: "text-[13px] font-bold text-orange-700 pl-4",                  num: "text-orange-700 font-bold text-[13px]" },
 };
 
 const ROW_BG = {
@@ -163,8 +161,6 @@ const ROW_BG = {
   operator:    "bg-white border-b border-slate-50 hover:bg-slate-50/80 transition-colors",
   planoperator:"bg-white border-b border-slate-50 hover:bg-slate-50/80 transition-colors",
   totaloperator:"bg-teal-50/40 border-b border-slate-100 hover:bg-teal-50/70 transition-colors",
-  totalmbd:    "bg-blue-100 border-b border-blue-200",
-  totalmmpcd:  "bg-orange-100 border-b border-orange-200",
 };
 
 // ── Tonos por nivel de anidamiento (Ambiente → Cuenca → Tipo/Categoría) ───────
@@ -452,28 +448,6 @@ function mergeSubgroups(subgroups, cats) {
   return { total, ops: [...merged.values()] };
 }
 
-// Extrae los 2 totales por unidad (Mbd/MMpcd) de las filas de subtotal de
-// producto de una entidad/Nacional — usa los rollups ya calculados por el
-// backend ("Hidrocarburos líquidos (Mbd)" y "Gas (MMpcd)"), que ya suman sus
-// componentes (Petróleo+Condensado / Gas asociado+no asociado) sin duplicar.
-function totalesPorUnidad(sgRows, cats) {
-  const buscarSubtotal = (label) => sgRows.find(r => r.type === "subtotal" && r.label === label);
-  // "Producción por operador" no trae un subtotal aparte para esto (sería
-  // un duplicado del banner) — el producto vive como operator repetido bajo
-  // cada Contrato/Asignación, así que se suman todas esas apariciones.
-  const sumarOperator = (label) => {
-    const filas = sgRows.filter(r => r.type === "operator" && r.label === label);
-    if (!filas.length) return null;
-    return cats.map((c, ci) => filas.reduce((acc, r) => acc + (r.data[ci] ?? 0), 0));
-  };
-  const liquidosSub = buscarSubtotal("Hidrocarburos líquidos (Mbd)");
-  const gasSub = buscarSubtotal("Gas (MMpcd)");
-  return {
-    mbd: liquidosSub ? cats.map((c, ci) => liquidosSub.data[ci] ?? 0) : sumarOperator("Hidrocarburos líquidos (Mbd)"),
-    mmpcd: gasSub ? cats.map((c, ci) => gasSub.data[ci] ?? 0) : sumarOperator("Gas (MMpcd)"),
-  };
-}
-
 // Agrupación multinivel (AND de filtros): Ambiente → Cuenca → Categoría → Operador.
 // Solo se anida por dimensiones con filtro activo; el backend ya aplica el AND,
 // aquí solo se re-organiza el desglose.
@@ -508,19 +482,6 @@ function extractLeaves(resultado) {
   }
   return leaves;
 }
-
-// Clasifica una hoja para los totales por unidad. Igual que totalesPorUnidad,
-// se apoya en los rollups del backend ("Hidrocarburos líquidos (Mbd)" y
-// "Gas (MMpcd)"), que YA suman sus componentes: hay que tomar el rollup, no
-// todo lo que termine en "(Mbd)".
-//
-// Cuando "categoria" sí distingue la unidad, la hoja es un componente del
-// rollup (Petróleo, Condensado…) y suma; cuando el único subtotal es genérico
-// ("Producción", en Producción por cuenca y ubicación), el rollup viaja como
-// una hoja más y se toma solo ese — si no, Petróleo y Condensado se contarían
-// dos veces, una dentro del rollup y otra por su cuenta.
-const esLeafMbd = (l) => l.categoria === "Hidrocarburos líquidos (Mbd)" || l.operator === "Hidrocarburos líquidos (Mbd)";
-const esLeafMmpcd = (l) => l.categoria === "Gas (MMpcd)" || l.operator === "Gas (MMpcd)";
 
 function sumLeaves(list, cats) {
   const t = cats.map(() => 0);
@@ -769,7 +730,7 @@ export function buildFlatExport(resultado, filtrosActivos, visibleSeries, search
   return { columnasIdentidad: ["Ambiente", entidadHeader], columnasValor, filas };
 }
 
-function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forceDivisions, ocultarTotalesUnidad) {
+function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forceDivisions) {
   const cats = resultado.categories;
   const q = search.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const levels = activeHierLevels(perfFiltros);
@@ -819,19 +780,14 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
     // Sección colapsada: solo el banner.
   } else if (!forceDivisions) {
     rows.push({ _id: "total|Nacional", _type: "total", label: "Total", ...dataObj(cats, sumLeaves(leavesMostradas, cats)) });
-  } else if (!ocultarTotalesUnidad) {
-    // Con forceDivisions un solo "Total" mezclaría unidades distintas
-    // (Mbd, MMpcd) — se muestran los 2 totales por unidad en su lugar.
-    const mbdLeaves = leavesMostradas.filter(l => esLeafMbd(l));
-    const mmpcdLeaves = leavesMostradas.filter(l => esLeafMmpcd(l));
-    if (mbdLeaves.length) rows.push({ _id: "total|Nacional|mbd", _type: "totalmbd", label: "Total Mbd", ...dataObj(cats, sumLeaves(mbdLeaves, cats)) });
-    if (mmpcdLeaves.length) rows.push({ _id: "total|Nacional|mmpcd", _type: "totalmmpcd", label: "Total MMpcd", ...dataObj(cats, sumLeaves(mmpcdLeaves, cats)) });
   }
   if (forceDivisions && nacionalAbierto) {
     // Sección "Nacional": aquí se concentran TODAS las sumas, una fila por
     // producto y cada una en su propia unidad (pedido explícito). Los
     // encabezados de rama (Ambiente/Cuenca) ya no llevan cifra: sumaban Mbd
     // con MMpcd en un mismo número, que no significa nada.
+    // No hay filas "Total Mbd/MMpcd": serían un duplicado exacto de los
+    // rollups "Hidrocarburos líquidos (Mbd)" y "Gas (MMpcd)" de aquí abajo.
     for (const p of mergeProductos(leavesMostradas)) {
       rows.push({ _id: `nac|${p.label}`, _type: "subtotal", label: p.label, _code: p.code, ...dataObj(cats, p.data) });
     }
@@ -949,14 +905,6 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
             ...(bucket[0]?.categoriaCode ? { _code: bucket[0].categoriaCode, _esEntidad: true } : {}),
           });
           if (!isOpen) continue;
-          if (forceDivisions && !ocultarTotalesUnidad) {
-            const mbdLeaves = bucketMostrado.filter(esLeafMbd);
-            const mmpcdLeaves = bucketMostrado.filter(esLeafMmpcd);
-            if (mbdLeaves.length && mmpcdLeaves.length) {
-              rows.push({ _id: `${key}|totalmbd`, _type: "totalmbd", _indent: 12 + (depth + 1) * 18, label: "Total Mbd", ...dataObj(cats, sumLeaves(mbdLeaves, cats)) });
-              rows.push({ _id: `${key}|totalmmpcd`, _type: "totalmmpcd", _indent: 12 + (depth + 1) * 18, label: "Total MMpcd", ...dataObj(cats, sumLeaves(mmpcdLeaves, cats)) });
-            }
-          }
           renderOperators(bucket, key, depth + 1, qEfectiva, nextDims);
         }
         continue;
@@ -974,14 +922,6 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
           ? { _code: bucket[0].categoriaCode, _esEntidad: true } : {}),
       });
       if (!isOpen) continue;
-      if (forceDivisions && !ocultarTotalesUnidad) {
-        const mbdLeaves = bucketMostrado.filter(esLeafMbd);
-        const mmpcdLeaves = bucketMostrado.filter(esLeafMmpcd);
-        if (mbdLeaves.length && mmpcdLeaves.length) {
-          rows.push({ _id: `${key}|totalmbd`, _type: "totalmbd", _indent: 12 + (depth + 1) * 18, label: "Total Mbd", ...dataObj(cats, sumLeaves(mbdLeaves, cats)) });
-          rows.push({ _id: `${key}|totalmmpcd`, _type: "totalmmpcd", _indent: 12 + (depth + 1) * 18, label: "Total MMpcd", ...dataObj(cats, sumLeaves(mmpcdLeaves, cats)) });
-        }
-      }
 
       if (levelIdx + 1 < levels.length) {
         walk(bucket, levelIdx + 1, key, depth + 1, false, [], qEfectiva, nextDims);
@@ -996,7 +936,7 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
 }
 
 // ── Aplanar según el modo activo ──────────────────────────────────────────────
-function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, ocultarTotalesUnidad, sinResumen, flatAlfabetico) {
+function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, sinResumen, flatAlfabetico) {
   const rows = [];
   if (!resultado?.groups) return rows;
   const cats = resultado.categories;
@@ -1009,7 +949,7 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
   // filtrado (salen de las filas crudas del grupo), así que mostrarían cifras
   // que no corresponden a lo que quedó en pantalla: se ocultan mientras dure
   // la búsqueda. (En la vista multinivel sí se recalculan, y ahí se quedan.)
-  const totalesUnidad = mostrarTotalesUnidad && !ocultarTotalesUnidad && !q;
+  const totalesUnidad = mostrarTotalesUnidad && !q;
   const totalGeneral = !mostrarTotalesUnidad && !q;
 
   // ── null / operador: Nacional completo ──────────────────────────────────────
@@ -1035,11 +975,6 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
 
       if (!isOpen) continue;
 
-      if (totalesUnidad) {
-        const { mbd, mmpcd } = totalesPorUnidad(sg.rows, cats);
-        if (mbd) rows.push({ _id: `${gk}|totalmbd`, _type: "totalmbd", _cuenca: "Nacional", _ub: sg.ubicacion, label: "Total Mbd", ...dataObj(cats, mbd) });
-        if (mmpcd) rows.push({ _id: `${gk}|totalmmpcd`, _type: "totalmmpcd", _cuenca: "Nacional", _ub: sg.ubicacion, label: "Total MMpcd", ...dataObj(cats, mmpcd) });
-      }
       pushOperatorRows(rows, sg.rows, gk, "Nacional", sg.ubicacion, cats, hideDivisions, groupBy, vis, q, forceDivisions, openGroups);
     }
     return rows;
@@ -1058,12 +993,6 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
       });
       if (!nacionalAbierto) {
         // Sección colapsada: solo el banner.
-      } else if (totalesUnidad) {
-        // Con productos de distintas unidades (Mbd/MMpcd), un solo "Total"
-        // los mezclaría sin sentido — se muestran los 2 totales por unidad.
-        const { mbd, mmpcd } = totalesPorUnidad(nacSg.rows, cats);
-        if (mbd) rows.push({ _id: "total|Nacional|mbd", _type: "totalmbd", _cuenca: "Nacional", _ub: "", label: "Total Mbd", ...dataObj(cats, mbd) });
-        if (mmpcd) rows.push({ _id: "total|Nacional|mmpcd", _type: "totalmmpcd", _cuenca: "Nacional", _ub: "", label: "Total MMpcd", ...dataObj(cats, mmpcd) });
       } else if (totalGeneral) {
         const { total } = mergeSubgroups([nacSg], cats);
         rows.push({
@@ -1141,11 +1070,6 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
           ...Object.fromEntries(cats.map((c, ci) => [c, (sinResumen || isOpen || mostrarTotalesUnidad) ? null : (g.data?.[ci] ?? null)])),
         });
         if (!isOpen) continue;
-        if (totalesUnidad) {
-          const { mbd, mmpcd } = totalesPorUnidad(sgRows, cats);
-          if (mbd) rows.push({ _id: `${gk}|totalmbd`, _type: "totalmbd", _cuenca: g.cuenca, _ub: "", label: "Total Mbd", ...dataObj(cats, mbd) });
-          if (mmpcd) rows.push({ _id: `${gk}|totalmmpcd`, _type: "totalmmpcd", _cuenca: g.cuenca, _ub: "", label: "Total MMpcd", ...dataObj(cats, mmpcd) });
-        }
         // Reservas por asignación-contrato: "Asignaciones" trae Cuenca anidada
         // dentro de cada Ambiente (el backend agrupa Ambiente → Cuenca →
         // item) — se reordena aquí a Cuenca → Ambiente → item, que es como
@@ -1242,15 +1166,10 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
       if (!nacionalAbierto) {
         // Sección colapsada: solo el banner.
       } else if (totalesUnidad) {
-        // Sección "Nacional": aquí se concentran TODAS las sumas — los 2
-        // totales por unidad y una fila por producto, cada una en su unidad.
-        // Un solo "Total" mezclaría Mbd con MMpcd, y por eso los encabezados
-        // de ambiente de abajo tampoco llevan ya cifra.
-        if (!ocultarTotalesUnidad) {
-          const { mbd, mmpcd } = totalesPorUnidad(nacSg.rows ?? [], cats);
-          if (mbd) rows.push({ _id: "total|Nacional|mbd", _type: "totalmbd", _cuenca: "Nacional", _ub: "", label: "Total Mbd", ...dataObj(cats, mbd) });
-          if (mmpcd) rows.push({ _id: "total|Nacional|mmpcd", _type: "totalmmpcd", _cuenca: "Nacional", _ub: "", label: "Total MMpcd", ...dataObj(cats, mmpcd) });
-        }
+        // Sección "Nacional": aquí se concentran las sumas, una fila por
+        // producto y cada una en su propia unidad. Un solo "Total" mezclaría
+        // Mbd con MMpcd, y por eso los encabezados de ambiente de abajo
+        // tampoco llevan ya cifra.
         for (const op of opsNac.filter(o => hasData(o.data) && vis[o.label] !== false)) {
           rows.push({
             _id: `nac|${op.label}`, _type: "subtotal", _cuenca: "Nacional", _ub: "", label: op.label,
@@ -1280,11 +1199,6 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
         ...Object.fromEntries(cats.map((c, ci) => [c, mostrarTotalesUnidad ? null : total[ci]])),
       });
       if (!isOpen) continue;
-      if (totalesUnidad) {
-        const { mbd, mmpcd } = totalesPorUnidad(sg.rows ?? [], cats);
-        if (mbd) rows.push({ _id: `${gk}|totalmbd`, _type: "totalmbd", _cuenca: "Nacional", _ub: sg.ubicacion, label: "Total Mbd", ...dataObj(cats, mbd) });
-        if (mmpcd) rows.push({ _id: `${gk}|totalmmpcd`, _type: "totalmmpcd", _cuenca: "Nacional", _ub: sg.ubicacion, label: "Total MMpcd", ...dataObj(cats, mmpcd) });
-      }
 
       // Los chips de serie (Gas (MMpcd), Gas asociado (MMpcd)...) apagan
       // productos — antes solo se ocultaban en la gráfica (filterSeries),
@@ -1318,14 +1232,9 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
     if (!nacionalAbierto) {
       // Sección colapsada: solo el banner.
     } else if (totalesUnidad) {
-      // Un solo "Total" mezclaría Mbd con MMpcd. Aquí cada encabezado ya ES un
-      // producto (unidad única) y conserva su cifra, así que en Nacional solo
-      // van los 2 totales por unidad.
-      if (!ocultarTotalesUnidad) {
-        const { mbd, mmpcd } = totalesPorUnidad(nacSg.rows ?? [], cats);
-        if (mbd) rows.push({ _id: "total|Nacional|mbd", _type: "totalmbd", _cuenca: "Nacional", _ub: "", label: "Total Mbd", ...dataObj(cats, mbd) });
-        if (mmpcd) rows.push({ _id: "total|Nacional|mmpcd", _type: "totalmmpcd", _cuenca: "Nacional", _ub: "", label: "Total MMpcd", ...dataObj(cats, mmpcd) });
-      }
+      // Aquí cada encabezado ya ES un producto (unidad única) y conserva su
+      // cifra: no hace falta nada más bajo el banner. Un solo "Total"
+      // mezclaría Mbd con MMpcd.
     } else if (totalGeneral) {
       rows.push({
         _id: "total|Nacional", _type: "total", _cuenca: "Nacional", _ub: "", label: "Total",
@@ -1417,7 +1326,7 @@ function SortIcon({ active, dir }) {
 // ── Toolbar ───────────────────────────────────────────────────────────────────
 const PERIOD_LABEL = { annually: "Anual", monthly: "Mensual" };
 
-function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, titulo, filtroLabel, period, start_year, end_year, opCount, entityLabel = "operadores", sumaDisponible, sumaOculta, setSumaOculta, totalesUnidadDisponible, totalesUnidadOcultos, setTotalesUnidadOcultos, isMonthly, searchPlaceholder = "Buscar Operador o contrato", onExportExcel, onExportHistorico, onOpenReport }) {
+function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, titulo, filtroLabel, period, start_year, end_year, opCount, entityLabel = "operadores", sumaDisponible, sumaOculta, setSumaOculta, isMonthly, searchPlaceholder = "Buscar Operador o contrato", onExportExcel, onExportHistorico, onOpenReport }) {
   const [showCols, setShowCols] = useState(false);
   const [exportando, setExportando] = useState(false);
   const [exportandoTodo, setExportandoTodo] = useState(false);
@@ -1458,27 +1367,6 @@ function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, tit
         </div>
       )}
       <div className="flex-1" />
-      {totalesUnidadDisponible && (
-        <button
-          onClick={() => setTotalesUnidadOcultos(v => !v)}
-          title={totalesUnidadOcultos ? "Mostrar totales Mbd/MMpcd" : "Ocultar totales Mbd/MMpcd"}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] text-slate-500 border border-slate-200 rounded-lg bg-white hover:bg-slate-50"
-        >
-          {totalesUnidadOcultos ? (
-            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8Z" opacity="0.4" />
-              <circle cx="8" cy="8" r="2" opacity="0.4" />
-              <line x1="1.5" y1="1.5" x2="14.5" y2="14.5" />
-            </svg>
-          ) : (
-            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8Z" />
-              <circle cx="8" cy="8" r="2" />
-            </svg>
-          )}
-          Totales Mbd/MMpcd
-        </button>
-      )}
       <div className="relative min-w-[180px] max-w-[240px]">
         <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
           <circle cx="6.5" cy="6.5" r="4.5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/>
@@ -1604,7 +1492,6 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   const [selectedRow, setSelectedRow] = useState(null);
   const [hoveredCol,  setHoveredCol]  = useState(null);
   const [sumaOculta,  setSumaOculta]  = useState(false);
-  const [totalesUnidadOcultos, setTotalesUnidadOcultos] = useState(false);
   const [sortState, setSortState] = useState(null); // { col, dir: "asc" | "desc" }
 
   function toggleSort(col) {
@@ -1730,9 +1617,9 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   const mostrarTotalesUnidad = forceDivisions;
   const rowsSinOrdenar = useMemo(
     () => hierLevels.length > 0
-      ? flattenMultiLevel(resultado, filtrosActivos, openGroups, search, visibleSeries ?? {}, forceDivisions, totalesUnidadOcultos)
-      : flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, totalesUnidadOcultos, sinResumen, flatAlfabetico),
-    [resultado, visibleSeries, search, openGroups, filtrosActivos, hierLevels.length, hideDivisions, forceDivisions, groupBy, mostrarTotalesUnidad, totalesUnidadOcultos, sinResumen, flatAlfabetico]
+      ? flattenMultiLevel(resultado, filtrosActivos, openGroups, search, visibleSeries ?? {}, forceDivisions)
+      : flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, sinResumen, flatAlfabetico),
+    [resultado, visibleSeries, search, openGroups, filtrosActivos, hierLevels.length, hideDivisions, forceDivisions, groupBy, mostrarTotalesUnidad, sinResumen, flatAlfabetico]
   );
   const rows = useMemo(() => sortLeafRuns(rowsSinOrdenar, sortState), [rowsSinOrdenar, sortState]);
   const cuencaCount = useMemo(() => rows.filter(r => r._type === "cuenca").length, [rows]);
@@ -1878,7 +1765,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   function nivelDeFila(row) {
     if (row._indent != null) return Math.max(0, Math.round((row._indent - 12) / 18));
     if (row._type === "banner" || row._type === "cuenca" || row._type === "ubicacion") return 0;
-    if (row._type === "total" || row._type === "subtotal" || row._type === "subtotalcol" || row._type === "planheader" || row._type === "totalmbd" || row._type === "totalmmpcd") return 1;
+    if (row._type === "total" || row._type === "subtotal" || row._type === "subtotalcol" || row._type === "planheader") return 1;
     return 2;
   }
 
@@ -1922,7 +1809,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   // se lea igual que el árbol en pantalla.
   const REPORTE_TIPOS_NEGRITA = new Set([
     "banner", "cuenca", "ubicacion", "total", "subtotal", "subtotalcol",
-    "planheader", "totalmbd", "totalmmpcd", "totaloperator",
+    "planheader", "totaloperator",
   ]);
   function buildReporteTabla() {
     const columnas = ["", ...displayCats];
@@ -1987,7 +1874,6 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
         titulo={titulo} filtroLabel={filtroLabel} period={period} start_year={start_year} end_year={end_year}
         opCount={opCount} entityLabel={entityLabel}
         sumaDisponible={sumaDisponible} sumaOculta={sumaOculta} setSumaOculta={setSumaOculta} isMonthly={isMonthly}
-        totalesUnidadDisponible={mostrarTotalesUnidad} totalesUnidadOcultos={totalesUnidadOcultos} setTotalesUnidadOcultos={setTotalesUnidadOcultos}
         onExportExcel={exportExcel}
         onExportHistorico={historicoTopic ? exportHistorico : undefined}
         onOpenReport={() => setReportModalOpen(true)}
