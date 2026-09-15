@@ -1,4 +1,4 @@
-import { useExplorer } from "../../store/useExplorer";
+import { useVolverNav } from "../../hooks/useHistorialNavegador";
 
 // Botón flotante para deshacer los saltos entre temas que dispara una ficha
 // ("Ver producción completa… en el Explorador"). Sin él, después de encadenar
@@ -7,32 +7,16 @@ import { useExplorer } from "../../store/useExplorer";
 //
 // Solo aparece si hay algo a donde volver: la pila la llena useExplorerNav.
 export default function BotonVolver() {
-  const {
-    navHistory, quitarUltimaNav,
-    setSeccion, setTema, setPendingProdFiltros, setPerfFiltros,
-  } = useExplorer();
+  // El mismo "volver" que usa el botón Atrás del navegador, ver el hook.
+  const { navHistory, volverNav } = useVolverNav();
 
   if (!navHistory.length) return null;
   const destino = navHistory[navHistory.length - 1];
   const etiqueta = destino.tema?.titulo || destino.tema?.tema || destino.seccion || "atrás";
 
-  function volver() {
-    // setSeccion pone tema en null, así que va primero y setTema después.
-    if (destino.seccion) setSeccion(destino.seccion);
-    if (destino.tema) setTema(destino.tema);
-    // Los filtros de Cuenca/Ambiente se restauran por el mismo canal dirigido
-    // que usa la navegación: TopBar los limpia al cambiar de tema y aplicarlos
-    // aquí directamente no sobreviviría.
-    if (destino.tema?.json_arg) {
-      setPendingProdFiltros({ tema: destino.tema.json_arg, filtros: destino.prodFiltros });
-    }
-    if (destino.perfFiltros) setPerfFiltros(destino.perfFiltros);
-    quitarUltimaNav();
-  }
-
   return (
     <button
-      onClick={volver}
+      onClick={volverNav}
       title={`Volver a ${etiqueta}`}
       className="fixed bottom-6 left-6 z-[1100] flex items-center gap-2 pl-3 pr-4 py-2.5 rounded-full text-white text-[13px] font-semibold shadow-[0_6px_20px_rgba(0,0,0,0.28)] hover:shadow-[0_8px_24px_rgba(0,0,0,0.35)] transition-all hover:-translate-y-0.5"
       style={{ background: "linear-gradient(90deg,#10312B,#1a4a3a)" }}

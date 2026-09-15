@@ -8,6 +8,14 @@ import FichaModal from "./components/Fichas/FichaModal";
 import BotonVolver from "./components/UI/BotonVolver";
 import PanelAdmin from "./components/Admin/PanelAdmin";
 import ErrorBoundary from "./components/UI/ErrorBoundary";
+import useHistorialNavegador from "./hooks/useHistorialNavegador";
+
+// Vive dentro de FichaProvider (el hook mira la pila de fichas) y no pinta
+// nada: solo engancha el botón Atrás del navegador a los niveles de la app.
+function HistorialNavegador() {
+  useHistorialNavegador();
+  return null;
+}
 import { registrarVista, registrarSeccion, iniciarPulsos } from "./utils/telemetria";
 import { useExplorer } from "./store/useExplorer";
 
@@ -53,6 +61,7 @@ export default function App() {
     // pantalla en negro.
     <ErrorBoundary nombre="app">
       <FichaProvider>
+        <HistorialNavegador />
         <div className="bg-slate-50 font-sans flex flex-col min-h-screen lg:h-screen">
           <TopBar />
           <main className="flex-1 min-h-0 min-w-0 p-6 flex flex-col overflow-y-auto overflow-x-hidden">
