@@ -330,6 +330,10 @@ function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisio
       // usuario sí encontró lo que buscaba.
       const parentCoincide = !!q && row.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q);
       if (q && !parentCoincide) visible = visible.filter(o => o.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q));
+      // Con b\u00fasqueda activa, un grupo que no coincide (ni \u00e9l ni ninguna de sus
+      // hojas) no se dibuja: antes su encabezado se segu\u00eda listando con "\u2014" y
+      // hab\u00eda que bajar entre TODOS los contratos para encontrar el buscado.
+      if (q && !parentCoincide && visible.length === 0) continue;
       // Con forceDivisions cada subtotal (producto) es colapsable — el estado
       // "abierto" es la convención "cerrado si está en openGroups" (igual que
       // planheader/ubicacion), así por defecto arrancan expandidos.
@@ -343,9 +347,11 @@ function pushOperatorRows(rows, sgRows, gk, cuenca, ubicacion, cats, hideDivisio
       // items arrancan cerrados por defecto en vez de abiertos — pero un
       // clic en uno en particular sigue pudiendo abrirlo (openGroups pasa a
       // significar "abierto" en vez de "cerrado" mientras dura ese estado).
-      const isOpenSub = ocultarDetalleItems
+      // Con búsqueda activa lo que sobrevive al filtro ES el resultado: se
+      // muestra desplegado aunque el usuario lo hubiera colapsado antes.
+      const isOpenSub = q ? true : (ocultarDetalleItems
         ? !!openGroups?.has(subgk)
-        : (!forceDivisions || !openGroups?.has(subgk));
+        : (!forceDivisions || !openGroups?.has(subgk)));
       const soloUnHijo = visible.length === 1 && isOpenSub;
       if (row.type !== "total" && !skipGroup) {
         rows.push({
