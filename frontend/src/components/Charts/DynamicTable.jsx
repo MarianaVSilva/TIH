@@ -187,7 +187,13 @@ const RESERVA_TONES = {
 const RESERVA_LABEL_RE = /^([123])P\s*=/;
 
 // ── Tipos que tienen chevron y son colapsables ────────────────────────────────
-const COLLAPSIBLE = new Set(["ubicacion", "planheader", "subtotalcol", "subtotalcuenca", "cuencaasig", "ambienteheader"]);
+const COLLAPSIBLE = new Set(["ubicacion", "planheader", "subtotalcol", "subtotalcuenca", "cuencaasig", "ambienteheader", "banner"]);
+
+// Llave del banner "Nacional" (la sección donde se concentran las sumas). Es
+// colapsable como cualquier grupo, pero con convención invertida: abierta por
+// defecto (ausente del set = abierta), y "Contraer todo" no la toca, para que
+// ese botón siga colapsando el árbol sin esconder también el resumen.
+const NACIONAL_KEY = "nac|Nacional";
 
 // ── Inicializar grupos abiertos según el modo ─────────────────────────────────
 function initOpenGroups(resultado, groupBy, expandirConSubtotal) {
@@ -780,8 +786,15 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
       .sort((a, b) => a.orden - b.orden);
   }
 
-  rows.push({ _id: "banner|Nacional", _type: "banner", label: "Nacional", ...dataObj(cats, cats.map(() => null)) });
-  if (!forceDivisions) {
+  const nacionalAbierto = !openGroups.has(NACIONAL_KEY);
+  rows.push({
+    _id: "banner|Nacional", _type: "banner", label: "Nacional",
+    _groupKey: NACIONAL_KEY, _open: nacionalAbierto,
+    ...dataObj(cats, cats.map(() => null)),
+  });
+  if (!nacionalAbierto) {
+    // Sección colapsada: solo el banner.
+  } else if (!forceDivisions) {
     rows.push({ _id: "total|Nacional", _type: "total", label: "Total", ...dataObj(cats, sumLeaves(leavesMostradas, cats)) });
   } else if (!ocultarTotalesUnidad) {
     // Con forceDivisions un solo "Total" mezclaría unidades distintas
@@ -791,7 +804,7 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
     if (mbdLeaves.length) rows.push({ _id: "total|Nacional|mbd", _type: "totalmbd", label: "Total Mbd", ...dataObj(cats, sumLeaves(mbdLeaves, cats)) });
     if (mmpcdLeaves.length) rows.push({ _id: "total|Nacional|mmpcd", _type: "totalmmpcd", label: "Total MMpcd", ...dataObj(cats, sumLeaves(mmpcdLeaves, cats)) });
   }
-  if (forceDivisions) {
+  if (forceDivisions && nacionalAbierto) {
     // Sección "Nacional": aquí se concentran TODAS las sumas, una fila por
     // producto y cada una en su propia unidad (pedido explícito). Los
     // encabezados de rama (Ambiente/Cuenca) ya no llevan cifra: sumaban Mbd
@@ -1007,11 +1020,15 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
     // Banner NACIONAL + Total general arriba
     const nacSg = nacGroup?.subgroups?.find(s => s.ubicacion === "Nacional");
     if (nacSg) {
+      const nacionalAbierto = !openGroups.has(NACIONAL_KEY);
       rows.push({
         _id: "banner|Nacional", _type: "banner", _cuenca: "Nacional", _ub: "", label: "Nacional",
+        _groupKey: NACIONAL_KEY, _open: nacionalAbierto,
         ...Object.fromEntries(cats.map(c => [c, null])),
       });
-      if (mostrarTotalesUnidad) {
+      if (!nacionalAbierto) {
+        // Sección colapsada: solo el banner.
+      } else if (mostrarTotalesUnidad) {
         // Con productos de distintas unidades (Mbd/MMpcd), un solo "Total"
         // los mezclaría sin sentido — se muestran los 2 totales por unidad.
         const { mbd, mmpcd } = totalesPorUnidad(nacSg.rows, cats);
@@ -1186,11 +1203,15 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
     const nacSg = nacGroup.subgroups.find(s => s.ubicacion === "Nacional");
     if (nacSg) {
       const { total, ops: opsNac } = mergeSubgroups([nacSg], cats);
+      const nacionalAbierto = !openGroups.has(NACIONAL_KEY);
       rows.push({
         _id: "banner|Nacional", _type: "banner", _cuenca: "Nacional", _ub: "", label: "Nacional",
+        _groupKey: NACIONAL_KEY, _open: nacionalAbierto,
         ...Object.fromEntries(cats.map(c => [c, null])),
       });
-      if (mostrarTotalesUnidad) {
+      if (!nacionalAbierto) {
+        // Sección colapsada: solo el banner.
+      } else if (mostrarTotalesUnidad) {
         // Sección "Nacional": aquí se concentran TODAS las sumas — los 2
         // totales por unidad y una fila por producto, cada una en su unidad.
         // Un solo "Total" mezclaría Mbd con MMpcd, y por eso los encabezados
@@ -1258,11 +1279,15 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
 
     // Banner NACIONAL + Total general arriba
     const { total } = mergeSubgroups([nacSg], cats);
+    const nacionalAbierto = !openGroups.has(NACIONAL_KEY);
     rows.push({
       _id: "banner|Nacional", _type: "banner", _cuenca: "Nacional", _ub: "", label: "Nacional",
+      _groupKey: NACIONAL_KEY, _open: nacionalAbierto,
       ...Object.fromEntries(cats.map(c => [c, null])),
     });
-    if (mostrarTotalesUnidad) {
+    if (!nacionalAbierto) {
+      // Sección colapsada: solo el banner.
+    } else if (mostrarTotalesUnidad) {
       // Un solo "Total" mezclaría Mbd con MMpcd. Aquí cada encabezado ya ES un
       // producto (unidad única) y conserva su cifra, así que en Nacional solo
       // van los 2 totales por unidad.
@@ -1624,6 +1649,9 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
         // se cierra, esconde de un tirón TODAS las categorías de producto que
         // "Contraer todo" debía dejar visibles (colapsadas, no ocultas).
         if (r._type === "ubicacion" && r.label === "Nacional") return;
+        // La sección "Nacional" se colapsa solo con su propio clic: "Contraer
+        // todo" colapsa el árbol, no el resumen de arriba.
+        if (r._groupKey === NACIONAL_KEY) return;
         const convencionInvertida = r._groupKey.startsWith("sub|") || r._groupKey.startsWith("ml/");
         const debeEstarEnSet = convencionInvertida ? !targetOpen : targetOpen;
         debeEstarEnSet ? next.add(r._groupKey) : next.delete(r._groupKey);
@@ -1777,9 +1805,11 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   // (ver toggleAllGroups) se excluye: siempre está abierto, así que contarlo
   // dejaría "hasOpenGroups" en true para siempre e impediría mostrar
   // "Expandir todo" una vez colapsadas las categorías reales.
-  const hasOpenGroups = rows.some(r => r._groupKey != null && r._open && !(r._type === "ubicacion" && r.label === "Nacional"));
+  // La sección "Nacional" no cuenta para el botón "Contraer/Expandir todo":
+  // ese botón no la toca (ver toggleAllGroups).
+  const hasOpenGroups = rows.some(r => r._groupKey != null && r._groupKey !== NACIONAL_KEY && r._open && !(r._type === "ubicacion" && r.label === "Nacional"));
 
-  const hasCollapsible = rows.some(r => r._groupKey != null);
+  const hasCollapsible = rows.some(r => r._groupKey != null && r._groupKey !== NACIONAL_KEY);
   const hasBanner = rows.some(r => r._type === "banner");
   // Cuando el encabezado de la columna de nombres tiene su propia etiqueta
   // (p. ej. "Privados" en Operadores filtrado a un solo grupo), esa etiqueta
@@ -2071,7 +2101,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                 // no una categoría real — no debe poder colapsarse con clic
                 // directo (encogería todo el desglose de abajo sin avisar).
                 const esWrapperNacional = row._type === "ubicacion" && row.label === "Nacional";
-                const isCollapse  = COLLAPSIBLE.has(row._type) && !esWrapperNacional;
+                const isCollapse  = COLLAPSIBLE.has(row._type) && !esWrapperNacional && row._groupKey != null;
                 const useColSpan  = row._type === "ubicacion" || row._type === "cuenca" || row._type === "banner" || row._type === "ambienteheader";
                 const isCuencaRow = row._type === "cuenca";
 
