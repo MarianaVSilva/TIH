@@ -2002,6 +2002,15 @@ export default function ChartArea() {
                     ? (code) => abrirAsignacion(code)
                     : undefined
                 }
+                // En Reservas la fila del campo (o de la asignación/contrato) ES
+                // la entidad, pero su clic izquierdo ya está ocupado desplegando
+                // el 1P/2P/3P — la ficha va con clic derecho, igual que en
+                // Campos/Contratos/Asignaciones de Producción.
+                onRowFicha={
+                  esReservasCampo ? (code) => abrirCampo(code)
+                    : esReservasAsig ? (code) => abrirAsignacion(code)
+                    : undefined
+                }
                 // El número es un conteo del plan (sin lista detrás): el panel
                 // lo desglosa por estado y nombra los pozos que el catálogo sí
                 // tiene registrados para ese contrato.
