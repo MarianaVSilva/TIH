@@ -2,9 +2,7 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 
 const VERDE_OSCURO = [16, 49, 43];
-const VERDE_CLARO = [26, 74, 58];
 const GRIS_TEXTO = [100, 116, 139];
-const BLANCO = [255, 255, 255];
 
 function pintarFondoSiAplica(doc) {
   if (!doc.__fondo) return;
@@ -25,8 +23,10 @@ async function cargarArchivoBase64(url) {
   });
 }
 
+// Logo a color: desde que el encabezado es claro (sin la banda verde), la
+// versión en blanco quedaría invisible.
 async function cargarLogoBase64() {
-  return cargarArchivoBase64("/logosener-blanco.png");
+  return cargarArchivoBase64("/SENER_LOGO2.png");
 }
 
 // Noto Sans (pedido explícito del usuario — es la fuente que usó en el
@@ -48,26 +48,31 @@ async function registrarNotoSans(doc) {
   doc.__notoSansListo = true;
 }
 
-// Familia de fuente a usar: "NotoSans" en el reporte del home (headerStyle
-// "claro"), "helvetica" en el resto de reportes (sin cambios).
+// Todo el sitio usa Noto Sans, también los descargables. Se degrada a
+// Helvetica solo si la fuente no se pudo incrustar (el .ttf no cargó).
 function FUENTE(doc) {
-  return doc.__fuenteClara ? "NotoSans" : "helvetica";
+  return doc.__noto ? "NotoSans" : "helvetica";
 }
 
+// Encabezado plano (pedido explícito, como el descargable de la CNH): sin la
+// banda verde, solo el logo, el nombre de la dependencia y una línea.
 function dibujarBanner(doc, pageWidth, logoBase64) {
-  doc.setFillColor(...VERDE_OSCURO);
-  doc.rect(0, 0, pageWidth, 42, "F");
   if (logoBase64) {
-    try { doc.addImage(logoBase64, "PNG", 14, 8, 48, 27); } catch { /* logo opcional */ }
+    // El PNG del logo es la versión en blanco (era para el banner oscuro):
+    // sobre fondo claro hay que usar el de color.
+    try { doc.addImage(logoBase64, "PNG", 14, 10, 57, 32); } catch { /* logo opcional */ }
   }
-  doc.setTextColor(...BLANCO);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(13);
-  doc.text("TIH — Tablero de Información de Hidrocarburos", 70, 20);
-  doc.setFont("helvetica", "italic");
-  doc.setFontSize(8);
-  doc.setTextColor(183, 217, 205);
-  doc.text("Secretaría de Energía", 70, 30);
+  doc.setTextColor(30, 41, 59);
+  doc.setFont(FUENTE(doc), "bold");
+  doc.setFontSize(12);
+  doc.text("SECRETARÍA DE ENERGÍA", 80, 26);
+  doc.setFont(FUENTE(doc), "normal");
+  doc.setFontSize(8.5);
+  doc.setTextColor(...GRIS_TEXTO);
+  doc.text("Tablero de Información de Hidrocarburos", 80, 37);
+  doc.setDrawColor(190, 190, 190);
+  doc.setLineWidth(0.75);
+  doc.line(14, 48, pageWidth - 14, 48);
 }
 
 // Header "claro" (fondo crema, sin banner oscuro) — estilo del reporte de
@@ -82,7 +87,7 @@ function dibujarHeaderClaro(doc, pageWidth, periodoNota, logoBase64) {
   let tituloX = 14;
   if (logoBase64) {
     try {
-      const logoH = 24;
+      const logoH = 28;
       const logoW = logoH * (2820 / 727);
       doc.addImage(logoBase64, "PNG", 14, 16, logoW, logoH);
       tituloX = 14 + logoW + 16;
@@ -132,8 +137,10 @@ export async function exportarReportePdf(p) {
 
   pintarFondoSiAplica(doc);
 
+  // Se incrusta antes de dibujar nada, para que TODO el PDF salga en Noto.
+  try { await registrarNotoSans(doc); doc.__noto = true; } catch { /* sin la fuente, degrada a Helvetica */ }
+
   if (headerStyle === "claro") {
-    try { await registrarNotoSans(doc); doc.__fuenteClara = true; } catch { /* sin la fuente, degrada a Helvetica */ }
     let logoColorBase64 = null;
     try { logoColorBase64 = await cargarArchivoBase64("/SENER_LOGO2.png"); } catch { /* sin logo si falla */ }
     dibujarHeaderClaro(doc, pageWidth, periodoNota, logoColorBase64);
@@ -143,20 +150,20 @@ export async function exportarReportePdf(p) {
     dibujarBanner(doc, pageWidth, logoBase64);
   }
 
-  let y = headerStyle === "claro" ? 63 : 58;
+  let y = headerStyle === "claro" ? 63 : 64;
   // Sin `titulo` (pedido explícito: nada de "Panorama general" ni ningún
   // otro nombre genérico) no se reserva espacio de más — el banner de
   // arriba ya identifica el sitio, no hace falta repetir un título vacío.
   if (titulo) {
     doc.setTextColor(30, 41, 59);
-    doc.setFont("helvetica", "bold");
+    doc.setFont(FUENTE(doc), "bold");
     doc.setFontSize(14);
     doc.text(titulo, marginX, y);
     y += 16;
   }
 
   if (subtitulo) {
-    doc.setFont("helvetica", "normal");
+    doc.setFont(FUENTE(doc), "normal");
     doc.setFontSize(9);
     doc.setTextColor(51, 65, 85);
     const lineas = doc.splitTextToSize(subtitulo, pageWidth - marginX * 2);
@@ -218,7 +225,7 @@ export async function exportarReportePdf(p) {
 // columna de un bloque "columnas".
 function dibujarBloque(doc, bloque, { x, y, width }) {
     if (bloque.tipo === "titulo") {
-      doc.setFont("helvetica", "bold");
+      doc.setFont(FUENTE(doc), "bold");
       doc.setFontSize(11);
       doc.setTextColor(30, 41, 59);
       doc.text(bloque.texto, x, y);
@@ -320,12 +327,12 @@ function dibujarBloque(doc, bloque, { x, y, width }) {
     }
 
     if (bloque.tipo === "filtros") {
-      doc.setFont("helvetica", "bold");
+      doc.setFont(FUENTE(doc), "bold");
       doc.setFontSize(10);
       doc.setTextColor(30, 41, 59);
       doc.text("Filtros aplicados", x, y);
       y += 12;
-      doc.setFont("helvetica", "normal");
+      doc.setFont(FUENTE(doc), "normal");
       doc.setFontSize(9);
       doc.setTextColor(51, 65, 85);
       for (const linea of bloque.lineas) {
@@ -416,11 +423,14 @@ function dibujarBloque(doc, bloque, { x, y, width }) {
         tableWidth: width,
         head: [bloque.columnas],
         body: bloque.filas,
-        theme: "grid",
-        headStyles: { fillColor: VERDE_OSCURO, textColor: 255, fontSize: 8, halign: "center" },
+        // Tabla plana (pedido explícito, como el descargable de la CNH):
+        // sin relleno de color en el encabezado ni filas cebra — solo una
+        // línea bajo los títulos para separarlos de los datos.
+        theme: "plain",
+        headStyles: { textColor: [30, 41, 59], fontSize: 8, halign: "center", fontStyle: "bold",
+          lineWidth: { bottom: 0.75 }, lineColor: [150, 150, 150] },
         bodyStyles: { fontSize: 7.5, textColor: [30, 41, 59] },
-        alternateRowStyles: { fillColor: [248, 250, 252] },
-        styles: { cellPadding: 3, overflow: "linebreak" },
+        styles: { cellPadding: 3, overflow: "linebreak", font: FUENTE(doc) },
         // Solo repinta el fondo en páginas NUEVAS que autoTable agrega a
         // media tabla — la página en la que ya estábamos (data.pageNumber
         // === 1) ya tiene el fondo pintado por pintarFondoSiAplica de más

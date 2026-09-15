@@ -359,7 +359,7 @@ function CampoRow({ rank, nombre, valor, ratio, color }) {
 // Etiqueta de unidad alineada a la derecha, sobre la columna de cifras.
 function UnidadHeader({ unidad }) {
   return (
-    <div className="text-right text-[11px] italic pb-1" style={{ color: MUTED }}>{unidad}</div>
+    <div className="text-right text-[11px] pb-1" style={{ color: MUTED }}>{unidad}</div>
   );
 }
 

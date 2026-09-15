@@ -59,7 +59,7 @@
   font-weight: 700;
   color: #1a1a1a;
   margin: 0;
-  font-family: 'Montserrat', sans-serif;
+  font-family: 'Noto Sans', sans-serif;
 }
 
 .modal-close {
@@ -86,7 +86,7 @@
   font-size: 13px;
   color: #666;
   line-height: 1.5;
-  font-family: 'Open Sans', sans-serif;
+  font-family: 'Noto Sans', sans-serif;
 }
 
 .sections-list {
@@ -99,7 +99,7 @@
 .order-row {
   border: 1px solid #e0e0e0;
   border-radius: 8px;
-  font-family: 'Open Sans', sans-serif;
+  font-family: 'Noto Sans', sans-serif;
   color: #333;
 }
 
@@ -127,7 +127,7 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
-  font-family: 'Open Sans', sans-serif;
+  font-family: 'Noto Sans', sans-serif;
 }
 
 .btn-cancel {

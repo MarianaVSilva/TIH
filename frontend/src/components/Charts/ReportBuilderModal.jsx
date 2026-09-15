@@ -65,7 +65,7 @@ export default function ReportBuilderModal({
         <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Incluidos (en este orden)</p>
         <div className="flex flex-col gap-1.5 mb-3">
           {activos.length === 0 && (
-            <p className="text-[12px] text-slate-400 italic py-2">Ningún bloque seleccionado.</p>
+            <p className="text-[12px] text-slate-400 py-2">Ningún bloque seleccionado.</p>
           )}
           {activos.map((b, i) => (
             <div key={b.id} className="flex items-center gap-2 rounded-lg border border-teal-200 bg-teal-50/60 px-3 py-2">

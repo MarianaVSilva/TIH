@@ -176,7 +176,7 @@ function bigStatHTML({ label, unidad, valor, promedio, anioPromedio, color, bg }
   return `
     <div style="flex:1; min-width:0; text-align:center; background:${bg}; padding:16px 18px; border-radius:8px;">
       <div style="font-size:13px; color:${INK}; line-height:1.4;">${label} · ${unidad}</div>
-      <div style="font-family:Georgia, serif; color:${color}; font-size:32px; font-weight:700; line-height:1.3; margin-top:2px;">
+      <div style="font-family:'Patria', Georgia, serif; color:${color}; font-size:32px; font-weight:700; line-height:1.3; margin-top:2px;">
         ${valor.toLocaleString('es-MX')}
       </div>
       ${cambio != null ? `
@@ -197,7 +197,7 @@ function indicadorHTML({ label, valor, anterior, color, bg, unidad = 'USD/barril
   return `
     <div style="flex:1; min-width:0; text-align:center; background:${bg}; padding:16px 18px; border-radius:8px;">
       <div style="font-size:13px; color:${INK}; line-height:1.4;">${label} · ${unidad}</div>
-      <div style="font-family:Georgia, serif; color:${color}; font-size:32px; font-weight:700; line-height:1.3; margin-top:2px;">
+      <div style="font-family:'Patria', Georgia, serif; color:${color}; font-size:32px; font-weight:700; line-height:1.3; margin-top:2px;">
         $${valor.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
       </div>
       ${cambio != null ? `
@@ -223,7 +223,7 @@ const CHIP_FS = 10.5;
 const CHIP_H = 20;
 const CHIP_PAD_X = 11;
 const CHIP_LS = 0.4; // letter-spacing en px
-const CHIP_FAM = "'Open Sans', Arial, sans-serif";
+const CHIP_FAM = "'Noto Sans', sans-serif";
 
 // La pill se dibuja como SVG en línea, NO como <span> con background.
 // Motivo: html2canvas coloca mal la línea base del texto HTML (lo baja ~5.8px
@@ -291,7 +291,7 @@ function donutSvg(pctVal, color) {
       <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="11"
         stroke-dasharray="${dash} ${circ - dash}" stroke-linecap="round"
         transform="rotate(-90 ${cx} ${cy})"/>
-      <text x="${cx}" y="${cy + 7}" text-anchor="middle" font-family="Georgia, serif" font-size="19" font-weight="700" fill="${INK}">${pctVal}%</text>
+      <text x="${cx}" y="${cy + 7}" text-anchor="middle" font-family="'Patria', Georgia, serif" font-size="19" font-weight="700" fill="${INK}">${pctVal}%</text>
     </svg>
   `;
 }
@@ -336,7 +336,7 @@ const generateDashboardHTML = (data, order) => {
          deben depender de nada fuera de esta clase. */
       .pdf-export-root, .pdf-export-root * { margin:0; padding:0; box-sizing:border-box; }
       .pdf-export-root {
-        font-family: 'Open Sans', Arial, sans-serif;
+        font-family: 'Noto Sans', sans-serif;
         background: #fff;
         color: ${INK};
         width: 800px;
@@ -374,7 +374,7 @@ const generateDashboardHTML = (data, order) => {
            (imagen) lo coloca bien, así que sin esto el título quedaba 5px por
            debajo del centro de "Energía" (medido sobre el PDF). -->
       <div style="border-bottom:1px solid ${BORDER}; padding-bottom:16px; margin-bottom:22px; font-size:0;">
-        <img src="${logoUrl}" style="display:inline-block; vertical-align:middle; height:42px; width:auto;" crossorigin="anonymous" />
+        <img src="${logoUrl}" style="display:inline-block; vertical-align:middle; height:50px; width:auto;" crossorigin="anonymous" />
         <div style="display:inline-block; vertical-align:middle; margin-left:16px; position:relative; top:-5px;">
           <div style="font-size:19px; font-weight:700; line-height:1.25; color:${INK};">Tablero de Información de Hidrocarburos</div>
           <div style="font-size:11px; font-weight:700; line-height:1.35; letter-spacing:0.02em; margin-top:3px; color:${ORANGE};">DATOS A ${fecha}</div>
@@ -419,11 +419,11 @@ const SECTION_RENDERERS = {
         ${cardTitleHTML(null, VERDE, VERDE_BG, 'Top 10 Campos Productores')}
         <div style="display:flex; gap:20px;">
           <div style="flex:1; min-width:0;">
-            <div style="font-size:11px; font-style:italic; color:${MUTED}; margin-bottom:6px;">Mbd</div>
+            <div style="font-size:11px; color:${MUTED}; margin-bottom:6px;">Mbd</div>
             ${barListHTML(camposLiq, VERDE, maxCamposLiq)}
           </div>
           <div style="flex:1; min-width:0;">
-            <div style="font-size:11px; font-style:italic; color:${MUTED}; margin-bottom:6px;">MMpcd</div>
+            <div style="font-size:11px; color:${MUTED}; margin-bottom:6px;">MMpcd</div>
             ${barListHTML(camposGas, AZUL, maxCamposGas)}
           </div>
         </div>
@@ -436,12 +436,12 @@ const SECTION_RENDERERS = {
         <div style="display:flex; gap:20px;">
           <div style="flex:1; min-width:0;">
             <div style="font-size:12px; font-weight:600; color:${VERDE}; margin-bottom:4px;">Reservas de aceite</div>
-            <div style="font-size:11px; font-style:italic; color:${MUTED}; margin-bottom:6px;">MMb</div>
+            <div style="font-size:11px; color:${MUTED}; margin-bottom:6px;">MMb</div>
             ${barListHTML(resAceite, VERDE, maxResAceite)}
           </div>
           <div style="flex:1; min-width:0;">
             <div style="font-size:12px; font-weight:600; color:${AZUL}; margin-bottom:4px;">Reservas de gas natural</div>
-            <div style="font-size:11px; font-style:italic; color:${MUTED}; margin-bottom:6px;">MMMpc</div>
+            <div style="font-size:11px; color:${MUTED}; margin-bottom:6px;">MMMpc</div>
             ${barListHTML(resGas, AZUL, maxResGas)}
           </div>
         </div>
@@ -483,17 +483,17 @@ const SECTION_RENDERERS = {
         ${cardTitleHTML(null, ROJO, ROJO_BG, 'Pozos operando')}
         <div style="display:flex; gap:14px; align-items:stretch;">
           <div style="flex:1; text-align:center; background:${ROJO_BG}; border-radius:8px; padding:14px 12px;">
-            <div style="font-family:Georgia, serif; font-size:26px; font-weight:700; line-height:1.35; min-height:35px; color:${ROJO};">${data.pozos.total.toLocaleString('es-MX')}</div>
+            <div style="font-family:'Patria', Georgia, serif; font-size:26px; font-weight:700; line-height:1.35; min-height:35px; color:${ROJO};">${data.pozos.total.toLocaleString('es-MX')}</div>
             <div style="font-size:10.5px; line-height:1.4; margin-top:4px; min-height:29px; color:${ROJO}; opacity:0.85;">pozos productores en operación${data.periodoPozosLabel ? ' durante ' + data.periodoPozosLabel : ''}</div>
           </div>
           <div style="flex:1; text-align:center; background:${VERDE_BG}; border-radius:8px; padding:14px 12px;">
-            <div style="font-family:Georgia, serif; font-size:26px; font-weight:700; line-height:1.35; min-height:35px; color:${VERDE};">
+            <div style="font-family:'Patria', Georgia, serif; font-size:26px; font-weight:700; line-height:1.35; min-height:35px; color:${VERDE};">
               ${(data.pozos.asociado ?? 0).toLocaleString('es-MX')} <span style="font-size:13px;">· ${data.pozos.asociadoPorcentaje ?? ''}</span>
             </div>
             <div style="font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:0.02em; line-height:1.4; margin-top:4px; min-height:29px; color:${VERDE};">Petróleo y gas asociado</div>
           </div>
           <div style="flex:1; text-align:center; background:${AZUL_BG}; border-radius:8px; padding:14px 12px;">
-            <div style="font-family:Georgia, serif; font-size:26px; font-weight:700; line-height:1.35; min-height:35px; color:${AZUL};">
+            <div style="font-family:'Patria', Georgia, serif; font-size:26px; font-weight:700; line-height:1.35; min-height:35px; color:${AZUL};">
               ${(data.pozos.noAsociado ?? 0).toLocaleString('es-MX')} <span style="font-size:13px;">· ${data.pozos.noAsociadoPorcentaje ?? ''}</span>
             </div>
             <div style="font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:0.02em; line-height:1.4; margin-top:4px; min-height:29px; color:${AZUL};">Gas no asociado y condensado</div>
