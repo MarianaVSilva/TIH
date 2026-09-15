@@ -58,7 +58,6 @@ export default function PozosComparar({ seleccionados, onQuitar, period, start_y
     setExportando(true);
     try {
       const { exportarProduccionExcel } = await import("../../utils/exportExcel");
-      const chartImageBase64 = echartsRef.current?.getEchartsInstance().getDataURL({ pixelRatio: 2, backgroundColor: "#fff" }) ?? null;
       const filas = data.series.map(s => {
         const idx = Object.fromEntries(data.categories.map((c, i) => [c, s.data[i]]));
         const unidad = unidadPorPozo[s.name] ?? "Mbd";
@@ -70,8 +69,6 @@ export default function PozosComparar({ seleccionados, onQuitar, period, start_y
         subtitulo: data.tabla.map(t => t.pozo).join(" · "),
         periodoNota: `Rango: ${data.categories[0]} – ${data.categories[data.categories.length - 1]}`,
         tablaPivot: transponerAPivot(visCats, filas),
-        chartImageBase64,
-        chartTitulo: "Producción comparada",
       });
     } finally {
       setExportando(false);

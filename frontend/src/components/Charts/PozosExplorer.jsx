@@ -354,16 +354,11 @@ export default function PozosExplorer() {
     try {
       const { exportarProduccionExcel } = await import("../../utils/exportExcel");
       if (selected && detalle?.categories?.length) {
-        const chartImageBase64 = trendChartRef.current?.getImage() ?? null;
         await exportarProduccionExcel({
           titulo: selected.pozo,
           subtitulo: selected.campo,
           periodoNota: `Rango: ${detalle.categories[0]} – ${detalle.categories[detalle.categories.length - 1]}`,
           tablaPivot: transponerAPivot(detalle.categories, visibleRows.map(r => ({ label: r.label, valores: r.data }))),
-          chartImageBase64,
-          chartTitulo: tendenciaRow
-            ? `Producción observada (${tendenciaEsGas ? "gas" : "líquidos"}, ${tendenciaEsGas ? "MMpcd" : "Mbd"})`
-            : null,
         });
       } else {
         const unidadRanking = ranking?.unidad ?? "Mbd";

@@ -1,3 +1,5 @@
+import { lineasEncabezado } from "./encabezadoDescargable";
+
 function csvEscape(value) {
   const s = String(value ?? "");
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -18,17 +20,8 @@ function csvEscape(value) {
  * @param {string} [p.nombreArchivo]
  */
 export function descargarCsvConHeader({ titulo, subtitulo, periodoNota, columnas, filas, nombreArchivo }) {
-  const bannerLines = [
-    ["TIH — Tablero de Información de Hidrocarburos"],
-    ["Secretaría de Energía"],
-    [],
-    [titulo],
-    ...(subtitulo ? [[subtitulo]] : []),
-    ...(periodoNota ? [[periodoNota]] : []),
-    [`Exportado el ${new Date().toLocaleString("es-MX")}`],
-    [],
-  ];
-  const allLines = [...bannerLines, columnas, ...filas];
+  const encabezado = lineasEncabezado({ titulo, subtitulo, periodoNota }).map(l => [l]);
+  const allLines = [...encabezado, columnas, ...filas];
   // BOM al inicio: sin esto Excel interpreta el CSV como Latin-1 y los
   // acentos/ñ salen como caracteres corruptos (mojibake).
   const csv = "﻿" + allLines.map(line => line.map(csvEscape).join(",")).join("\n");
