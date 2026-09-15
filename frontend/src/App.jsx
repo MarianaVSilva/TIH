@@ -7,6 +7,7 @@ import { FichaProvider } from "./components/Fichas/FichaContext";
 import FichaModal from "./components/Fichas/FichaModal";
 import BotonVolver from "./components/UI/BotonVolver";
 import PanelAdmin from "./components/Admin/PanelAdmin";
+import ErrorBoundary from "./components/UI/ErrorBoundary";
 import { registrarVista, registrarSeccion, iniciarPulsos } from "./utils/telemetria";
 import { useExplorer } from "./store/useExplorer";
 
@@ -43,17 +44,28 @@ export default function App() {
     // FichaProvider envuelve toda la app para que cualquier vista (Explorador,
     // Panorama general, rankings…) pueda abrir la ficha de una entidad; el
     // modal se monta una sola vez, aquí.
-    <FichaProvider>
-      <div className="bg-slate-50 font-sans flex flex-col min-h-screen lg:h-screen">
-        <TopBar />
-        <main className="flex-1 min-h-0 min-w-0 p-6 flex flex-col overflow-y-auto overflow-x-hidden">
-          <ChartArea />
-        </main>
-        <BotonVolver />
-        <ChatButton open={chatOpen} onClick={() => setChatOpen(o => !o)} />
-        <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} />
-        <FichaModal />
-      </div>
-    </FichaProvider>
+    //
+    // Las fronteras de error van anidadas a propósito: la de adentro acota un
+    // fallo del área de contenido (una gráfica, una tabla) a esa zona, dejando
+    // usables el encabezado y los filtros para cambiar de tema; la de afuera es
+    // la red de seguridad para todo lo demás. La del modal de fichas vive en
+    // FichaModal. Sin ellas, cualquier excepción al renderizar deja la
+    // pantalla en negro.
+    <ErrorBoundary nombre="app">
+      <FichaProvider>
+        <div className="bg-slate-50 font-sans flex flex-col min-h-screen lg:h-screen">
+          <TopBar />
+          <main className="flex-1 min-h-0 min-w-0 p-6 flex flex-col overflow-y-auto overflow-x-hidden">
+            <ErrorBoundary nombre="contenido" key={seccion} compacto>
+              <ChartArea />
+            </ErrorBoundary>
+          </main>
+          <BotonVolver />
+          <ChatButton open={chatOpen} onClick={() => setChatOpen(o => !o)} />
+          <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} />
+          <FichaModal />
+        </div>
+      </FichaProvider>
+    </ErrorBoundary>
   );
 }
