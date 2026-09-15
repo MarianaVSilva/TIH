@@ -765,6 +765,21 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
     ? leaves.filter(lf => [lf.cuenca, lf.ubicacion, lf.categoria, lf.operator].some(v => v && v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(q)))
     : leaves;
 
+  // Agrupa hojas por producto (el "operator" de la hoja ES el producto aquí),
+  // conservando el orden en que el backend las mandó.
+  function mergeProductos(bucket) {
+    const merged = new Map();
+    for (const lf of bucket) {
+      if (!merged.has(lf.operator)) merged.set(lf.operator, { data: cats.map(() => 0), code: lf.code, orden: merged.size });
+      const acc = merged.get(lf.operator);
+      lf.data.forEach((v, i) => { acc.data[i] += v ?? 0; });
+    }
+    return [...merged]
+      .map(([label, v]) => ({ label, data: v.data, code: v.code, orden: v.orden }))
+      .filter(o => hasData(o.data) && vis[o.label] !== false)
+      .sort((a, b) => a.orden - b.orden);
+  }
+
   rows.push({ _id: "banner|Nacional", _type: "banner", label: "Nacional", ...dataObj(cats, cats.map(() => null)) });
   if (!forceDivisions) {
     rows.push({ _id: "total|Nacional", _type: "total", label: "Total", ...dataObj(cats, sumLeaves(leavesMostradas, cats)) });
@@ -775,6 +790,15 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
     const mmpcdLeaves = leavesMostradas.filter(l => esLeafMmpcd(l));
     if (mbdLeaves.length) rows.push({ _id: "total|Nacional|mbd", _type: "totalmbd", label: "Total Mbd", ...dataObj(cats, sumLeaves(mbdLeaves, cats)) });
     if (mmpcdLeaves.length) rows.push({ _id: "total|Nacional|mmpcd", _type: "totalmmpcd", label: "Total MMpcd", ...dataObj(cats, sumLeaves(mmpcdLeaves, cats)) });
+  }
+  if (forceDivisions) {
+    // Sección "Nacional": aquí se concentran TODAS las sumas, una fila por
+    // producto y cada una en su propia unidad (pedido explícito). Los
+    // encabezados de rama (Ambiente/Cuenca) ya no llevan cifra: sumaban Mbd
+    // con MMpcd en un mismo número, que no significa nada.
+    for (const p of mergeProductos(leavesMostradas)) {
+      rows.push({ _id: `nac|${p.label}`, _type: "subtotal", label: p.label, _code: p.code, ...dataObj(cats, p.data) });
+    }
   }
 
   function renderOperators(bucket, key, indentDepth, qLocal, dims = {}) {
@@ -881,7 +905,8 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
           const esRedundante = pendingLabels.length === 0 && isOpen;
           rows.push({
             _id: `h|${key}`, _type: "planheader", _groupKey: key, _open: isOpen, _indent: 12 + depth * 18, _depth: depth,
-            label: nextPending.join(" · "), ...dataObj(cats, esRedundante ? cats.map(() => null) : bucketTotalMostrado),
+            // forceDivisions: sin cifra, mezclaría unidades (ver sección Nacional).
+            label: nextPending.join(" · "), ...dataObj(cats, (esRedundante || forceDivisions) ? cats.map(() => null) : bucketTotalMostrado),
             // Último nivel: este encabezado ES la entidad (p. ej. la
             // asignación), aunque su rótulo venga fusionado con los niveles de
             // arriba. Se le pasa el código real para poder abrir su ficha.
@@ -906,7 +931,8 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
       const esUltimoNivel = levelIdx + 1 >= levels.length;
       rows.push({
         _id: `h|${key}`, _type: "planheader", _groupKey: key, _open: isOpen, _indent: 12 + depth * 18, _depth: depth,
-        label, ...dataObj(cats, bucketTotalMostrado),
+        // forceDivisions: sin cifra, mezclaría unidades (ver sección Nacional).
+        label, ...dataObj(cats, forceDivisions ? cats.map(() => null) : bucketTotalMostrado),
         // Ídem que arriba: solo el último nivel es la entidad con ficha.
         ...(esUltimoNivel && bucket[0]?.categoriaCode
           ? { _code: bucket[0].categoriaCode, _esEntidad: true } : {}),
@@ -1064,7 +1090,8 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
         rows.push({
           _id: `ph|${gk}`, _type: "planheader",
           _cuenca: g.cuenca, _ub: "", _groupKey: gk, _open: isOpen, label: g.cuenca,
-          ...Object.fromEntries(cats.map((c, ci) => [c, (sinResumen || isOpen) ? null : (g.data?.[ci] ?? null)])),
+          // mostrarTotalesUnidad: sin cifra, mezclaría unidades (ver Nacional).
+          ...Object.fromEntries(cats.map((c, ci) => [c, (sinResumen || isOpen || mostrarTotalesUnidad) ? null : (g.data?.[ci] ?? null)])),
         });
         if (!isOpen) continue;
         if (mostrarTotalesUnidad && !ocultarTotalesUnidad) {
@@ -1135,7 +1162,8 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
       rows.push({
         _id: `ph|${gk}`, _type: "planheader",
         _cuenca: g.cuenca, _ub: "", _groupKey: gk, _open: isOpen, label: g.cuenca,
-        ...Object.fromEntries(cats.map((c, ci) => [c, total[ci]])),
+        // mostrarTotalesUnidad: sin cifra, mezclaría unidades (ver Nacional).
+        ...Object.fromEntries(cats.map((c, ci) => [c, mostrarTotalesUnidad ? null : total[ci]])),
       });
       if (!isOpen) continue;
 
@@ -1157,15 +1185,33 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
     // Banner NACIONAL + Total general arriba
     const nacSg = nacGroup.subgroups.find(s => s.ubicacion === "Nacional");
     if (nacSg) {
-      const { total } = mergeSubgroups([nacSg], cats);
+      const { total, ops: opsNac } = mergeSubgroups([nacSg], cats);
       rows.push({
         _id: "banner|Nacional", _type: "banner", _cuenca: "Nacional", _ub: "", label: "Nacional",
         ...Object.fromEntries(cats.map(c => [c, null])),
       });
-      rows.push({
-        _id: "total|Nacional", _type: "total", _cuenca: "Nacional", _ub: "", label: "Total",
-        ...Object.fromEntries(cats.map((c, ci) => [c, total[ci]])),
-      });
+      if (mostrarTotalesUnidad) {
+        // Sección "Nacional": aquí se concentran TODAS las sumas — los 2
+        // totales por unidad y una fila por producto, cada una en su unidad.
+        // Un solo "Total" mezclaría Mbd con MMpcd, y por eso los encabezados
+        // de ambiente de abajo tampoco llevan ya cifra.
+        if (!ocultarTotalesUnidad) {
+          const { mbd, mmpcd } = totalesPorUnidad(nacSg.rows ?? [], cats);
+          if (mbd) rows.push({ _id: "total|Nacional|mbd", _type: "totalmbd", _cuenca: "Nacional", _ub: "", label: "Total Mbd", ...dataObj(cats, mbd) });
+          if (mmpcd) rows.push({ _id: "total|Nacional|mmpcd", _type: "totalmmpcd", _cuenca: "Nacional", _ub: "", label: "Total MMpcd", ...dataObj(cats, mmpcd) });
+        }
+        for (const op of opsNac.filter(o => hasData(o.data) && vis[o.label] !== false)) {
+          rows.push({
+            _id: `nac|${op.label}`, _type: "subtotal", _cuenca: "Nacional", _ub: "", label: op.label,
+            ...Object.fromEntries(cats.map((c, ci) => [c, op.data[ci] ?? 0])),
+          });
+        }
+      } else {
+        rows.push({
+          _id: "total|Nacional", _type: "total", _cuenca: "Nacional", _ub: "", label: "Total",
+          ...Object.fromEntries(cats.map((c, ci) => [c, total[ci]])),
+        });
+      }
     }
 
     for (const sg of nacGroup.subgroups) {
@@ -1179,9 +1225,15 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
       rows.push({
         _id: `ph|${gk}`, _type: "planheader",
         _cuenca: "Nacional", _ub: sg.ubicacion, _groupKey: gk, _open: isOpen, label: sg.ubicacion,
-        ...Object.fromEntries(cats.map((c, ci) => [c, total[ci]])),
+        // mostrarTotalesUnidad: sin cifra, mezclaría unidades (ver Nacional).
+        ...Object.fromEntries(cats.map((c, ci) => [c, mostrarTotalesUnidad ? null : total[ci]])),
       });
       if (!isOpen) continue;
+      if (mostrarTotalesUnidad && !ocultarTotalesUnidad) {
+        const { mbd, mmpcd } = totalesPorUnidad(sg.rows ?? [], cats);
+        if (mbd) rows.push({ _id: `${gk}|totalmbd`, _type: "totalmbd", _cuenca: "Nacional", _ub: sg.ubicacion, label: "Total Mbd", ...dataObj(cats, mbd) });
+        if (mmpcd) rows.push({ _id: `${gk}|totalmmpcd`, _type: "totalmmpcd", _cuenca: "Nacional", _ub: sg.ubicacion, label: "Total MMpcd", ...dataObj(cats, mmpcd) });
+      }
 
       // Los chips de serie (Gas (MMpcd), Gas asociado (MMpcd)...) apagan
       // productos — antes solo se ocultaban en la gráfica (filterSeries),
@@ -1210,10 +1262,21 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
       _id: "banner|Nacional", _type: "banner", _cuenca: "Nacional", _ub: "", label: "Nacional",
       ...Object.fromEntries(cats.map(c => [c, null])),
     });
-    rows.push({
-      _id: "total|Nacional", _type: "total", _cuenca: "Nacional", _ub: "", label: "Total",
-      ...Object.fromEntries(cats.map((c, ci) => [c, total[ci]])),
-    });
+    if (mostrarTotalesUnidad) {
+      // Un solo "Total" mezclaría Mbd con MMpcd. Aquí cada encabezado ya ES un
+      // producto (unidad única) y conserva su cifra, así que en Nacional solo
+      // van los 2 totales por unidad.
+      if (!ocultarTotalesUnidad) {
+        const { mbd, mmpcd } = totalesPorUnidad(nacSg.rows ?? [], cats);
+        if (mbd) rows.push({ _id: "total|Nacional|mbd", _type: "totalmbd", _cuenca: "Nacional", _ub: "", label: "Total Mbd", ...dataObj(cats, mbd) });
+        if (mmpcd) rows.push({ _id: "total|Nacional|mmpcd", _type: "totalmmpcd", _cuenca: "Nacional", _ub: "", label: "Total MMpcd", ...dataObj(cats, mmpcd) });
+      }
+    } else {
+      rows.push({
+        _id: "total|Nacional", _type: "total", _cuenca: "Nacional", _ub: "", label: "Total",
+        ...Object.fromEntries(cats.map((c, ci) => [c, total[ci]])),
+      });
+    }
 
     let i = 0;
     while (i < nacSg.rows.length) {
