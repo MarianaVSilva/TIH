@@ -1085,14 +1085,50 @@ function buildSimpleKpis(categories, series) {
   };
 }
 
+// Se recuerda entre temas y entre recargas: quien viene a trabajar con las
+// tablas quiere el espacio de vuelta siempre, no una vez.
+const KPIS_OCULTAS_KEY = "tih.kpisOcultas";
+
 function KpiCards({ kpis, topic }) {
+  const [oculto, setOculto] = useState(() => {
+    try { return localStorage.getItem(KPIS_OCULTAS_KEY) === "1"; } catch { return false; }
+  });
+  const alternar = () => setOculto(v => {
+    const siguiente = !v;
+    try { localStorage.setItem(KPIS_OCULTAS_KEY, siguiente ? "1" : "0"); } catch { /* en modo privado solo no se recuerda */ }
+    return siguiente;
+  });
+
   if (!kpis) return null;
   const items = KPI_CONFIG
     .map(cfg => ({ ...cfg, value: cfg.key(kpis) }))
     .filter(({ value }) => value !== null && value !== undefined && value !== "" && value !== 0 && value !== "0");
   if (!items.length) return null;
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
+    <div className="mb-5">
+      <div className="flex justify-end mb-1.5">
+        <button
+          onClick={alternar}
+          title={oculto ? "Mostrar los indicadores" : "Ocultar los indicadores para ganar espacio"}
+          className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-slate-500 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 transition-colors"
+        >
+          {oculto ? (
+            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8Z" opacity="0.4" />
+              <circle cx="8" cy="8" r="2" opacity="0.4" />
+              <line x1="1.5" y1="1.5" x2="14.5" y2="14.5" />
+            </svg>
+          ) : (
+            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8Z" />
+              <circle cx="8" cy="8" r="2" />
+            </svg>
+          )}
+          {oculto ? "Mostrar indicadores" : "Ocultar indicadores"}
+        </button>
+      </div>
+      {!oculto && (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
       {items.map(({ label, color, value, nota, tooltip }) => {
         const labelText = typeof label === "function" ? label(topic, kpis) : label;
         const notaText = typeof nota === "function" ? nota(topic, kpis) : nota;
@@ -1121,6 +1157,8 @@ function KpiCards({ kpis, topic }) {
           </div>
         );
       })}
+    </div>
+      )}
     </div>
   );
 }
