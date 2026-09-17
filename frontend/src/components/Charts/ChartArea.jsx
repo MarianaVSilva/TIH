@@ -1085,19 +1085,16 @@ function buildSimpleKpis(categories, series) {
   };
 }
 
-// Se recuerda entre temas y entre recargas: quien viene a trabajar con las
-// tablas quiere el espacio de vuelta siempre, no una vez.
-const KPIS_OCULTAS_KEY = "tih.kpisOcultas";
-
 function KpiCards({ kpis, topic }) {
-  const [oculto, setOculto] = useState(() => {
-    try { return localStorage.getItem(KPIS_OCULTAS_KEY) === "1"; } catch { return false; }
-  });
-  const alternar = () => setOculto(v => {
-    const siguiente = !v;
-    try { localStorage.setItem(KPIS_OCULTAS_KEY, siguiente ? "1" : "0"); } catch { /* en modo privado solo no se recuerda */ }
-    return siguiente;
-  });
+  const [oculto, setOculto] = useState(false);
+  // Ocultarlas vale solo para el tema que se está viendo: cada tema arranca
+  // con sus indicadores a la vista (pedido explícito). Se ajusta en el render
+  // en vez de con un efecto para no dibujar un cuadro con el estado viejo.
+  const [temaPrevio, setTemaPrevio] = useState(topic);
+  if (topic !== temaPrevio) {
+    setTemaPrevio(topic);
+    setOculto(false);
+  }
 
   if (!kpis) return null;
   const items = KPI_CONFIG
@@ -1108,7 +1105,7 @@ function KpiCards({ kpis, topic }) {
     <div className="mb-5">
       <div className="flex justify-end mb-1.5">
         <button
-          onClick={alternar}
+          onClick={() => setOculto(v => !v)}
           title={oculto ? "Mostrar los indicadores" : "Ocultar los indicadores para ganar espacio"}
           className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-slate-500 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 transition-colors"
         >
