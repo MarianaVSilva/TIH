@@ -974,11 +974,12 @@ function GroupByBar({ groupBy, setGroupBy }) {
 }
 
 // Unidad correcta por tema: la mayoría son Mbd de líquidos, Gcompo es gas en MMpcd.
+const PRODUCCION_TOTAL_LIQUIDOS = "Producción total de hidrocarburos líquidos (Mbd)";
 const PRODUCCION_TOTAL_LABEL = {
-  Cuenca: "Producción total (Mbd)", Campos: "Producción total (Mbd)", API: "Producción total (Mbd)",
-  Operadores: "Producción total (Mbd)", InteresPart: "Producción total (Mbd)",
-  Contratos: "Producción total (Mbd)", Asignaciones: "Producción total (Mbd)",
-  Estado: "Producción total (Mbd)", Gcompo: "Gas total (MMpcd)",
+  Cuenca: PRODUCCION_TOTAL_LIQUIDOS, Campos: PRODUCCION_TOTAL_LIQUIDOS, API: PRODUCCION_TOTAL_LIQUIDOS,
+  Operadores: PRODUCCION_TOTAL_LIQUIDOS, InteresPart: PRODUCCION_TOTAL_LIQUIDOS,
+  Contratos: PRODUCCION_TOTAL_LIQUIDOS, Asignaciones: PRODUCCION_TOTAL_LIQUIDOS,
+  Estado: PRODUCCION_TOTAL_LIQUIDOS, Gcompo: "Gas total (MMpcd)",
 };
 
 const KPI_CONFIG = [
@@ -986,6 +987,11 @@ const KPI_CONFIG = [
     key:   (k) => k.total?.toLocaleString("es-MX"),
     label: (topic) => PRODUCCION_TOTAL_LABEL[topic] ?? "Total de pozos",
     nota:  (topic, kpis) => `Dato del último periodo mostrado${kpis.periodo_dato ? ` (${kpis.periodo_dato})` : ""}.`,
+    // Solo donde la cifra ES el rollup de líquidos; en Gcompo (gas) o en los
+    // temas de conteo de pozos la explicación no aplica.
+    tooltip: (topic) => PRODUCCION_TOTAL_LABEL[topic] === PRODUCCION_TOTAL_LIQUIDOS
+      ? "Hidrocarburos líquidos: es la suma de petróleo y condensado."
+      : null,
     icon:  (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-5 h-5">
         <circle cx="12" cy="12" r="9"/><line x1="12" y1="3" x2="12" y2="21"/>
@@ -997,7 +1003,12 @@ const KPI_CONFIG = [
   {
     key:   (k) => k.anio_top,
     label: "Periodo más activo",
-    nota:  "Periodo con el valor más alto dentro del rango seleccionado.",
+    nota:  (topic) => {
+      const label = PRODUCCION_TOTAL_LABEL[topic];
+      if (!label) return "Periodo con el valor más alto dentro del rango seleccionado.";
+      const que = label === PRODUCCION_TOTAL_LIQUIDOS ? "hidrocarburos líquidos" : "gas";
+      return `Periodo con el valor más alto de ${que} dentro del rango seleccionado.`;
+    },
     icon:  (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-5 h-5">
         <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
@@ -1082,9 +1093,10 @@ function KpiCards({ kpis, topic }) {
   if (!items.length) return null;
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
-      {items.map(({ label, color, value, nota }) => {
+      {items.map(({ label, color, value, nota, tooltip }) => {
         const labelText = typeof label === "function" ? label(topic, kpis) : label;
         const notaText = typeof nota === "function" ? nota(topic, kpis) : nota;
+        const tooltipText = typeof tooltip === "function" ? tooltip(topic, kpis) : tooltip;
         return (
           <div
             key={labelText}
@@ -1092,7 +1104,10 @@ function KpiCards({ kpis, topic }) {
           >
             <div className="flex items-center gap-1.5 text-slate-400">
               <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
-              <span className="text-[10px] font-semibold uppercase tracking-wider leading-tight">
+              <span
+                className={`text-[10px] font-semibold uppercase tracking-wider leading-tight ${tooltipText ? "cursor-help" : ""}`}
+                title={tooltipText || undefined}
+              >
                 {labelText}
                 {notaText && <span className="ml-0.5 font-bold">*</span>}
               </span>

@@ -189,7 +189,7 @@ function bigStatHTML({ label, unidad, valor, promedio, anioPromedio, color, bg }
   `;
 }
 
-function indicadorHTML({ label, valor, anterior, color, bg, unidad = 'USD/barril' }) {
+function indicadorHTML({ label, valor, anterior, color, bg, unidad = 'USD/barril', fecha }) {
   if (valor == null) return '';
   const cambio = pct(valor, anterior);
   const subiendo = cambio > 0;
@@ -206,6 +206,7 @@ function indicadorHTML({ label, valor, anterior, color, bg, unidad = 'USD/barril
           <span style="font-weight:400; color:${MUTED};"> vs cierre anterior</span>
         </div>
       ` : ''}
+      ${fecha ? `<div style="font-size:11px; color:${MUTED}; line-height:1.45;">${fecha}</div>` : ''}
     </div>
   `;
 }
@@ -314,9 +315,10 @@ function tablaOperadorHTML({ pemexAsig, pemexMig, privRondas, privMig }) {
  * colores/tipografía/estructura de HomeDashboard.jsx (portrait, una columna).
  */
 const generateDashboardHTML = (data, order) => {
-  // Periodo real de los datos (mismo texto del encabezado en pantalla); si
-  // por alguna razón no viene, cae a la fecha de hoy.
-  const fecha = (data.periodoLabel || new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'long' })).toUpperCase();
+  // Fecha en que se generó el archivo (pedido explícito): el periodo de cada
+  // dato ya viaja en su propia tarjeta, así que el encabezado sirve para saber
+  // cuándo se descargó el reporte.
+  const fecha = new Date().toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase();
   const logoUrl = `${window.location.origin}/SENER_LOGO2.png`;
 
   const camposLiq = (data.campos?.liquidos || []).slice(0, 8);
@@ -377,7 +379,7 @@ const generateDashboardHTML = (data, order) => {
         <img src="${logoUrl}" style="display:inline-block; vertical-align:middle; height:50px; width:auto;" crossorigin="anonymous" />
         <div style="display:inline-block; vertical-align:middle; margin-left:16px; position:relative; top:-5px;">
           <div style="font-size:19px; font-weight:700; line-height:1.25; color:${INK};">Tablero de Información de Hidrocarburos</div>
-          <div style="font-size:11px; font-weight:700; line-height:1.35; letter-spacing:0.02em; margin-top:3px; color:${ORANGE};">DATOS A ${fecha}</div>
+          <div style="font-size:11px; font-weight:700; line-height:1.35; letter-spacing:0.02em; margin-top:3px; color:${ORANGE};">EXPORTADO EL ${fecha}</div>
         </div>
       </div>
 
@@ -407,9 +409,9 @@ const SECTION_RENDERERS = {
       <div class="section-card">
         ${cardTitleHTML(null, ROJO, ROJO_BG, 'Precios de referencia')}
         <div style="display:flex; gap:14px;">
-          ${indicadorHTML({ label: 'Henry Hub', unidad: 'USD/MMBtu', valor: data.mercado?.henryHub, anterior: data.mercado?.henryHubAnterior, color: AZUL, bg: AZUL_BG })}
-          ${indicadorHTML({ label: 'Brent', valor: data.mercado?.brent, anterior: data.mercado?.brentAnterior, color: ROJO, bg: ROJO_BG })}
-          ${indicadorHTML({ label: 'Mezcla Mexicana de Exportación', valor: data.mercado?.mezcla, anterior: data.mercado?.mezclaAnterior, color: VERDE, bg: VERDE_BG })}
+          ${indicadorHTML({ label: 'Henry Hub', unidad: 'USD/MMBtu', valor: data.mercado?.henryHub, anterior: data.mercado?.henryHubAnterior, fecha: data.mercado?.henryHubFecha, color: AZUL, bg: AZUL_BG })}
+          ${indicadorHTML({ label: 'Brent', valor: data.mercado?.brent, anterior: data.mercado?.brentAnterior, fecha: data.mercado?.brentFecha, color: ROJO, bg: ROJO_BG })}
+          ${indicadorHTML({ label: 'Mezcla Mexicana de Exportación', valor: data.mercado?.mezcla, anterior: data.mercado?.mezclaAnterior, fecha: data.mercado?.mezclaFecha, color: VERDE, bg: VERDE_BG })}
         </div>
       </div>
   `,

@@ -284,12 +284,17 @@ function buildExportPDFData(data) {
     mercado: {
       henryHub: ind?.henry_hub?.valor,
       henryHubAnterior: ind?.henry_hub?.anterior,
+      // Cada indicador trae su propia fecha de último dato: el export la
+      // muestra igual que el tablero, no todas bajo una misma fecha.
+      henryHubFecha: fechaLabelDe(ind?.henry_hub?.fecha),
       brent: ind?.brent?.valor,
       brentAnterior: ind?.brent?.anterior,
       brentCambio: fmtPct(pct(ind?.brent?.valor, ind?.brent?.anterior)),
+      brentFecha: fechaLabelDe(ind?.brent?.fecha),
       mezcla: ind?.mezcla_mexicana?.valor,
       mezclaAnterior: ind?.mezcla_mexicana?.anterior,
       mezclaCambio: fmtPct(pct(ind?.mezcla_mexicana?.valor, ind?.mezcla_mexicana?.anterior)),
+      mezclaFecha: fechaLabelDe(ind?.mezcla_mexicana?.fecha),
     },
     campos: {
       liquidos: tc?.liquidos ?? [],
