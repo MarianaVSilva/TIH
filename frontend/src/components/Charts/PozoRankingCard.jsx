@@ -1,6 +1,7 @@
 import { useState } from "react";
 import TendenciaDesgloseModal from "./TendenciaDesgloseModal";
 import { tendenciaLabel } from "../../utils/tendenciaLabel";
+import { fmt3 } from "../../utils/formato";
 
 const TENDENCIA_ICON  = { CRECIENDO: "↑", ESTABLE: "→", DECLINANDO: "↓", CRITICO: "⚠", SIN_PRODUCCION: "◼" };
 const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626", SIN_PRODUCCION: "#94a3b8" };
@@ -65,7 +66,7 @@ function MiniBarList({ title, accent, accentBg, items }) {
               <div className="h-full rounded-full transition-all" style={{ width: `${(p.produccion_mbd / max) * 100}%`, background: accent }} />
             </div>
             <span className="text-[11px] font-semibold text-slate-500 text-right tabular-nums shrink-0" style={{ width: 46 }}>
-              {p.produccion_mbd.toLocaleString("es-MX", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
+              {fmt3(p.produccion_mbd)}
             </span>
           </div>
         ))}
@@ -87,7 +88,7 @@ export default function PozoRankingCard({ ranking, onSelectPozo, onClose, campo 
         <span className="text-white text-[13px] font-bold tracking-wide">Ranking por asignación</span>
         <div className="flex items-center gap-2">
           <span className="text-teal-200/90 text-[11px]">
-            {ranking.num_pozos} pozos · promedio {ranking.promedio_mbd?.toLocaleString("es-MX", { minimumFractionDigits: 3, maximumFractionDigits: 3 })} {unidad}
+            {ranking.num_pozos} pozos · promedio {fmt3(ranking.promedio_mbd)} {unidad}
           </span>
           {onClose && (
             <button
@@ -128,7 +129,7 @@ export default function PozoRankingCard({ ranking, onSelectPozo, onClose, campo 
               >
                 <td className="py-2 px-3 text-slate-400">{p.ranking}</td>
                 <td className="py-2 px-3 font-semibold text-slate-700 group-hover:text-teal-800">{p.pozo}</td>
-                <td className="py-2 px-3 text-right tabular-nums text-slate-600">{p.produccion_mbd.toLocaleString("es-MX", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</td>
+                <td className="py-2 px-3 text-right tabular-nums text-slate-600">{fmt3(p.produccion_mbd)}</td>
                 <td className="py-2 px-3"><div className="flex justify-center"><TendenciaBadge tendencia={p.tendencia} estado={p.estado_operativo} campo={campo || p.campo} pozo={p.pozo} /></div></td>
                 <td className="py-2 px-3"><EstadoBadge estado={p.estado_operativo} /></td>
               </tr>

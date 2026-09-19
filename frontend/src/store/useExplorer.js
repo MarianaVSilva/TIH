@@ -179,6 +179,15 @@ export const useExplorer = create((set, get) => ({
   pendingBusqueda: null,
   setPendingBusqueda: (pendingBusqueda) => set({ pendingBusqueda }),
 
+  // Cuantas entidades quedan a la vista en la tabla despues de aplicar
+  // busqueda y filtros. Lo publica DynamicTable y lo lee TopBar para levantar
+  // el tope de 5 anios de la vista Mensual cuando se esta mirando UNA sola
+  // entidad: el motivo del tope es el tamano de la consulta (N entidades x
+  // 60+ meses), y con una sola entidad ese riesgo no existe. null = no hay
+  // tabla montada (vista de graficos, Home), y entonces el tope aplica igual.
+  entidadesVisibles: null,
+  setEntidadesVisibles: (entidadesVisibles) => set({ entidadesVisibles }),
+
   visibleSeries: {},
   // {tema} — la consume setResultado en la primera respuesta de ESE tema (ver
   // nota allí). Va con el tema dentro porque al navegar puede llegar todavía

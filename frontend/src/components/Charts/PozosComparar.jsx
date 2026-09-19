@@ -6,6 +6,7 @@ import { tendenciaLabel } from "../../utils/tendenciaLabel";
 import { transponerAPivot } from "./DynamicTable";
 import { useExplorerNav } from "../../hooks/useExplorerNav";
 import { sinCerosIniciales } from "../../utils/seriesUtils";
+import { fmt3 } from "../../utils/formato";
 
 const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626", SIN_PRODUCCION: "#94a3b8" };
 // Pozo sin producción actual: la tendencia no tiene sentido, se omite.
@@ -242,7 +243,7 @@ export default function PozosComparar({ seleccionados, onQuitar, period, start_y
                         className="text-center px-3 py-2 text-[12.5px] font-medium tabular-nums whitespace-nowrap"
                         style={{ background: v ? `${color}${Math.round(intensidad * 255).toString(16).padStart(2, "0")}` : "transparent", color: v ? "#1e293b" : "#cbd5e1" }}
                       >
-                        {v === 0 ? "—" : v.toLocaleString("es-MX", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
+                        {v === 0 ? "—" : fmt3(v)}
                       </td>
                     );
                   })}

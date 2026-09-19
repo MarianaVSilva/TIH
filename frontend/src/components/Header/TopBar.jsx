@@ -654,6 +654,7 @@ export default function TopBar() {
     compareMode, setCompareMode, compareYearA, compareYearB, setCompareYears,
     resultado, visibleSeries,
     reservasTipo, setReservasTipo,
+    entidadesVisibles, setEntidadesVisibles,
   } = useExplorer();
 
   const { consultar } = useChartData();
@@ -672,7 +673,20 @@ export default function TopBar() {
   const MAX_ANIOS_MENSUAL = 5;
   const aniosSeleccionados =
     start_year != null && end_year != null ? end_year - start_year + 1 : 1;
-  const rangoLargo = aniosSeleccionados > MAX_ANIOS_MENSUAL;
+  // Excepcion al tope: si la busqueda/filtros dejaron UNA sola entidad a la
+  // vista, el motivo del tope desaparece —la consulta pesada era N entidades
+  // por 60+ meses, y con N=1 no hay tal— asi que Mensual se ofrece completo.
+  // Si el usuario limpia la busqueda estando en Mensual con rango largo, el
+  // conteo vuelve a subir y el efecto de mas abajo lo regresa a Anual solo.
+  //
+  // El conteo lo publica la tabla y SOBREVIVE a que esta se desmonte mientras
+  // se consulta: si se borrara al desmontar, elegir Mensual abriria un hueco
+  // con el conteo en null en el que el tope se rearmaba solo, deshabilitando
+  // el radio recien elegido y devolviendo el periodo a Anual antes de que
+  // llegaran los datos. Se limpia al cambiar de tema (efecto mas abajo), que
+  // es cuando de verdad deja de aplicar.
+  const unaSolaEntidad = entidadesVisibles === 1;
+  const rangoLargo = aniosSeleccionados > MAX_ANIOS_MENSUAL && !unaSolaEntidad;
 
   const isPerf = PERFORACION_TOPICS.has(tema?.json_arg);
   const isProd = PRODUCCION_SECCIONES.has(tema?.seccion);
@@ -762,6 +776,14 @@ export default function TopBar() {
     if (soloAnual && period !== "annually") setPeriod("annually");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soloAnual, tema?.json_arg]);
+
+  // El conteo de entidades es de la tabla del tema anterior: al cambiar de
+  // tema deja de aplicar y se limpia, para que el tope no quede levantado por
+  // una busqueda que ya no existe.
+  useEffect(() => {
+    setEntidadesVisibles(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tema?.json_arg]);
 
   // Si el rango se amplía a más de MAX_ANIOS_MENSUAL estando en Mensual, se
   // vuelve a Anual solo: deshabilitar el radio no basta, porque el rango puede
@@ -1121,7 +1143,7 @@ export default function TopBar() {
                         key={val}
                         className="tih-filterbar__radio-label--dark"
                         title={deshabilitado
-                          ? `Disponible solo para rangos de hasta ${MAX_ANIOS_MENSUAL} años. Reduce el periodo para verlo por mes.`
+                          ? `Disponible solo para rangos de hasta ${MAX_ANIOS_MENSUAL} años. Reduce el periodo, o busca un solo elemento en la tabla para verlo por mes sin límite.`
                           : undefined}
                         style={deshabilitado ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
                       >

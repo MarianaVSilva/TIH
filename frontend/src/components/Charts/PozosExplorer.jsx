@@ -15,6 +15,7 @@ import PozosFiltrosPanel from "./PozosFiltrosPanel";
 import PozosComparar from "./PozosComparar";
 import { transponerAPivot } from "./DynamicTable";
 import { tendenciaLabel } from "../../utils/tendenciaLabel";
+import { fmt3 } from "../../utils/formato";
 
 // Croma-key en vivo del video "pozo sin producción" — el archivo trae un
 // fondo gris claro sólido (rgb 242,242,242) horneado en los píxeles; en vez
@@ -141,7 +142,7 @@ function KpiRow({ title, subtitle, kpis, numPozos, periodoNota, onExport, export
                 </span>
               </div>
               <p className="text-slate-800 text-lg font-bold leading-tight truncate">
-                {k.valor.toLocaleString("es-MX", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
+                {fmt3(k.valor)}
               </p>
             </div>
           );
@@ -634,7 +635,7 @@ export default function PozosExplorer() {
                                     className="text-center px-3 py-2 text-[12.5px] font-medium tabular-nums whitespace-nowrap"
                                     style={{ background: v ? `${color}${Math.round(intensidad * 255).toString(16).padStart(2, "0")}` : "transparent", color: v ? "#1e293b" : "#cbd5e1" }}
                                   >
-                                    {v === 0 ? "—" : v.toLocaleString("es-MX", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
+                                    {v === 0 ? "—" : fmt3(v)}
                                   </td>
                                 );
                               })}

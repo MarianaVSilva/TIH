@@ -107,7 +107,7 @@ export function BloqueReservas({ reservas }) {
   const activo = disponibles.includes(tipo) ? tipo : disponibles[0];
   const bloque = reservas[activo];
   const unidad = { aceite: "MMb", gas: "MMMpc", pce: "MMbpce" }[activo];
-  const fmt = v => (v ?? 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt = v => fmt2(v ?? 0);
 
   const option = {
     backgroundColor: "#fff",

@@ -2,11 +2,12 @@ import { useEffect, useState } from "react";
 import { fetchPozoTendenciaDesglose } from "../../api/client";
 import LoadingSpinner from "../UI/LoadingSpinner";
 import { tendenciaLabel } from "../../utils/tendenciaLabel";
+import { fmtNum } from "../../utils/formato";
 
 const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626", SIN_PRODUCCION: "#94a3b8" };
 
 function fmt(n, dec = 3) {
-  return n == null ? "—" : n.toLocaleString("es-MX", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  return n == null ? "—" : fmtNum(n, dec);
 }
 function fmtPct(n) {
   return n == null ? "—" : `${n > 0 ? "+" : ""}${fmt(n)}%`;

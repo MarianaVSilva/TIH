@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { nombreCampoDisplay } from '../../utils/nombreCampo';
+import { fmt2 } from '../../utils/formato';
 
 /**
  * COMPONENTE: Exportar PDF del TIH (Tablero de Información de Hidrocarburos)
@@ -198,7 +199,7 @@ function indicadorHTML({ label, valor, anterior, color, bg, unidad = 'USD/barril
     <div style="flex:1; min-width:0; text-align:center; background:${bg}; padding:16px 18px; border-radius:8px;">
       <div style="font-size:13px; color:${INK}; line-height:1.4;">${label} · ${unidad}</div>
       <div style="font-family:'Patria', Georgia, serif; color:${color}; font-size:32px; font-weight:700; line-height:1.3; margin-top:2px;">
-        $${valor.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+        $${fmt2(valor)}
       </div>
       ${cambio != null ? `
         <div style="font-size:12px; font-weight:600; margin-top:2px; line-height:1.45; color:${subiendo ? '#059669' : bajando ? ORANGE : MUTED};">

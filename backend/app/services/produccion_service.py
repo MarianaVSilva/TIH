@@ -230,7 +230,7 @@ def _series_por_producto(df, categories):
 def _kpis_producto_entidad(df, categories, entidad_col):
     total = float(df[df["periodo"] == categories[-1]]["liquidos_mbd"].sum())
     return {
-        "total": round(total),
+        "total": round(total, 2),
         "anio_top": int(df.groupby(df["periodo"].str[:4])["liquidos_mbd"].sum().idxmax()),
         "operador_top": df.groupby(entidad_col)["liquidos_mbd"].sum().idxmax(),
         "unidad": "Mbd",
@@ -598,7 +598,7 @@ def get_produccion_empresas(
     ]
     total = float(df[df["periodo"] == categories[-1]]["liquidos_mbd"].sum())
     kpis = {
-        "total": round(total),
+        "total": round(total, 2),
         "anio_top": int(df.groupby(df["periodo"].str[:4])["liquidos_mbd"].sum().idxmax()),
         "operador_top": df.groupby("empresa")["liquidos_mbd"].sum().idxmax(),
         "unidad": "Mbd",
@@ -711,7 +711,7 @@ def get_produccion_cuenca(
 
     total = float(df[df["periodo"] == categories[-1]]["liquidos_mbd"].sum())
     kpis = {
-        "total": round(total),
+        "total": round(total, 2),
         "anio_top": int(df.groupby(df["periodo"].str[:4])["liquidos_mbd"].sum().idxmax()),
         "cuenca_top": df.groupby("cuenca")["liquidos_mbd"].sum().idxmax(),
         "ubicacion_top": df.groupby("ubicacion")["liquidos_mbd"].sum().idxmax(),
@@ -761,21 +761,21 @@ def get_resumen_nacional(engine: Engine) -> dict:
     # home (estilo CNH). None en los meses sin dato.
     def _serie_mensual(anio: int, columna: str) -> list:
         sub = df[df["fecha"].dt.year == anio].set_index(df[df["fecha"].dt.year == anio]["fecha"].dt.month)[columna]
-        return [round(float(sub[m])) if m in sub.index else None for m in range(1, 13)]
+        return [round(float(sub[m]), 2) if m in sub.index else None for m in range(1, 13)]
 
     return {
         "periodo": last["fecha"].strftime("%Y-%m"),
         "liquidos": {
-            "valor": round(float(last["liquidos_mbd"])),
-            "promedio": round(liquidos_prom) if liquidos_prom else None,
+            "valor": round(float(last["liquidos_mbd"]), 2),
+            "promedio": round(liquidos_prom, 2) if liquidos_prom else None,
             "anio_promedio": anio_ref,
             "serie_actual": _serie_mensual(last["fecha"].year, "liquidos_mbd"),
             "serie_anterior": _serie_mensual(anio_ref, "liquidos_mbd"),
             "anio_actual": int(last["fecha"].year),
         },
         "gas": {
-            "valor": round(float(last["gas_mmpcd"])),
-            "promedio": round(gas_prom) if gas_prom else None,
+            "valor": round(float(last["gas_mmpcd"]), 2),
+            "promedio": round(gas_prom, 2) if gas_prom else None,
             "anio_promedio": anio_ref,
             "serie_actual": _serie_mensual(last["fecha"].year, "gas_mmpcd"),
             "serie_anterior": _serie_mensual(anio_ref, "gas_mmpcd"),
@@ -818,7 +818,7 @@ def get_top_campos(engine: Engine, top_n: int = 8) -> dict:
             .sort_values(ascending=False)
             .head(top_n)
         )
-        return [{"nombre": str(nombre), "valor": round(float(v))} for nombre, v in serie.items()]
+        return [{"nombre": str(nombre), "valor": round(float(v), 2)} for nombre, v in serie.items()]
 
     return {
         "periodo": ultimo_mes.strftime("%Y-%m"),
@@ -878,11 +878,11 @@ def get_produccion_por_operador(engine: Engine) -> dict:
         def _contratos(sub):
             g = sub.groupby("contrato_grupo")[fuel_col].sum()
             g = g[g > 0].sort_values(ascending=False)
-            return [{"nombre": k, "valor": round(float(v))} for k, v in g.items()]
+            return [{"nombre": k, "valor": round(float(v), 2)} for k, v in g.items()]
 
         return {
-            "pemex_total": round(pemex_total),
-            "otros_total": round(otros_total),
+            "pemex_total": round(pemex_total, 2),
+            "otros_total": round(otros_total, 2),
             "pemex_pct": round(pemex_total / total * 100) if total else None,
             "pemex_contratos": _contratos(pemex),
             "otros_contratos": _contratos(otros),
@@ -1913,7 +1913,7 @@ def _hierarchia_cuenca_ubicacion(df, campo_col, categories, orden=None, subtotal
 def _kpis_hierarquicos(df, categories, campo_col):
     total = float(df[df["periodo"] == categories[-1]]["liquidos_mbd"].sum())
     return {
-        "total": round(total),
+        "total": round(total, 2),
         "anio_top": int(df.groupby(df["periodo"].str[:4])["liquidos_mbd"].sum().idxmax()),
         "cuenca_top": df.groupby("cuenca")["liquidos_mbd"].sum().idxmax(),
         "operador_top": df.groupby(campo_col)["liquidos_mbd"].sum().idxmax(),
@@ -2236,7 +2236,7 @@ def get_produccion_gcompo(
     ]
     total = float(df[df["periodo"] == categories[-1]]["gas_mmpcd"].sum())
     kpis = {
-        "total": round(total),
+        "total": round(total, 2),
         "anio_top": int(df.groupby(df["periodo"].str[:4])["gas_mmpcd"].sum().idxmax()),
         "cuenca_top": df.groupby("cuenca")["gas_mmpcd"].sum().idxmax(),
         "ubicacion_top": df.groupby("ubicacion")["gas_mmpcd"].sum().idxmax(),

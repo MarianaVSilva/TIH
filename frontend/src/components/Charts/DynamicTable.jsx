@@ -1621,11 +1621,59 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
       : flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, sinResumen, flatAlfabetico),
     [resultado, visibleSeries, search, openGroups, filtrosActivos, hierLevels.length, hideDivisions, forceDivisions, groupBy, mostrarTotalesUnidad, sinResumen, flatAlfabetico]
   );
-  const rows = useMemo(() => sortLeafRuns(rowsSinOrdenar, sortState), [rowsSinOrdenar, sortState]);
+  // Ordenar por columna se desactiva en los temas medidos en Mbd/MMpcd (toda
+  // Produccion). Son TASAS diarias por periodo: reordenar las filas por el
+  // valor de un mes rompe el orden con significado que trae el backend
+  // (jerarquia cuenca/ambiente/producto) y sugiere un ranking que la tabla no
+  // es. Los temas de unidad "acumulable" —Reservas, Inversiones, Perforacion—
+  // conservan el orden. Se detecta por el sufijo de las hojas, que es lo que
+  // marca la unidad, en vez de una lista de temas que habria que mantener.
+  const esMbdOMmpcd = useMemo(
+    () => rowsSinOrdenar.some(r => /\((?:Mbd|MMpcd)\)/i.test(r.label ?? "")),
+    [rowsSinOrdenar]
+  );
+  const puedeOrdenar = !esMbdOMmpcd;
+  const rows = useMemo(
+    () => sortLeafRuns(rowsSinOrdenar, puedeOrdenar ? sortState : null),
+    [rowsSinOrdenar, sortState, puedeOrdenar]
+  );
   const cuencaCount = useMemo(() => rows.filter(r => r._type === "cuenca").length, [rows]);
   // Índice de la primera fila que sí se renderiza (la fila "cuenca" se
   // descarta cuando cuencaCount === 1, así que no cuenta como "primera").
   const primeraFilaVisibleIdx = rows.findIndex(r => !(r._type === "cuenca" && cuencaCount === 1));
+
+  // En la jerarquía multinivel (Ambiente > Cuenca > Producto), las filas
+  // "planoperator" son el producto/hoja final, no la entidad que describe
+  // entityLabel (p. ej. "ambientes") — ahí se cuenta el primer nivel real
+  // (profundidad 0) en vez de las hojas.
+  const opCount = hierLevels.length > 0
+    ? new Set(rows.filter(r => r._type === "planheader" && r._depth === 0).map(r => r.label)).size
+    : new Set(
+        rows.filter(r => r._type === "operator" || r._type === "planoperator").map(r => r.label)
+      ).size;
+
+  // Cuantas ENTIDADES (campo, operador, contrato...) quedan a la vista. No se
+  // reusa opCount: en el camino forceDivisions ese cuenta las filas "operator",
+  // que ahi son los PRODUCTOS de la entidad ("Petroleo (Mbd)", "Agua (Mbd)"),
+  // no las entidades — buscar un solo campo da opCount 3. La entidad en ese
+  // camino es la fila "subtotalcol".
+  const entidadesEnTabla = hierLevels.length > 0
+    ? new Set(rows.filter(r => r._type === "planheader" && r._depth === 0).map(r => r.label)).size
+    : forceDivisions
+    ? new Set(rows.filter(r => r._type === "subtotalcol").map(r => r.label)).size
+    : new Set(
+        rows.filter(r => r._type === "operator" || r._type === "planoperator").map(r => r.label)
+      ).size;
+
+  // Se publica al store para que el selector de Periodo (TopBar) sepa si la
+  // vista esta reducida a UNA entidad y pueda ofrecer Mensual sin el tope de
+  // 5 anios. NO se limpia al desmontar: la tabla se desmonta en cada consulta
+  // y ese hueco rearmaba el tope justo despues de elegir Mensual. Lo limpia
+  // TopBar al cambiar de tema, que es cuando deja de aplicar.
+  const { setEntidadesVisibles } = useExplorer();
+  useEffect(() => {
+    setEntidadesVisibles(entidadesEnTabla);
+  }, [entidadesEnTabla, setEntidadesVisibles]);
 
   if (!resultado?.groups?.length) {
     return (
@@ -1642,16 +1690,6 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
       </div>
     );
   }
-
-  // En la jerarquía multinivel (Ambiente > Cuenca > Producto), las filas
-  // "planoperator" son el producto/hoja final, no la entidad que describe
-  // entityLabel (p. ej. "ambientes") — ahí se cuenta el primer nivel real
-  // (profundidad 0) en vez de las hojas.
-  const opCount = hierLevels.length > 0
-    ? new Set(rows.filter(r => r._type === "planheader" && r._depth === 0).map(r => r.label)).size
-    : new Set(
-        rows.filter(r => r._type === "operator" || r._type === "planoperator").map(r => r.label)
-      ).size;
 
   // Detectar si las categorías son mensuales (formato "YYYY-MM")
   const isMonthly = visCats.length > 0 && /^\d{4}-\d{2}$/.test(visCats[0]);
@@ -1937,7 +1975,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                             const mes = parseInt(c.split("-")[1], 10);
                             return (
                               <th key={c}
-                                className="text-center px-1 py-1.5 text-[11px] font-semibold whitespace-nowrap cursor-pointer select-none"
+                                className={`text-center px-1 py-1.5 text-[11px] font-semibold whitespace-nowrap select-none ${puedeOrdenar ? "cursor-pointer" : ""}`}
                                 style={{
                                   minWidth: 68,
                                   background: clr.monthBg,
@@ -1947,11 +1985,11 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                                 }}
                                 onMouseEnter={() => setHoveredCol(c)}
                                 onMouseLeave={() => setHoveredCol(null)}
-                                onClick={() => toggleSort(c)}
+                                onClick={puedeOrdenar ? () => toggleSort(c) : undefined}
                               >
                                 <span className="inline-flex items-center gap-0.5">
                                   {MESES[mes - 1]}
-                                  <SortIcon active={sortState?.col === c} dir={sortState?.col === c ? sortState.dir : null} />
+                                  {puedeOrdenar && <SortIcon active={sortState?.col === c} dir={sortState?.col === c ? sortState.dir : null} />}
                                 </span>
                               </th>
                             );
@@ -1982,15 +2020,15 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                     const clr = ANNUAL_COLORS[colYearIdx[c] % ANNUAL_COLORS.length];
                     return (
                       <th key={c}
-                        className="text-center px-2 py-3 text-[13px] font-bold whitespace-nowrap cursor-pointer select-none"
+                        className={`text-center px-2 py-3 text-[13px] font-bold whitespace-nowrap select-none ${puedeOrdenar ? "cursor-pointer" : ""}`}
                         style={{ minWidth: 72, background: clr.bg, color: clr.text, boxShadow: hoveredCol === c ? colHighlightShadow : undefined }}
                         onMouseEnter={() => setHoveredCol(c)}
                         onMouseLeave={() => setHoveredCol(null)}
-                        onClick={() => toggleSort(c)}
+                        onClick={puedeOrdenar ? () => toggleSort(c) : undefined}
                       >
                         <span className="inline-flex items-center gap-0.5">
                           {c}
-                          <SortIcon active={sortState?.col === c} dir={sortState?.col === c ? sortState.dir : null} />
+                          {puedeOrdenar && <SortIcon active={sortState?.col === c} dir={sortState?.col === c ? sortState.dir : null} />}
                         </span>
                       </th>
                     );

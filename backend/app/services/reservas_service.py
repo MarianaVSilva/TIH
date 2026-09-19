@@ -389,7 +389,7 @@ def _ultima_fecha(engine: Engine) -> str | None:
 
 def _top_n(df: pd.DataFrame, columna: str, n: int) -> list[dict]:
     top = df[["campo_nombre", columna]].sort_values(columna, ascending=False).head(n)
-    return [{"nombre": r.campo_nombre, "valor": round(float(getattr(r, columna)), 0)} for r in top.itertuples()]
+    return [{"nombre": r.campo_nombre, "valor": round(float(getattr(r, columna)), 2)} for r in top.itertuples()]
 
 
 @cached()
@@ -459,9 +459,9 @@ def get_reservas_1p2p3p(engine: Engine) -> dict:
     posible = totales.get("POSIBLES", {"aceite_mmb": 0, "gas_mmmpc": 0})
 
     def _bloque(campo):
-        p = round(float(probada.get(campo) or 0), 0)
-        pb = round(float(probable.get(campo) or 0), 0)
-        ps = round(float(posible.get(campo) or 0), 0)
+        p = round(float(probada.get(campo) or 0), 2)
+        pb = round(float(probable.get(campo) or 0), 2)
+        ps = round(float(posible.get(campo) or 0), 2)
         return {
             "probada": p, "probable": pb, "posible": ps,
             "un_p": p, "dos_p": p + pb, "tres_p": p + pb + ps,

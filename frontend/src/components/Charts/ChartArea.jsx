@@ -312,7 +312,7 @@ function PrecioStatCard({ nombre, valor, unidad, cambio, color, min, max, fecha 
     <div className="rounded-xl p-4 flex-1 min-w-[150px]" style={{ background: `${color}14`, border: `1px solid ${color}33` }}>
       <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color }}>{nombre}</p>
       <p style={{ fontFamily: "'Patria', Georgia, serif", color: "#10312B", fontSize: 26, fontWeight: 700, lineHeight: 1.2, marginTop: 2 }}>
-        ${valor.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        ${fmt2(valor)}
         <span className="text-[12px] font-normal text-slate-400"> {unidad}</span>
       </p>
       <p className="text-[10px] text-slate-400 -mt-0.5">{fecha ?? "Último dato"}</p>
@@ -323,8 +323,8 @@ function PrecioStatCard({ nombre, valor, unidad, cambio, color, min, max, fecha 
       )}
       {min != null && max != null && (
         <p className="text-[11px] text-slate-400 mt-1">
-          Mín ${min.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          {" · "}Máx ${max.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          Mín ${fmt2(min)}
+          {" · "}Máx ${fmt2(max)}
           <span className="block text-[9.5px] text-slate-300">del periodo mostrado</span>
         </p>
       )}
@@ -670,50 +670,95 @@ function buildReservasTabla(resultado, { esReservasAsig, entidadLabel, unidad })
   return { columnas, filas };
 }
 
-// Colores fijos del reporte de referencia (verde=1P, amarillo=2P, naranja=3P)
-// — deliberadamente distintos de RESERVAS_CIRCULOS_PALETAS, que varía por
-// tipo (Aceite/Gas/PCE); aquí siempre son los mismos 3 colores.
-const RESERVAS_CAMPO_GROUP_COLORS = { p1: "#9CCC65", p2: "#FBC02D", p3: "#FFA726" };
+// Colores del reporte de referencia de la CNH: verde=Probada, amarillo=
+// Probable, naranja=Posible, y el rombo azul marino del total 3P.
+const RESERVAS_CAMPO_GROUP_COLORS = { p1: "#8CC63F", p2: "#F2E63D", p3: "#F4A03B", tres: "#1F3D7A" };
 
-// Barras AGRUPADAS (no apiladas) con el valor real de 1P/2P/3P — cada barra
-// es el acumulado tal cual (2P y 3P no se convierten a incremento aquí, van
-// completas una junto a otra), con eje Y visible. Reemplaza el diseño previo
-// de barra apilada por incrementos, que el usuario pidió cambiar por este.
+// Barra APILADA por INCREMENTOS, calcada del reporte de la CNH que pidio el
+// usuario: cada anio es una sola barra dividida en Probada / Probable /
+// Posible, con la cifra de cada tramo escrita dentro (girada, que es como
+// cabe) y el total 3P arriba marcado con un rombo.
+//
+// Ojo con el dato: p1/p2/p3 llegan ACUMULADOS (2P ya incluye 1P, 3P incluye
+// 2P). Apilarlos tal cual contaria doble y la barra sumaria mucho mas que el
+// 3P real, asi que se convierten a incrementos: Probable = 2P-1P, Posible =
+// 3P-2P. Asi la altura total de la barra ES el 3P, que es lo que marca el
+// rombo. El Math.max(0, ...) cubre anios con datos inconsistentes donde 2P
+// viniera por debajo de 1P, que si no dibujarian un tramo negativo.
 function buildReservasCampoGroupedOption(categories, p1, p2, p3, unidad) {
-  const fmt = v => (v ?? 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt = v => fmt2(v ?? 0);
+  const n = categories.length;
+  const at = (arr, i) => Number(arr?.[i] ?? 0) || 0;
+  const probada  = Array.from({ length: n }, (_, i) => at(p1, i));
+  const probable = Array.from({ length: n }, (_, i) => Math.max(0, at(p2, i) - at(p1, i)));
+  const posible  = Array.from({ length: n }, (_, i) => Math.max(0, at(p3, i) - at(p2, i)));
+  const total3p  = Array.from({ length: n }, (_, i) => at(p3, i));
+  const maxTotal = Math.max(1, ...total3p);
+
+  // La cifra solo se escribe si su tramo es lo bastante alto para contenerla;
+  // en un tramo diminuto saldria encimada con las de al lado.
+  const etiquetaTramo = {
+    show: true, position: "inside", rotate: 90,
+    fontSize: 11, fontWeight: 600, color: "#1f2937",
+    formatter: (p) => (p.value / maxTotal < 0.06 ? "" : fmt(p.value)),
+  };
+  const barra = (name, data, color) => ({
+    name, type: "bar", stack: "reservas", data,
+    itemStyle: { color }, barMaxWidth: 64, label: etiquetaTramo,
+  });
+
   return {
     backgroundColor: "#fff",
     tooltip: {
       trigger: "axis", axisPointer: { type: "shadow" },
       valueFormatter: v => `${fmt(v)} ${unidad}`,
     },
-    legend: {
-      data: ["1P", "2P", "3P"],
-      top: 0, left: "center", itemGap: 24, icon: "circle",
-      textStyle: { fontSize: 12, color: "#475569" },
-    },
-    grid: { left: 12, right: 16, top: 44, bottom: 30, containLabel: true },
+    legend: [
+      // El rombo del total va arriba al centro; los 3 tramos a la derecha, en
+      // el mismo orden en que se leen en la barra (Posible arriba, Probada
+      // abajo), como en el reporte de referencia.
+      { data: [{ name: "Reservas 3P", icon: "diamond" }], top: 0, left: "center",
+        textStyle: { fontSize: 12, fontWeight: 600, color: "#1F3D7A" } },
+      { data: ["Posible", "Probable", "Probada"], orient: "vertical",
+        right: 0, top: "middle", itemGap: 18, icon: "roundRect",
+        textStyle: { fontSize: 12, color: "#475569" } },
+    ],
+    grid: { left: 12, right: 96, top: 52, bottom: 24, containLabel: true },
     xAxis: {
       type: "category", data: categories,
-      axisLabel: { fontSize: 11, fontWeight: 600, color: "#0f766e" },
-      axisLine: { lineStyle: { color: "#cbd5e1" } }, axisTick: { show: false },
+      axisLabel: { fontSize: 12, fontWeight: 600, color: "#334155" },
+      axisLine: { show: false }, axisTick: { show: false },
     },
+    // Sin eje Y: cada tramo ya lleva su cifra dentro y el total arriba, igual
+    // que el reporte de referencia. Un eje aqui solo mete ruido.
     yAxis: {
-      type: "value", name: unidad, nameLocation: "end", nameGap: 12,
-      nameTextStyle: { fontSize: 11, color: "#334155", align: "left" },
-      axisLabel: { fontSize: 10, color: "#64748b" },
-      splitLine: { lineStyle: { color: "#f1f5f9" } },
+      type: "value", show: false,
+      max: maxTotal * 1.18, // aire para el rombo y su cifra
     },
     series: [
-      { name: "1P", type: "bar", data: p1, itemStyle: { color: RESERVAS_CAMPO_GROUP_COLORS.p1 }, barMaxWidth: 16 },
-      { name: "2P", type: "bar", data: p2, itemStyle: { color: RESERVAS_CAMPO_GROUP_COLORS.p2 }, barMaxWidth: 16 },
-      { name: "3P", type: "bar", data: p3, itemStyle: { color: RESERVAS_CAMPO_GROUP_COLORS.p3 }, barMaxWidth: 16 },
+      barra("Probada",  probada,  RESERVAS_CAMPO_GROUP_COLORS.p1),
+      barra("Probable", probable, RESERVAS_CAMPO_GROUP_COLORS.p2),
+      barra("Posible",  posible,  RESERVAS_CAMPO_GROUP_COLORS.p3),
+      {
+        // El rombo se dibuja como serie aparte (no como label de la pila)
+        // para que pueda apagarse desde la leyenda y tenga su propio tooltip.
+        name: "Reservas 3P", type: "scatter", data: total3p,
+        symbol: "diamond", symbolSize: 13,
+        itemStyle: { color: RESERVAS_CAMPO_GROUP_COLORS.tres },
+        label: {
+          show: true, position: "top", distance: 8,
+          fontSize: 12, fontWeight: 700, color: "#1F3D7A",
+          formatter: (p) => fmt(p.value),
+        },
+        tooltip: { valueFormatter: v => `${fmt(v)} ${unidad}` },
+        z: 10,
+      },
     ],
   };
 }
 
 // "Gráfica individual por campo": elegir UN campo y ver su evolución anual
-// 1P/2P/3P en barras agrupadas.
+// Probada/Probable/Posible apilada, misma lectura que la vista nacional.
 function ReservasCampoCustomChart({ resultado, unidad, entidad = "campos", selected, onSelectedChange }) {
   const campos = useMemo(
     () => buildReservasWaterfall(resultado, Infinity).sort((a, b) => a.campo.localeCompare(b.campo)),
@@ -739,8 +784,8 @@ function ReservasCampoCustomChart({ resultado, unidad, entidad = "campos", selec
 }
 
 // Vista por defecto de "Ver como gráficos" (sin modo personalizado elegido):
-// suma 1P/2P/3P de TODOS los campos/asignaciones del rango — mismas barras
-// agrupadas por año que "Gráfica individual por campo", pero a nivel
+// suma 1P/2P/3P de TODOS los campos/asignaciones del rango — misma barra
+// apilada por año que "Gráfica individual por campo", pero a nivel
 // nacional en vez de un campo/asignación puntual.
 function ReservasNacionalChart({ resultado, unidad, entidad = "campos" }) {
   const { p1, p2, p3 } = useMemo(() => {
