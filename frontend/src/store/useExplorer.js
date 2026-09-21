@@ -188,6 +188,15 @@ export const useExplorer = create((set, get) => ({
   entidadesVisibles: null,
   setEntidadesVisibles: (entidadesVisibles) => set({ entidadesVisibles }),
 
+  // Ultimo recorte automatico del periodo al primer año con datos, como
+  // "tema|busqueda|año". Vive en el store y no en un ref del componente
+  // porque la tabla SE DESMONTA en cada consulta: con un ref se reiniciaba y
+  // el recorte se reaplicaba en bucle, de modo que volver a poner el año
+  // anterior a mano se deshacia solo y la vista parecia trabada. Lo limpia
+  // TopBar al cambiar de tema.
+  periodoRecortado: null,
+  setPeriodoRecortado: (periodoRecortado) => set({ periodoRecortado }),
+
   visibleSeries: {},
   // {tema} — la consume setResultado en la primera respuesta de ESE tema (ver
   // nota allí). Va con el tema dentro porque al navegar puede llegar todavía

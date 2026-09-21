@@ -1666,10 +1666,45 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   // 5 anios. NO se limpia al desmontar: la tabla se desmonta en cada consulta
   // y ese hueco rearmaba el tope justo despues de elegir Mensual. Lo limpia
   // TopBar al cambiar de tema, que es cuando deja de aplicar.
-  const { setEntidadesVisibles } = useExplorer();
+  const { setEntidadesVisibles, setFiltro, periodoRecortado, setPeriodoRecortado } = useExplorer();
   useEffect(() => {
     setEntidadesVisibles(entidadesEnTabla);
   }, [entidadesEnTabla, setEntidadesVisibles]);
+
+  // Primer periodo con algun dato de lo que se esta viendo.
+  const primerCatConDatos = useMemo(
+    () => visCats.find(c => rows.some(r => r[c] != null && r[c] !== 0)) ?? null,
+    [visCats, rows]
+  );
+
+  // Si lo que se esta viendo no tiene datos en los primeros periodos del
+  // rango, el periodo se recorta a su primer año con datos: buscar una
+  // asignacion que empezo en 2022 con el rango en 2020-2026 traia dos años
+  // vacios por delante. Las columnas vacias ya se ocultan (ver displayCats),
+  // pero el selector seguia diciendo 2020 y la consulta seguia pidiendolos.
+  //
+  // No hace falta que la tabla este reducida a UNA entidad: la condicion real
+  // es que sobren periodos vacios al inicio. Sin filtros eso no pasa —los
+  // totales nacionales tienen datos en todo el rango—, asi que solo actua
+  // cuando de verdad hay años de mas.
+  //
+  // Solo se recorta el INICIO y solo hacia adelante: nunca amplia el rango ni
+  // toca el año final, asi que no puede esconder datos que el usuario si pidio.
+  //
+  // Se aplica UNA vez por tema+busqueda: asi, si despues se amplia el rango a
+  // mano para ver los años vacios, el recorte no lo deshace. La marca vive en
+  // el store y no en un ref porque la tabla se desmonta en cada consulta y un
+  // ref se reiniciaria, dejando el recorte en bucle.
+  useEffect(() => {
+    if (!primerCatConDatos || primerCatConDatos === visCats[0]) return;
+    const anio = parseInt(String(primerCatConDatos).slice(0, 4), 10);
+    if (!Number.isFinite(anio) || start_year == null || anio <= start_year) return;
+    const clave = `${temaJsonArg}|${search}`;
+    if (periodoRecortado === clave) return;
+    setPeriodoRecortado(clave);
+    setFiltro({ start_year: anio });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primerCatConDatos, visCats, start_year, temaJsonArg, search, periodoRecortado]);
 
   // Sin datos: antes se dibujaba la banda "Nacional" y debajo un hueco en
   // blanco, sin decir nada. Quedaba ambiguo —¿esta cargando, se rompio algo,

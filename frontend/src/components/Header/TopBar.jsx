@@ -654,7 +654,7 @@ export default function TopBar() {
     compareMode, setCompareMode, compareYearA, compareYearB, setCompareYears,
     resultado, visibleSeries,
     reservasTipo, setReservasTipo,
-    entidadesVisibles, setEntidadesVisibles,
+    entidadesVisibles, setEntidadesVisibles, setPeriodoRecortado,
   } = useExplorer();
 
   const { consultar } = useChartData();
@@ -782,6 +782,7 @@ export default function TopBar() {
   // una busqueda que ya no existe.
   useEffect(() => {
     setEntidadesVisibles(null);
+    setPeriodoRecortado(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tema?.json_arg]);
 
