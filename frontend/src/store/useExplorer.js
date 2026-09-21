@@ -197,6 +197,18 @@ export const useExplorer = create((set, get) => ({
   periodoRecortado: null,
   setPeriodoRecortado: (periodoRecortado) => set({ periodoRecortado }),
 
+  // {clave: "tema|busqueda", anio}: primer año que SI tiene datos en lo que la
+  // tabla esta mostrando. Se DEMUESTRA al consultar — si se pidio 2020-2026 y
+  // el primer dato es de 2022, entonces 2020 y 2021 estan vacios para esta
+  // vista— y con eso el selector de Periodo deja de ofrecer los años de antes.
+  //
+  // No puede saberlo el backend: aqui quien reduce la vista es la BUSQUEDA de
+  // la tabla, que es texto sobre las etiquetas ya cargadas. Por eso el dato se
+  // aprende en el navegador y se guarda por tema+busqueda; al cambiar
+  // cualquiera de los dos deja de aplicar.
+  pisoAnioConDatos: null,
+  setPisoAnioConDatos: (pisoAnioConDatos) => set({ pisoAnioConDatos }),
+
   visibleSeries: {},
   // {tema} — la consume setResultado en la primera respuesta de ESE tema (ver
   // nota allí). Va con el tema dentro porque al navegar puede llegar todavía

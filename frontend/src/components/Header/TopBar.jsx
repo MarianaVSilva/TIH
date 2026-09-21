@@ -655,6 +655,7 @@ export default function TopBar() {
     resultado, visibleSeries,
     reservasTipo, setReservasTipo,
     entidadesVisibles, setEntidadesVisibles, setPeriodoRecortado,
+    pisoAnioConDatos, setPisoAnioConDatos,
   } = useExplorer();
 
   const { consultar } = useChartData();
@@ -783,6 +784,7 @@ export default function TopBar() {
   useEffect(() => {
     setEntidadesVisibles(null);
     setPeriodoRecortado(null);
+    setPisoAnioConDatos(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tema?.json_arg]);
 
@@ -1182,7 +1184,13 @@ export default function TopBar() {
                     <YearRangeSelector
                       startYear={start_year}
                       endYear={end_year}
-                      years={aniosDisponibles}
+                      // Se quitan los años que la tabla ya demostro vacios
+                      // para lo que se esta viendo (ver pisoAnioConDatos).
+                      years={
+                        pisoAnioConDatos?.anio != null && aniosDisponibles
+                          ? aniosDisponibles.filter(y => y >= pisoAnioConDatos.anio)
+                          : aniosDisponibles
+                      }
                       onChangeStart={v => setFiltro(end_year == null ? { start_year: v, end_year: v } : { start_year: v })}
                       onChangeEnd={v => setFiltro(start_year == null ? { start_year: v, end_year: v } : { end_year: v })}
                     />

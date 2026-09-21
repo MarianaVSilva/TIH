@@ -1666,7 +1666,8 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   // 5 anios. NO se limpia al desmontar: la tabla se desmonta en cada consulta
   // y ese hueco rearmaba el tope justo despues de elegir Mensual. Lo limpia
   // TopBar al cambiar de tema, que es cuando deja de aplicar.
-  const { setEntidadesVisibles, setFiltro, periodoRecortado, setPeriodoRecortado } = useExplorer();
+  const { setEntidadesVisibles, setFiltro, periodoRecortado, setPeriodoRecortado,
+          pisoAnioConDatos, setPisoAnioConDatos } = useExplorer();
   useEffect(() => {
     setEntidadesVisibles(entidadesEnTabla);
   }, [entidadesEnTabla, setEntidadesVisibles]);
@@ -1705,6 +1706,26 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
     setFiltro({ start_year: anio });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [primerCatConDatos, visCats, start_year, temaJsonArg, search, periodoRecortado]);
+
+  // Los años anteriores al primer dato quedan DEMOSTRADOS vacios para esta
+  // vista, asi que se publican para que el selector de Periodo no los ofrezca.
+  // Se olvida al cambiar de tema o de busqueda, que es cuando deja de valer.
+  useEffect(() => {
+    const clave = `${temaJsonArg}|${search}`;
+    if (!primerCatConDatos) return;
+    if (primerCatConDatos === visCats[0]) {
+      // Nada nuevo que aprender aqui; si el piso guardado era de otra vista,
+      // se descarta para no arrastrarlo a esta.
+      if (pisoAnioConDatos && pisoAnioConDatos.clave !== clave) setPisoAnioConDatos(null);
+      return;
+    }
+    const anio = parseInt(String(primerCatConDatos).slice(0, 4), 10);
+    if (!Number.isFinite(anio)) return;
+    const previo = pisoAnioConDatos?.clave === clave ? pisoAnioConDatos.anio : null;
+    if (previo != null && anio <= previo) return;
+    setPisoAnioConDatos({ clave, anio });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primerCatConDatos, visCats, temaJsonArg, search, pisoAnioConDatos]);
 
   // Sin datos: antes se dibujaba la banda "Nacional" y debajo un hueco en
   // blanco, sin decir nada. Quedaba ambiguo —¿esta cargando, se rompio algo,
