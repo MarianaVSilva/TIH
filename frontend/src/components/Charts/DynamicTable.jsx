@@ -1671,7 +1671,16 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
     setEntidadesVisibles(entidadesEnTabla);
   }, [entidadesEnTabla, setEntidadesVisibles]);
 
+  // Sin datos: antes se dibujaba la banda "Nacional" y debajo un hueco en
+  // blanco, sin decir nada. Quedaba ambiguo —¿esta cargando, se rompio algo,
+  // o de verdad no hay nada?—, sobre todo al combinar filtros que no se
+  // cruzan (p. ej. cuencas del norte con "Aguas someras"). Ahora se explica,
+  // y se nombran los filtros activos para saber cual aflojar.
   if (!resultado?.groups?.length) {
+    const hayFiltros = !!filtroLabel;
+    const periodoTxt = start_year != null
+      ? (start_year === end_year ? `${start_year}` : `${start_year} – ${end_year}`)
+      : null;
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
         <div className="rounded-xl border border-slate-200 shadow-sm bg-white overflow-hidden">
@@ -1681,6 +1690,29 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
             letterSpacing: "0.08em", textTransform: "uppercase",
           }}>
             Nacional
+          </div>
+          <div className="px-6 py-12 flex flex-col items-center text-center gap-2">
+            <svg className="w-9 h-9 mb-1" viewBox="0 0 24 24" fill="none"
+              stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M3 9h18M9 9v11" />
+              <path d="M14.5 13.5l4 4M18.5 13.5l-4 4" />
+            </svg>
+            <p className="text-[14px] font-semibold" style={{ color: "#334155" }}>
+              {hayFiltros
+                ? "No hay datos para esta combinación de filtros"
+                : "No hay datos para el periodo seleccionado"}
+            </p>
+            {hayFiltros && (
+              <p className="text-[12.5px] max-w-lg" style={{ color: "#475569" }}>
+                {filtroLabel}{periodoTxt ? ` · ${periodoTxt}` : ""}
+              </p>
+            )}
+            <p className="text-[12px] max-w-md" style={{ color: "#94a3b8" }}>
+              {hayFiltros
+                ? "Esa combinación no tiene registros. Quita alguno de los filtros o amplía el periodo."
+                : "Prueba con otro periodo."}
+            </p>
           </div>
         </div>
       </div>
