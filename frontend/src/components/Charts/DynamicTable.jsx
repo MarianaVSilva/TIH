@@ -1638,10 +1638,6 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
     [rowsSinOrdenar, sortState, puedeOrdenar]
   );
   const cuencaCount = useMemo(() => rows.filter(r => r._type === "cuenca").length, [rows]);
-  // Índice de la primera fila que sí se renderiza (la fila "cuenca" se
-  // descarta cuando cuencaCount === 1, así que no cuenta como "primera").
-  const primeraFilaVisibleIdx = rows.findIndex(r => !(r._type === "cuenca" && cuencaCount === 1));
-
   // En la jerarquía multinivel (Ambiente > Cuenca > Producto), las filas
   // "planoperator" son el producto/hoja final, no la entidad que describe
   // entityLabel (p. ej. "ambientes") — ahí se cuenta el primer nivel real
@@ -1768,11 +1764,16 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   const hasBanner = rows.some(r => r._type === "banner");
   // Cuando el encabezado de la columna de nombres tiene su propia etiqueta
   // (p. ej. "Privados" en Operadores filtrado a un solo grupo), esa etiqueta
-  // ES la "categoría padre" — el botón va junto a ella, en el encabezado, no
-  // junto a la primera empresa. Con banner "Nacional" (Cuenca/Gcompo/etc.), el
-  // botón vive en esa misma fila. Sin ninguno de los dos (Contrato/Campo/
-  // Asignación sin nodo "Nacional" con banner propio), se ofrece junto a la
-  // PRIMERA fila renderizada, sea cual sea su tipo.
+  // ES la "categoría padre" — el botón va junto a ella, en el encabezado. Con
+  // banner "Nacional" (Cuenca/Gcompo/etc.), vive en esa misma fila.
+  //
+  // Sin ninguno de los dos va junto a la primera fila renderizada, pero SOLO
+  // si esa fila es una cabecera oscura (Nacional/cuenca/ubicacion). Antes se
+  // pegaba a la primera fila fuera cual fuera, y en los temas donde esa fila
+  // es una ENTIDAD (una empresa en Operadores filtrado) quedaba colgado de su
+  // nombre como si fuera parte de la etiqueta, ademas pintado con la variante
+  // clara sobre fondo claro: se leia como un boton deshabilitado. Pedido
+  // explicito de quitarlo de ahi.
   const showHeaderToggle = hasCollapsible && !hasBanner && !!rowHeaderLabel;
   const showToggleEnPrimeraFila = hasCollapsible && !hasBanner && !rowHeaderLabel;
 
@@ -2064,11 +2065,10 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                 const isDark      = isCuencaRow || row._type === "ubicacion" || row._type === "banner";
                 const isAmbienteHeader = row._type === "ambienteheader";
                 // El botón "Contraer/Expandir todo" va junto al banner
-                // "Nacional" si existe, o si no (y no hay rowHeaderLabel para
-                // mostrarlo en el encabezado) junto a la primera fila VISIBLE,
-                // sea cual sea (la fila "cuenca" se descarta arriba cuando
-                // cuencaCount === 1, así que no cuenta como "primera").
-                const esPrimeraVisible = idx === primeraFilaVisibleIdx;
+                // "Nacional" si existe; si no, junto a la primera fila
+                // renderizada, siempre que sea una cabecera oscura y no una
+                // fila de entidad (ver showToggleEnPrimeraFila).
+                const esPrimeraVisible = idx === rows.findIndex(r => !(r._type === "cuenca" && cuencaCount === 1));
                 const isSelected  = selectedRow === row._id && !isDark;
                 const isHovered   = hoveredRow === row._id && !isDark && !isSelected;
                 const selectedBg  = "#ccfbf1";
@@ -2162,8 +2162,9 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                       <span className="inline-flex items-center gap-2">
                         {row._pais && <FlagIcon pais={row._pais} />}
                         {normalizarSiMayusculas(row.label)}
-                        {((row._type === "banner" && hasCollapsible) || (showToggleEnPrimeraFila && esPrimeraVisible)) && (
-                          <ToggleTodoBtn dark={isDark || !!tone} />
+                        {((row._type === "banner" && hasCollapsible)
+                          || (showToggleEnPrimeraFila && esPrimeraVisible && isDark)) && (
+                          <ToggleTodoBtn dark={isDark} />
                         )}
                       </span>
                     </td>
