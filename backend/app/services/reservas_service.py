@@ -253,9 +253,17 @@ def get_reservas_asignacion_contrato(engine: Engine, start_year: int, end_year: 
         por_anio = sub.groupby("anio")[col].sum()
         return [round(float(por_anio.get(a, 0)), 2) for a in anios]
 
-    def filas_1p2p3p(sub: pd.DataFrame, label: str) -> list:
+    # code: ASIG_CONT real ("AE-0133"). La etiqueta que se muestra es el nombre
+    # del catálogo ("AE-0133-3M - CUICHAPA") y NO sirve para buscar: la ficha
+    # abría con ese texto, no encontraba nada y salía vacía diciendo "aún no
+    # registra producción". El front ya propaga row.code a _code y lo prefiere
+    # sobre la etiqueta, solo faltaba mandarlo.
+    def filas_1p2p3p(sub: pd.DataFrame, label: str, code: str | None = None) -> list:
+        subtotal = {"type": "subtotal", "label": label, "data": serie(sub, "3P")}
+        if code:
+            subtotal["code"] = code
         return [
-            {"type": "subtotal", "label": label, "data": serie(sub, "3P")},
+            subtotal,
             {"type": "operator", "label": f"1P = PROBADAS ({unidad})", "data": serie(sub, "1P")},
             {"type": "operator", "label": f"2P = PROBADAS + PROBABLES ({unidad})", "data": serie(sub, "2P")},
             {"type": "operator", "label": f"3P = PROBADAS + PROBABLES + POSIBLES ({unidad})", "data": serie(sub, "3P")},
@@ -269,7 +277,7 @@ def get_reservas_asignacion_contrato(engine: Engine, start_year: int, end_year: 
             # nombres.get(asig, asig): algunos códigos ("R01L03"…) sí están en
             # el catálogo pero con nombre NULL — el default de .get() no
             # aplica ahí (la clave existe), hace falta el "or" explícito.
-            rows += filas_1p2p3p(sub_asig, nombres.get(asig) or asig)
+            rows += filas_1p2p3p(sub_asig, nombres.get(asig) or asig, asig)
         return rows
 
     total_general_rows = filas_1p2p3p(pivot, "Todos los ambientes")

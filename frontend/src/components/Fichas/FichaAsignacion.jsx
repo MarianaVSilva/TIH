@@ -62,7 +62,7 @@ export default function FichaAsignacion({ asignacion }) {
           )}
           {data.sin_produccion && (
             <div className="text-[11.5px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-              Este {data.tipo === "CONTRATO" ? "contrato" : "asignación"} aún no registra producción.
+              {data.tipo === "CONTRATO" ? "Este contrato" : "Esta asignación"} aún no registra producción.
               Se muestran sus datos de bloque y operador.
             </div>
           )}
