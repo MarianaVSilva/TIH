@@ -576,6 +576,14 @@ function EmpresasClusterChart({ resultado, visibleSeries, onSelectEmpresa }) {
 // ofrecer la ficha sobre una fila que es un producto, no una entidad.
 const esEtiquetaProducto = (label) => /\((?:Mbd|MMpcd|MMb|MMMpc|MMbpce)\)\s*$/i.test(String(label ?? ""));
 
+// Dentro del grupo "Total general" de Reservas, el backend mete un desglose
+// NACIONAL por ambiente usando las mismas filas de subtotal que en las cuencas
+// reales usa para los campos (ver reservas_service: filas_1p2p3p sobre
+// "Todos los ambientes" y sobre cada AMBIENTES_ORDEN_RESERVAS). Esas filas NO
+// son campos y no tienen ficha que abrir: al hacerlo salia "Aguas Profundas —
+// Campo · Sin datos de produccion para este campo".
+const AMBIENTES_RESERVAS = new Set(["Todos los ambientes", "Aguas profundas", "Aguas someras", "Terrestre"]);
+
 const RESERVAS_UNIDAD = {
   ReservasP: "MMb", ReservasG: "MMMpc", ReservasPCE: "MMbpce",
   ReservasAsigP: "MMb", ReservasAsigG: "MMMpc", ReservasAsigPCE: "MMbpce",
@@ -2109,6 +2117,15 @@ export default function ChartArea() {
                 onRowFicha={
                   esReservasCampo ? (code) => abrirCampo(code)
                     : esReservasAsig ? (code) => abrirAsignacion(code)
+                    : undefined
+                }
+                // Los ambientes del desglose nacional comparten tipo de fila
+                // con los campos, asi que la regla por defecto los daba por
+                // entidad. Se excluyen por nombre (ver AMBIENTES_RESERVAS).
+                esFilaFicha={
+                  esReservas
+                    ? (row) => (row._type === "subtotal" || row._type === "subtotalcol" || row._esEntidad)
+                        && !AMBIENTES_RESERVAS.has(String(row.label ?? "").trim())
                     : undefined
                 }
                 // El número es un conteo del plan (sin lista detrás): el panel
