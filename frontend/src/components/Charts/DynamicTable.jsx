@@ -1758,9 +1758,25 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   // "Expandir todo" una vez colapsadas las categorías reales.
   // La sección "Nacional" no cuenta para el botón "Contraer/Expandir todo":
   // ese botón no la toca (ver toggleAllGroups).
-  const hasOpenGroups = rows.some(r => r._groupKey != null && !r._groupKey.startsWith(NACIONAL_KEY) && r._open && !(r._type === "ubicacion" && r.label === "Nacional"));
+  // Una fila CUENTA para el boton "Contraer/Expandir todo" solo si de verdad
+  // dibuja su propio control de plegado: misma condicion que isCollapse (ver
+  // mas abajo, en el render) mas la exclusion de la seccion "Nacional", que
+  // ese boton no toca.
+  //
+  // Antes bastaba con tener _groupKey, sin mirar el tipo. El envoltorio
+  // "Nacional" (tipo "ubicacion") lo trae aunque NO se pliega, asi que en los
+  // temas de tabla PLANA —"Produccion de gas por componentes" sin filtros, que
+  // es solo Total + un renglon por componente— el boton salia igual y no hacia
+  // nada al pulsarlo. Ahora aparece unicamente cuando hay algo que plegar.
+  const cuentaParaPlegarTodo = (r) =>
+    COLLAPSIBLE.has(r._type)
+    && !(r._type === "ubicacion" && r.label === "Nacional")
+    && r._groupKey != null
+    && !r._groupKey.startsWith(NACIONAL_KEY);
 
-  const hasCollapsible = rows.some(r => r._groupKey != null && !r._groupKey.startsWith(NACIONAL_KEY));
+  const hasOpenGroups = rows.some(r => cuentaParaPlegarTodo(r) && r._open);
+
+  const hasCollapsible = rows.some(cuentaParaPlegarTodo);
   const hasBanner = rows.some(r => r._type === "banner");
   // Cuando el encabezado de la columna de nombres tiene su propia etiqueta
   // (p. ej. "Privados" en Operadores filtrado a un solo grupo), esa etiqueta
