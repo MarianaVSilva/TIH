@@ -1674,13 +1674,11 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   // Sin datos: antes se dibujaba la banda "Nacional" y debajo un hueco en
   // blanco, sin decir nada. Quedaba ambiguo —¿esta cargando, se rompio algo,
   // o de verdad no hay nada?—, sobre todo al combinar filtros que no se
-  // cruzan (p. ej. cuencas del norte con "Aguas someras"). Ahora se explica,
-  // y se nombran los filtros activos para saber cual aflojar.
+  // cruzan (p. ej. cuencas del norte con "Aguas someras"). Basta con decirlo:
+  // los filtros activos ya estan a la vista en su propio boton y junto al
+  // titulo, repetirlos aqui era ruido.
   if (!resultado?.groups?.length) {
     const hayFiltros = !!filtroLabel;
-    const periodoTxt = start_year != null
-      ? (start_year === end_year ? `${start_year}` : `${start_year} – ${end_year}`)
-      : null;
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
         <div className="rounded-xl border border-slate-200 shadow-sm bg-white overflow-hidden">
@@ -1702,16 +1700,6 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
               {hayFiltros
                 ? "No hay datos para esta combinación de filtros"
                 : "No hay datos para el periodo seleccionado"}
-            </p>
-            {hayFiltros && (
-              <p className="text-[12.5px] max-w-lg" style={{ color: "#475569" }}>
-                {filtroLabel}{periodoTxt ? ` · ${periodoTxt}` : ""}
-              </p>
-            )}
-            <p className="text-[12px] max-w-md" style={{ color: "#94a3b8" }}>
-              {hayFiltros
-                ? "Esa combinación no tiene registros. Quita alguno de los filtros o amplía el periodo."
-                : "Prueba con otro periodo."}
             </p>
           </div>
         </div>
