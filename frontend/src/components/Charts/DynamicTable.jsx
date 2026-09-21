@@ -1765,7 +1765,26 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   // Años/períodos SIEMPRE de menor a mayor de izquierda a derecha (pedido
   // explícito). visCats ya viene ascendente del backend; antes se invertía en
   // la vista anual para poner el más reciente primero, ahora se deja como está.
-  const displayCats = visCats;
+  // Periodos SIN un solo dato en lo que se esta viendo: se ocultan. Al filtrar
+  // a una entidad que empezo a producir tarde (una asignacion de 2025, p. ej.)
+  // la tabla arrastraba media docena de columnas de guiones que solo estorban
+  // y desplazan a la derecha lo que si tiene cifras.
+  //
+  // Se mide sobre "rows", que ya viene filtrado por busqueda y filtros, asi
+  // que las columnas se recalculan solas al cambiarlos. Las filas de
+  // encabezado traen null a proposito (ver forceDivisions) y simplemente no
+  // aportan; basta con que UNA fila tenga un valor real para conservar la
+  // columna.
+  //
+  // Dos salvaguardas: en "Comparar años" las 2 columnas son la comparacion en
+  // si y no se tocan, y si NINGUNA tuviera datos se dejan todas, para no
+  // devolver una tabla sin columnas (ese caso ya lo cubre el aviso de "no hay
+  // datos" de mas arriba).
+  const displayCats = useMemo(() => {
+    if (isCompare) return visCats;
+    const conDatos = visCats.filter(c => rows.some(r => r[c] != null && r[c] !== 0));
+    return conDatos.length ? conDatos : visCats;
+  }, [visCats, rows, isCompare]);
 
   // Resalte de columna al hacer hover (overlay translúcido, no pisa el color de fondo existente)
   const colHighlightShadow = "inset 0 0 0 9999px rgba(13,148,136,0.12)";
