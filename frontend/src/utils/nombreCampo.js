@@ -26,8 +26,24 @@ const NOMBRE_FIXES = {
 // POKCHE NE): sin esto quedaban como "Nw", "Se", "Ne".
 const CONSERVAR = new Set(["API", "PCE", "GNL", "SNL", "IP", "II", "III", "IV", "NW", "NE", "SW", "SE"]);
 
+// Codigos de CONTRATO ("CNH-R01-L02-A2/2015", "CNH-A3.CARDENAS-MORA/2018") y
+// de ASIGNACION ("A-0203-4M", "AE-0032-6M"). Son identificadores, no nombres:
+// van siempre en MAYUSCULAS. El title-case los dejaba como
+// "Cnh-R01-L02-A2/2015", que ademas no coincide con el codigo que muestra la
+// ficha ni con el que se busca.
+//
+// Se comprueba por TOKEN y no sobre la etiqueta entera para que tambien
+// funcione en las compuestas ("A-0203-4M - Campo Maloob"): el codigo queda en
+// mayusculas y el resto se sigue capitalizando normal.
+//
+// El patron es deliberadamente estrecho —CNH seguido de "-"/"." o A/AE
+// seguido de guion y un digito— para no atrapar nombres de campo que tambien
+// llevan digitos y guiones, como "Joachin-02".
+const RE_CODIGO = /^(?:CNH[-.]\S*|AE?-\d\S*)$/i;
+
 function capitalizarToken(token) {
   if (!token) return token;
+  if (RE_CODIGO.test(token)) return token.toUpperCase();
   if (CONSERVAR.has(token.toUpperCase())) return token.toUpperCase();
   // Un token puede llevar guiones o puntos ("agua-fria", "a.c."): se
   // capitaliza cada segmento.
