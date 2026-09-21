@@ -3,6 +3,7 @@ import { fmt2 } from "../../utils/formato";
 import { fetchAsignacionesRanking } from "../../api/client";
 import LoadingSpinner from "../UI/LoadingSpinner";
 import { useExplorer } from "../../store/useExplorer";
+import { useAbrirFicha } from "../Fichas/FichaContext";
 
 const INK = "#1f2430";
 const MUTED = "#767b87";
@@ -65,11 +66,18 @@ function Chip({ children }) {
 // Card de podio (top 3) — el 1er lugar va al centro, más grande y elevado;
 // 2do a la izquierda y 3ro a la derecha, mismo patrón visual de un podio.
 function PodioCard({ a, rank, unidad, colorValor }) {
+  const { abrirAsignacion } = useAbrirFicha();
   const m = MEDALLA[rank];
   const esPrimero = rank === 1;
   return (
+    // La tarjeta no tenia ninguna accion, asi que la ficha va en el clic
+    // IZQUIERDO (no el derecho): donde no hay nada ocupando el clic normal,
+    // esa es la convencion del tablero (PozosCampos, Operadores, InvCont).
     <div
-      className={`relative bg-white rounded-2xl border-t-4 shadow-sm flex flex-col p-4 ${esPrimero ? "shadow-md" : ""}`}
+      onClick={() => abrirAsignacion(a.asignacion, a.block_name ?? a.asignacion)}
+      onContextMenu={(e) => { e.preventDefault(); abrirAsignacion(a.asignacion, a.block_name ?? a.asignacion); }}
+      title={`${a.block_name ?? a.asignacion} — ver su ficha`}
+      className={`relative bg-white rounded-2xl border-t-4 shadow-sm flex flex-col p-4 cursor-pointer transition-shadow hover:shadow-lg ${esPrimero ? "shadow-md" : ""}`}
       style={{ borderTopColor: m.accent }}
     >
       <div className="flex items-start justify-between mb-3">
@@ -123,6 +131,7 @@ export default function AsignacionesRanking({ period, start_year, end_year, star
   const [soloVigentes, setSoloVigentes] = useState(false);
   const [metrica, setMetrica] = useState("liquidos");
   const { pendingBusqueda, setPendingBusqueda } = useExplorer();
+  const { abrirAsignacion } = useAbrirFicha();
 
   useEffect(() => {
     setData(null);
@@ -236,7 +245,13 @@ export default function AsignacionesRanking({ period, start_year, end_year, star
                   </thead>
                   <tbody>
                     {resto.map((a, i) => (
-                      <tr key={a.asignacion} className={`border-b border-slate-100/70 transition-colors ${metrica === "gas" ? "hover:bg-blue-100/50" : "hover:bg-teal-100/50"}`}>
+                      // Mismas filas del ranking que el podio de arriba: sin
+                      // otra accion en el clic, la ficha va en el izquierdo.
+                      <tr key={a.asignacion}
+                        onClick={() => abrirAsignacion(a.asignacion, a.block_name ?? a.asignacion)}
+                        onContextMenu={(e) => { e.preventDefault(); abrirAsignacion(a.asignacion, a.block_name ?? a.asignacion); }}
+                        title={`${a.block_name ?? a.asignacion} — ver su ficha`}
+                        className={`border-b border-slate-100/70 transition-colors cursor-pointer ${metrica === "gas" ? "hover:bg-blue-100/50" : "hover:bg-teal-100/50"}`}>
                         <td className="px-4 py-3 text-[12px] text-slate-400 tabular-nums">{i + 4}</td>
                         <td className="px-4 py-3 text-[13px] font-semibold" style={{ color: INK }} title={a.block_name ? a.asignacion : undefined}>
                           {a.block_name ?? a.asignacion}

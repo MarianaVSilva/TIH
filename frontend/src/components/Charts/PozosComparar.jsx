@@ -6,6 +6,7 @@ import { tendenciaLabel } from "../../utils/tendenciaLabel";
 import { transponerAPivot } from "./DynamicTable";
 import { useExplorerNav } from "../../hooks/useExplorerNav";
 import { sinCerosIniciales } from "../../utils/seriesUtils";
+import { useAbrirFicha } from "../Fichas/FichaContext";
 import { fmt3 } from "../../utils/formato";
 
 const TENDENCIA_COLOR = { CRECIENDO: "#059669", ESTABLE: "#64748b", DECLINANDO: "#d97706", CRITICO: "#dc2626", SIN_PRODUCCION: "#94a3b8" };
@@ -35,6 +36,7 @@ export default function PozosComparar({ seleccionados, onQuitar, period, start_y
   const [exportando, setExportando] = useState(false);
   const echartsRef = useRef(null);
   const { irAPozo } = useExplorerNav();
+  const { abrirPozo } = useAbrirFicha();
 
   useEffect(() => {
     if (seleccionados.length < 2) { setData(null); return; }
@@ -130,7 +132,14 @@ export default function PozosComparar({ seleccionados, onQuitar, period, start_y
                         const s = seleccionados.find(s => s.pozo === row.pozo);
                         if (s) irAPozo(s.pozo, s.campo);
                       }}
-                      title="Ver detalle del pozo"
+                      // El izquierdo ya navega al pozo en el Explorador; la
+                      // ficha va con clic derecho, como en las tablas.
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        const s = seleccionados.find(s => s.pozo === row.pozo);
+                        if (s) abrirPozo(s.pozo, s.campo ?? null);
+                      }}
+                      title={`${row.pozo} — clic derecho para ver su ficha`}
                       className="inline-flex items-center gap-1.5 hover:underline decoration-teal-400 underline-offset-2"
                     >
                       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />

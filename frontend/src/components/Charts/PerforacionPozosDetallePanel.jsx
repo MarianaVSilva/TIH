@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchPerforacionPozosDetalle } from "../../api/client";
 import LoadingSpinner from "../UI/LoadingSpinner";
-import { useExplorer } from "../../store/useExplorer";
+import { useAbrirFicha } from "../Fichas/FichaContext";
 
 const INK = "#1f2430";
 const MUTED = "#767b87";
@@ -24,18 +24,16 @@ function periodoLegible(periodo) {
 export default function PerforacionPozosDetallePanel({ topic, periodo, cuenca, ubicacion, operador, categoriaPozo, cifraEsperada, onClose }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
-  const { temas, setSeccion, setTema, setPendingPozoSelection } = useExplorer();
+  const { abrirPozo } = useAbrirFicha();
 
+  // Abre la FICHA del pozo, igual que la lista gemela de
+  // PozosCampoDetallePanel. Antes sacaba al usuario al tema "Pozos": dos
+  // listas identicas se comportaban distinto segun de donde salieran. La
+  // ficha ademas encadena a la asignacion y al operador, y lleva dentro su
+  // propio "Ver produccion de este pozo" para quien si quiera ir al tema.
   function irAPozo(pozo, campo) {
-    const temaPozos = temas.find(t => t.json_arg === "Pozos");
-    if (!temaPozos) return;
-    setSeccion(temaPozos.seccion);
-    setTema(temaPozos);
-    // Sin campo (ASIG_CONT): el pozo aún no tiene producción registrada —
-    // PozosExplorer lo detecta y muestra "Pozo sin producción" en vez de
-    // intentar una consulta que no traería nada.
-    setPendingPozoSelection({ campo: campo ?? null, pozo });
     onClose();
+    abrirPozo(pozo, campo ?? null);
   }
 
   useEffect(() => {
@@ -100,7 +98,7 @@ export default function PerforacionPozosDetallePanel({ topic, periodo, cuenca, u
                       <button
                         key={p.pozo}
                         onClick={() => irAPozo(p.pozo, p.campo)}
-                        title="Ver producción de este pozo"
+                        title="Ver la ficha de este pozo"
                         className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-slate-50 border border-slate-100 w-full text-left transition-colors cursor-pointer hover:bg-teal-100/80 hover:border-teal-200"
                       >
                         <span className="text-[13px] font-semibold truncate text-teal-700 underline decoration-teal-300 decoration-2 underline-offset-2">

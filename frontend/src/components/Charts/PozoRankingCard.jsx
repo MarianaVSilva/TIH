@@ -1,6 +1,7 @@
 import { useState } from "react";
 import TendenciaDesgloseModal from "./TendenciaDesgloseModal";
 import { tendenciaLabel } from "../../utils/tendenciaLabel";
+import { useAbrirFicha } from "../Fichas/FichaContext";
 import { fmt3 } from "../../utils/formato";
 
 const TENDENCIA_ICON  = { CRECIENDO: "↑", ESTABLE: "→", DECLINANDO: "↓", CRITICO: "⚠", SIN_PRODUCCION: "◼" };
@@ -76,6 +77,7 @@ function MiniBarList({ title, accent, accentBg, items }) {
 }
 
 export default function PozoRankingCard({ ranking, onSelectPozo, onClose, campo }) {
+  const { abrirPozo } = useAbrirFicha();
   if (!ranking || !ranking.pozos?.length) return null;
   const pozos = ranking.pozos;
   const unidad = ranking.unidad ?? "Mbd";
@@ -125,6 +127,11 @@ export default function PozoRankingCard({ ranking, onSelectPozo, onClose, campo 
               <tr
                 key={p.well_id}
                 onClick={() => onSelectPozo?.(p.pozo, p.campo)}
+                // El clic izquierdo ya esta ocupado seleccionando el pozo, asi
+                // que la ficha va con clic derecho, misma convencion que las
+                // tablas de Campos/Contratos/Reservas.
+                onContextMenu={(e) => { e.preventDefault(); abrirPozo(p.pozo, campo || p.campo || null); }}
+                title={`${p.pozo} — clic derecho para ver su ficha`}
                 className={`group cursor-pointer border-l-[3px] border-transparent hover:border-teal-500 hover:bg-teal-100/80 transition-colors ${i % 2 ? "bg-slate-50/50" : "bg-white"}`}
               >
                 <td className="py-2 px-3 text-slate-400">{p.ranking}</td>
