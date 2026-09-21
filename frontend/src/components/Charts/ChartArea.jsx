@@ -571,6 +571,11 @@ function EmpresasClusterChart({ resultado, visibleSeries, onSelectEmpresa }) {
 // del genérico Simple/SingleChart — 1P (garantizado) como base, +2P/+3P como
 // incrementos apilados, mismos colores que las filas de DynamicTable (verde/
 // azul/naranja) para que la lectura sea consistente entre tabla y gráfica.
+// Una etiqueta de PRODUCTO trae su unidad entre parentesis ("Petroleo (Mbd)",
+// "Gas (MMpcd)"); una entidad (empresa, contrato, campo) no. Sirve para no
+// ofrecer la ficha sobre una fila que es un producto, no una entidad.
+const esEtiquetaProducto = (label) => /\((?:Mbd|MMpcd|MMb|MMMpc|MMbpce)\)\s*$/i.test(String(label ?? ""));
+
 const RESERVAS_UNIDAD = {
   ReservasP: "MMb", ReservasG: "MMMpc", ReservasPCE: "MMbpce",
   ReservasAsigP: "MMb", ReservasAsigG: "MMMpc", ReservasAsigPCE: "MMbpce",
@@ -2462,6 +2467,27 @@ export default function ChartArea() {
                     : tema?.json_arg === "Contratos"
                     || (tema?.json_arg === "Asignaciones" && hayFiltroCuencaUbic)
                     ? (code) => abrirAsignacion(code)
+                    // Operadores filtrado por empresas: la jerarquia es
+                    // Empresa (planheader) -> Contrato (subtotalcol) ->
+                    // Producto, y cada nivel abre una ficha DISTINTA. Sin
+                    // filtro el operador es la hoja y su ficha va en el clic
+                    // izquierdo (onRowClick, mas arriba).
+                    : tema?.json_arg === "Operadores"
+                    ? (code, label, row) => {
+                        if (row?._type === "planheader") abrirOperador(code);
+                        else abrirAsignacion(code);
+                      }
+                    : undefined
+                }
+                // En Operadores la ficha se ofrece en la empresa y en el
+                // contrato, pero NUNCA en un producto: sin filtro el
+                // "subtotalcol" es "Petroleo (Mbd)" y la regla por defecto lo
+                // habria hecho clicable. Se reconoce por el sufijo de unidad,
+                // igual que el bloqueo de orden por columna.
+                esFilaFicha={
+                  esOperadores
+                    ? (row) => row._type === "planheader"
+                        || (row._type === "subtotalcol" && !esEtiquetaProducto(row.label))
                     : undefined
                 }
                 onCellClick={

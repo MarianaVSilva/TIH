@@ -1460,7 +1460,7 @@ function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, tit
 }
 
 // ── Componente principal ──────────────────────────────────────────────────────
-export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick, onCellClick, flatExportEntidad, historicoTopic, historicoFetch, preserveColumnOrder, search: searchControlada, onSearchChange, sinResumen, exportOperadorTabla, flatAlfabetico, ocultarSuma, temaJsonArg, onRowFicha, notaPie }) {
+export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick, onCellClick, flatExportEntidad, historicoTopic, historicoFetch, preserveColumnOrder, search: searchControlada, onSearchChange, sinResumen, exportOperadorTabla, flatAlfabetico, ocultarSuma, temaJsonArg, onRowFicha, esFilaFicha, notaPie }) {
   const { pendingBusqueda, setPendingBusqueda } = useExplorer();
   const [searchLocal, setSearchLocal] = useState("");
   // Los datos van con 2 decimales (produccion, reservas, inversiones...); solo
@@ -2087,7 +2087,15 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                 // En la vista multinivel la entidad es un "planheader" con el
                 // rótulo fusionado (Ambiente · Cuenca · Asignación) y se marca
                 // con _esEntidad al construirla.
-                const esFilaConFicha = row._type === "subtotal" || row._type === "subtotalcol" || row._esEntidad;
+                // Por defecto la ficha va en la fila de subtotal/entidad. Un
+                // tema puede sustituir la regla con esFilaFicha cuando su
+                // jerarquia no encaja: en Operadores filtrado la entidad es un
+                // "planheader" (la empresa) y el "subtotalcol" de abajo es un
+                // CONTRATO, no el operador — con la regla de siempre el clic
+                // derecho sobre el contrato abria la ficha equivocada.
+                const esFilaConFicha = esFilaFicha
+                  ? esFilaFicha(row)
+                  : (row._type === "subtotal" || row._type === "subtotalcol" || row._esEntidad);
 
                 return (
                   <tr key={row._id}
@@ -2124,7 +2132,7 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
                     // gesto; sin esto la ficha se abría al clicar un componente.
                     onContextMenu={
                       onRowFicha && esFilaConFicha
-                        ? (e) => { e.preventDefault(); onRowFicha(row._code ?? row.label, row.label); }
+                        ? (e) => { e.preventDefault(); onRowFicha(row._code ?? row.label, row.label, row); }
                         : undefined
                     }
                   >
