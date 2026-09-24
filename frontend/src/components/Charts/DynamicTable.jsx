@@ -730,7 +730,7 @@ export function buildFlatExport(resultado, filtrosActivos, visibleSeries, search
   return { columnasIdentidad: ["Ambiente", entidadHeader], columnasValor, filas };
 }
 
-function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forceDivisions) {
+function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forceDivisions, nacionalPorClase) {
   const cats = resultado.categories;
   const q = search.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const levels = activeHierLevels(perfFiltros);
@@ -780,6 +780,16 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
     // Sección colapsada: solo el banner.
   } else if (!forceDivisions) {
     rows.push({ _id: "total|Nacional", _type: "total", label: "Total", ...dataObj(cats, sumLeaves(leavesMostradas, cats)) });
+    // Mismo desglose por clasificacion que en el camino sin filtros, para que
+    // la seccion Nacional se lea igual con filtros puestos y sin ellos.
+    if (nacionalPorClase) {
+      const clases = mergeProductos(leavesMostradas);
+      if (clases.length > 1) {
+        for (const c of clases) {
+          rows.push({ _id: `nac|${c.label}`, _type: "subtotal", label: c.label, ...dataObj(cats, c.data) });
+        }
+      }
+    }
   }
   if (forceDivisions && nacionalAbierto) {
     // Sección "Nacional": aquí se concentran TODAS las sumas, una fila por
@@ -936,7 +946,7 @@ function flattenMultiLevel(resultado, perfFiltros, openGroups, search, vis, forc
 }
 
 // ── Aplanar según el modo activo ──────────────────────────────────────────────
-function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, sinResumen, flatAlfabetico) {
+function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, sinResumen, flatAlfabetico, nacionalPorClase) {
   const rows = [];
   if (!resultado?.groups) return rows;
   const cats = resultado.categories;
@@ -994,11 +1004,29 @@ function flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hi
       if (!nacionalAbierto) {
         // Sección colapsada: solo el banner.
       } else if (totalGeneral) {
-        const { total } = mergeSubgroups([nacSg], cats);
+        const { total, ops } = mergeSubgroups([nacSg], cats);
         rows.push({
           _id: "total|Nacional", _type: "total", _cuenca: "Nacional", _ub: "", label: "Total",
           ...Object.fromEntries(cats.map((c, ci) => [c, total[ci]])),
         });
+        // Temas cuya hoja es una CLASIFICACION y no una entidad (grados API):
+        // bajo el Total nacional va el desglose por clase, igual que el que
+        // cada cuenca muestra al abrirse. Sin esto la seccion Nacional era
+        // solo una cifra y habia que sumar cuenca por cuenca para saber
+        // cuanto produce el pais de cada clase.
+        //
+        // No se hace en los demas temas que comparten este bloque
+        // (Inversiones, Licitaciones, Reservas): ahi la hoja es una entidad
+        // —un contrato, un campo— y listarlas todas bajo Nacional duplicaria
+        // la tabla entera.
+        if (nacionalPorClase && ops.length > 1) {
+          for (const op of ops) {
+            rows.push({
+              _id: `nac|${op.label}`, _type: "subtotal", _cuenca: "Nacional", _ub: "", label: op.label,
+              ...Object.fromEntries(cats.map((c, ci) => [c, op.data[ci]])),
+            });
+          }
+        }
       }
     }
 
@@ -1460,7 +1488,7 @@ function Toolbar({ search, setSearch, hiddenCols, setHiddenCols, categories, tit
 }
 
 // ── Componente principal ──────────────────────────────────────────────────────
-export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick, onCellClick, flatExportEntidad, historicoTopic, historicoFetch, preserveColumnOrder, search: searchControlada, onSearchChange, sinResumen, exportOperadorTabla, flatAlfabetico, ocultarSuma, temaJsonArg, onRowFicha, esFilaFicha, notaPie }) {
+export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo, period, start_year, end_year, compareMode, entityLabel, forceDivisions, filtros, rowHeaderLabel, searchPlaceholder, onRowClick, onCellClick, flatExportEntidad, historicoTopic, historicoFetch, preserveColumnOrder, search: searchControlada, onSearchChange, sinResumen, exportOperadorTabla, flatAlfabetico, ocultarSuma, temaJsonArg, onRowFicha, esFilaFicha, nacionalPorClase, notaPie }) {
   const { pendingBusqueda, setPendingBusqueda } = useExplorer();
   const [searchLocal, setSearchLocal] = useState("");
   // Los datos van con 2 decimales (produccion, reservas, inversiones...); solo
@@ -1617,9 +1645,9 @@ export default function DynamicTable({ resultado, visibleSeries, groupBy, titulo
   const mostrarTotalesUnidad = forceDivisions;
   const rowsSinOrdenar = useMemo(
     () => hierLevels.length > 0
-      ? flattenMultiLevel(resultado, filtrosActivos, openGroups, search, visibleSeries ?? {}, forceDivisions)
-      : flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, sinResumen, flatAlfabetico),
-    [resultado, visibleSeries, search, openGroups, filtrosActivos, hierLevels.length, hideDivisions, forceDivisions, groupBy, mostrarTotalesUnidad, sinResumen, flatAlfabetico]
+      ? flattenMultiLevel(resultado, filtrosActivos, openGroups, search, visibleSeries ?? {}, forceDivisions, nacionalPorClase)
+      : flattenGroups(resultado, visibleSeries, search, openGroups, groupBy, hideDivisions, forceDivisions, mostrarTotalesUnidad, sinResumen, flatAlfabetico, nacionalPorClase),
+    [resultado, visibleSeries, search, openGroups, filtrosActivos, hierLevels.length, hideDivisions, forceDivisions, groupBy, mostrarTotalesUnidad, sinResumen, flatAlfabetico, nacionalPorClase]
   );
   // Ordenar por columna se desactiva en los temas medidos en Mbd/MMpcd (toda
   // Produccion). Son TASAS diarias por periodo: reordenar las filas por el

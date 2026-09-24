@@ -2407,6 +2407,10 @@ export default function ChartArea() {
                 // las sumaría sin sentido, igual que en "Producción por ubicación".
                 forceDivisions={esProdCuenca || esOperadores}
                 ocultarSuma={tema?.json_arg === "PozosCampos"}
+                // Grados API: la hoja es una clasificacion (Super-ligero,
+                // Ligero...), no una entidad, asi que la seccion Nacional
+                // lleva su desglose por clase bajo el Total.
+                nacionalPorClase={tema?.json_arg === "API"}
                 entityLabel={entityLabelValue}
                 temaJsonArg={tema?.json_arg}
                 search={busquedaTabla}
