@@ -36,6 +36,9 @@ npm-debug.log*
 # computadora de quien los escribio. Se quito al documentar el traspaso: la
 # documentacion se versiona con el codigo o se pierde con la maquina.
 *.pdf
+# ...salvo el traspaso: es un entregable del proyecto, no una exportacion
+# suelta. Se regenera desde TRASPASO.md con deploy/build_traspaso_pdf.py
+!TRASPASO.pdf
 *.csv
 *.xlsx
 *.xls
