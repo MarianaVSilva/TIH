@@ -46,3 +46,7 @@ npm-debug.log*
 *.xlsx
 *.xls
 backend/check_columns.py
+
+# Carpeta de entrega del traspaso: lleva copias de documentos que ya estan
+# versionados en su sitio, no hace falta duplicarlas en el repo.
+/traspaso TIH/
