@@ -39,6 +39,9 @@ npm-debug.log*
 # ...salvo el traspaso: es un entregable del proyecto, no una exportacion
 # suelta. Se regenera desde TRASPASO.md con deploy/build_traspaso_pdf.py
 !TRASPASO.pdf
+
+# El traspaso tambien en Word, para editarlo sin tocar el markdown
+!TRASPASO.docx
 *.csv
 *.xlsx
 *.xls
