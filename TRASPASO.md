@@ -33,26 +33,47 @@ quien lo desarrolló. Conviene reubicarlas, pero **no todas son urgentes**:
 
 | # | Qué era | Si no se atiende |
 |---|---|---|
-| 2.1 | El servicio corre con `User=mvazquez` | **El sitio deja de arrancar** si desactivan la cuenta |
+| 2.1 | El servicio corre con `User=mvazquez` | Nada de inmediato, pero queda una trampa — ver abajo |
 | 2.2 | El puente a PostgreSQL, en su PC | **Nada.** El sitio no lo usa — ver abajo |
-| 2.3 | El repositorio bajo su namespace | Se pierde el código y su historia |
+| 2.3 | El repositorio bajo su namespace | **Se pierde el código y su historia** |
 | 2.4 | Su llave SSH en el servidor | Riesgo de acceso, no de servicio |
 
-Solo **2.1 y 2.3** tumban algo. Las otras dos son higiene.
+Lo único con urgencia real es **2.3**. El resto conviene ordenarlo, pero nada
+se cae el día que la cuenta corporativa se desactive.
 
-### 2.1 El backend de producción corre con su usuario
+### 2.1 El backend de producción corre con una cuenta personal
 
-El servicio `systemd` está configurado con `User=mvazquez` y todo vive en
-`/opt/tih`, propiedad de ese usuario.
+En Linux, un servicio se ejecuta "como" algún usuario del sistema. El de TIH
+está configurado con `User=mvazquez`, y además toda la carpeta `/opt/tih` le
+pertenece a esa cuenta.
 
 ```bash
 systemctl cat tih_backend
 ```
 
-**Qué hacer:** crear un usuario de servicio (p. ej. `tih`) o reasignar a la
-cuenta de quien reciba. Hay que cambiar `User=` en
-`/etc/systemd/system/tih_backend.service`, hacer `chown -R` de `/opt/tih` y
-recargar (`sudo systemctl daemon-reload && sudo systemctl restart tih_backend`).
+> **No se rompe cuando desactiven su cuenta corporativa.** `mvazquez` en este
+> servidor es una cuenta **local** (está en `/etc/passwd`, UID 1011) y la
+> máquina **no está integrada al dominio** (`passwd: files systemd`, sin sssd
+> ni winbind). Desactivar el usuario de Windows no la toca: el servicio sigue
+> corriendo igual.
+
+**La trampa** aparece después: si algún día el administrador del servidor hace
+limpieza de cuentas de personal que ya no está y borra `mvazquez` **del
+servidor**, entonces sí el servicio deja de arrancar —`User=` apuntaría a
+alguien que no existe— y `/opt/tih` queda huérfano, propiedad de un UID sin
+dueño. Nadie lo relacionaría con TIH en ese momento.
+
+Aparte de eso, es mala práctica: producción corriendo bajo la cuenta personal
+de alguien que ya no trabaja ahí, y a la que quien reciba quizá no tenga acceso.
+
+**Qué hacer** (sin prisa, pero antes de que alguien toque las cuentas del
+servidor): crear un usuario de servicio dedicado, p. ej. `tih`, cambiar `User=`
+en `/etc/systemd/system/tih_backend.service`, hacer `chown -R tih:tih /opt/tih`
+y recargar:
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl restart tih_backend
+```
 
 ### 2.2 El puente a PostgreSQL corría en su computadora
 
@@ -439,7 +460,8 @@ como arqueología pero no como manual. Orden de lectura sugerido:
 1. Pedir los accesos de §3.1 y clonar el repositorio.
 2. Instalar el driver ODBC y levantar en local (§5).
 3. Leer `CLAUDE.md` y `DATABASE_SCHEMA.md`.
-4. **Reubicar lo que estaba local (§2)**, empezando por 2.1 y 2.3, que son las
-   dos que sí tumban algo. El puente a PostgreSQL puede esperar.
+4. **Reubicar lo que estaba local (§2)**, empezando por 2.3 (transferir el
+   repositorio), que es lo único con urgencia real. Lo demás puede ordenarse
+   con calma.
 5. Hacer un cambio mínimo de frontend y desplegarlo siguiendo §8, para probar el
    circuito completo con red de seguridad.
