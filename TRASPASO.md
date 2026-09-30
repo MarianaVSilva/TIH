@@ -1,7 +1,8 @@
 # TIH — Documento de traspaso
 
-> Para quien recibe el proyecto. Escrito en septiembre de 2026, al salir
-> Mariana Vázquez (`mvazquez`), que lo desarrolló y lo mantuvo.
+> Para quien recibe el proyecto. Lo escribo en septiembre de 2026, al dejar
+> el puesto. Desarrollé y mantuve TIH desde el inicio; aquí dejo todo lo que
+> hace falta para tomarlo. — Mariana Vázquez (`mvazquez`)
 >
 > **Ningún valor secreto vive en este archivo ni en el repositorio.** La
 > sección 3 dice qué credenciales existen, dónde viven y cómo pedirlas.
@@ -28,30 +29,30 @@ Es la modernización del SIH anterior. Consume una base de datos SQL Server que
 
 ## 2. Cosas que estaban locales
 
-Cuatro piezas del proyecto vivían en la computadora o en la cuenta personal de
-quien lo desarrolló. Conviene reubicarlas, pero **no todas son urgentes**:
+Cuatro piezas del proyecto corrían en local o colgaban de mi cuenta personal.
+Conviene reubicarlas, pero **no todas son urgentes**:
 
 | # | Qué era | Si no se atiende |
 |---|---|---|
-| 2.1 | El servicio corre con `User=mvazquez` | Nada de inmediato, pero queda una trampa — ver abajo |
-| 2.2 | El puente a PostgreSQL, en su PC | **Nada.** El sitio no lo usa — ver abajo |
-| 2.3 | El repositorio bajo su namespace | **Se pierde el código y su historia** |
-| 2.4 | Su llave SSH en el servidor | Riesgo de acceso, no de servicio |
+| 2.1 | El servicio corre con mi usuario | Nada de inmediato, pero queda una trampa — ver abajo |
+| 2.2 | El puente a PostgreSQL, en local | **Nada.** El sitio no lo usa — ver abajo |
+| 2.3 | El repositorio bajo mi namespace | **Se pierde el código y su historia** |
+| 2.4 | Mi llave SSH en el servidor | Riesgo de acceso, no de servicio |
 
 Lo único con urgencia real es **2.3**. El resto conviene ordenarlo, pero nada
 se cae el día que la cuenta corporativa se desactive.
 
-### 2.1 El backend de producción corre con una cuenta personal
+### 2.1 El backend de producción corre con mi usuario
 
 En Linux, un servicio se ejecuta "como" algún usuario del sistema. El de TIH
-está configurado con `User=mvazquez`, y además toda la carpeta `/opt/tih` le
-pertenece a esa cuenta.
+está configurado con `User=mvazquez`, y además toda la carpeta `/opt/tih` es
+de esa cuenta.
 
 ```bash
 systemctl cat tih_backend
 ```
 
-> **No se rompe cuando desactiven su cuenta corporativa.** `mvazquez` en este
+> **No se rompe cuando desactiven mi cuenta corporativa.** `mvazquez` en este
 > servidor es una cuenta **local** (está en `/etc/passwd`, UID 1011) y la
 > máquina **no está integrada al dominio** (`passwd: files systemd`, sin sssd
 > ni winbind). Desactivar el usuario de Windows no la toca: el servicio sigue
@@ -64,7 +65,7 @@ alguien que no existe— y `/opt/tih` queda huérfano, propiedad de un UID sin
 dueño. Nadie lo relacionaría con TIH en ese momento.
 
 Aparte de eso, es mala práctica: producción corriendo bajo la cuenta personal
-de alguien que ya no trabaja ahí, y a la que quien reciba quizá no tenga acceso.
+de alguien que ya no está, y a la que quien reciba quizá no tenga acceso.
 
 **Qué hacer** (sin prisa, pero antes de que alguien toque las cuentas del
 servidor): crear un usuario de servicio dedicado, p. ej. `tih`, cambiar `User=`
@@ -75,7 +76,7 @@ y recargar:
 sudo systemctl daemon-reload && sudo systemctl restart tih_backend
 ```
 
-### 2.2 El puente a PostgreSQL corría en su computadora
+### 2.2 El puente a PostgreSQL corría local
 
 > **Que se detenga no afecta al sitio en producción.** El backend productivo
 > lee **directo de SQL Server `172.16.200.99\UMBRACODB`**, no de PostgreSQL.
@@ -83,8 +84,8 @@ sudo systemctl daemon-reload && sudo systemctl restart tih_backend
 > —que hoy solo sirve para *probar* la migración— se queda con datos viejos.
 > Nadie en el sitio lo nota, porque nadie la consulta.
 
-Hay una tarea programada de Windows, registrada en la máquina de Mariana, que
-cada día sincroniza SQL Server → PostgreSQL:
+Lo dejé como tarea programada de Windows en mi equipo, sincronizando cada día
+SQL Server → PostgreSQL:
 
 - Nombre: `TIH_Puente_SQLServer_a_Postgres`
 - Ejecuta: `postgres_migration/run_bridge.py`
@@ -98,10 +99,10 @@ tanto: `postgres_migration/setup_bridge_task.ps1`.
 Si más adelante se decide **cortar a PostgreSQL de verdad**, ahí sí el puente
 pasa a ser crítico. Hoy no lo es.
 
-### 2.3 El repositorio está bajo su namespace
+### 2.3 El repositorio está bajo mi namespace
 
-`https://172.16.196.12/mvazquez/tih.git` — si se borra la cuenta de GitLab, se
-va el repositorio y los 64 commits de historia.
+`https://172.16.196.12/mvazquez/tih.git` — cuelga de mi usuario de GitLab: si
+borran esa cuenta, se va el repositorio y los 64 commits de historia.
 
 **Qué hacer:** transferir el proyecto a un grupo del área, no a una persona. Y
 hacer un clon de respaldo *antes* de cualquier movimiento:
@@ -112,9 +113,9 @@ git clone --mirror https://172.16.196.12/mvazquez/tih.git tih-respaldo.git
 
 ### 2.4 Llave SSH al servidor
 
-Hay una llave `ed25519` autorizada en `~/.ssh/authorized_keys` de
-`mvazquez@172.16.83.21`, con comentario `tih-deploy-mariana`. Quítenla cuando
-ella salga y pongan la de quien reciba.
+Dejé una llave `ed25519` autorizada en `~/.ssh/authorized_keys` de
+`mvazquez@172.16.83.21`, con comentario `tih-deploy-mariana`, para poder
+desplegar sin teclear contraseña. Quítenla y pongan la de quien reciba.
 
 ---
 
