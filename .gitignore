@@ -28,8 +28,13 @@ npm-debug.log*
 # Claude session files (not part of the app)
 .claude/
 
-# Session notes, docs and one-off exports — not part of the running app
-*.md
+# Exportaciones sueltas — no son parte de la app
+#
+# OJO: aqui vivia tambien "*.md", y dejaba TODA la documentacion fuera del
+# repositorio: 33 de 34 documentos (CLAUDE.md, DATABASE_SCHEMA.md, las
+# bitacoras de sesion, los documentos de la migracion) existian solo en la
+# computadora de quien los escribio. Se quito al documentar el traspaso: la
+# documentacion se versiona con el codigo o se pierde con la maquina.
 *.pdf
 *.csv
 *.xlsx
