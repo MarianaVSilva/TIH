@@ -26,10 +26,19 @@ Es la modernización del SIH anterior. Consume una base de datos SQL Server que
 
 ---
 
-## 2. ⚠️ Antes de que Mariana se vaya
+## 2. Cosas que estaban locales
 
-Estas cuatro cosas **dejan de funcionar** cuando su cuenta se desactive o
-apaguen su computadora. Atiéndanlas antes de la salida.
+Cuatro piezas del proyecto vivían en la computadora o en la cuenta personal de
+quien lo desarrolló. Conviene reubicarlas, pero **no todas son urgentes**:
+
+| # | Qué era | Si no se atiende |
+|---|---|---|
+| 2.1 | El servicio corre con `User=mvazquez` | **El sitio deja de arrancar** si desactivan la cuenta |
+| 2.2 | El puente a PostgreSQL, en su PC | **Nada.** El sitio no lo usa — ver abajo |
+| 2.3 | El repositorio bajo su namespace | Se pierde el código y su historia |
+| 2.4 | Su llave SSH en el servidor | Riesgo de acceso, no de servicio |
+
+Solo **2.1 y 2.3** tumban algo. Las otras dos son higiene.
 
 ### 2.1 El backend de producción corre con su usuario
 
@@ -45,20 +54,28 @@ cuenta de quien reciba. Hay que cambiar `User=` en
 `/etc/systemd/system/tih_backend.service`, hacer `chown -R` de `/opt/tih` y
 recargar (`sudo systemctl daemon-reload && sudo systemctl restart tih_backend`).
 
-### 2.2 El puente a PostgreSQL corre en SU computadora
+### 2.2 El puente a PostgreSQL corría en su computadora
 
-Hay una tarea programada de Windows, **registrada en la máquina de Mariana**,
-que cada día sincroniza SQL Server → PostgreSQL:
+> **Que se detenga no afecta al sitio en producción.** El backend productivo
+> lee **directo de SQL Server `172.16.200.99\UMBRACODB`**, no de PostgreSQL.
+> Si el puente deja de correr, lo único que pasa es que la base de PostgreSQL
+> —que hoy solo sirve para *probar* la migración— se queda con datos viejos.
+> Nadie en el sitio lo nota, porque nadie la consulta.
+
+Hay una tarea programada de Windows, registrada en la máquina de Mariana, que
+cada día sincroniza SQL Server → PostgreSQL:
 
 - Nombre: `TIH_Puente_SQLServer_a_Postgres`
 - Ejecuta: `postgres_migration/run_bridge.py`
 - Última corrida verificada: 30/sep/2026 10:14, resultado `0` (éxito)
 
-Si esa máquina se apaga, **la migración se queda sin datos frescos y nadie se
-entera** (falla en silencio). Ver §7.1.
+**Qué hacer:** nada con prisa. Solo tiene sentido reactivarlo cuando se retome
+la migración (§7.1), y en ese momento lo correcto es montarlo en un servidor,
+no en una computadora personal. Para registrarlo en otra máquina mientras
+tanto: `postgres_migration/setup_bridge_task.ps1`.
 
-**Qué hacer:** mover la tarea a un servidor, o registrarla en la máquina de
-quien reciba con `postgres_migration/setup_bridge_task.ps1`.
+Si más adelante se decide **cortar a PostgreSQL de verdad**, ahí sí el puente
+pasa a ser crítico. Hoy no lo es.
 
 ### 2.3 El repositorio está bajo su namespace
 
@@ -216,6 +233,10 @@ consulta.
 ### 7.1 Migración a PostgreSQL
 
 **Estado: avanzada, validada en desarrollo, sin cortar a producción.**
+
+> Esto es un **proyecto aparte**, no una dependencia del sitio. Producción
+> sigue y seguirá leyendo de SQL Server hasta que alguien decida lo contrario.
+> Se puede dejar parado indefinidamente sin consecuencias.
 
 Los 8 dominios están extraídos, transformados y validados contra una instancia
 de prueba (`localhost:5433`). Se decidió **no** reescribir los cargadores del
@@ -418,7 +439,7 @@ como arqueología pero no como manual. Orden de lectura sugerido:
 1. Pedir los accesos de §3.1 y clonar el repositorio.
 2. Instalar el driver ODBC y levantar en local (§5).
 3. Leer `CLAUDE.md` y `DATABASE_SCHEMA.md`.
-4. **Resolver las cuatro dependencias de §2** antes de que Mariana se vaya — son
-   las que rompen cosas en silencio.
+4. **Reubicar lo que estaba local (§2)**, empezando por 2.1 y 2.3, que son las
+   dos que sí tumban algo. El puente a PostgreSQL puede esperar.
 5. Hacer un cambio mínimo de frontend y desplegarlo siguiendo §8, para probar el
    circuito completo con red de seguridad.
